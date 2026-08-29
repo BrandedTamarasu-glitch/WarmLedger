@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const Schema = require('../js/data-schema.js');
 const { STORAGE_KEY, StoreError, createStore } = require('../js/data.js');
-const { makeBudget, MemoryStorage, makeClock, makeUuid } = require('./helpers.js');
+const { makeV2Budget: makeBudget, MemoryStorage, makeClock, makeUuid } = require('./helpers.js');
 
 function readyStore() {
   const storage = new MemoryStorage({ [STORAGE_KEY]: JSON.stringify(makeBudget()) });
@@ -22,12 +22,13 @@ test('record edits transact once and preserve fields outside the edit form', () 
   const { store, storage } = readyStore();
 
   const paycheckBefore = store.getMonth('2026-01').paychecks[0];
-  store.updatePaycheck('2026-01', paycheckBefore.id, {
-    earner: 'Example Earner', amount: 2600, date: '2026-01-20'
+  store.editPaycheck('2026-01', paycheckBefore.id, {
+    earnerId: 'earner-example-1', amount: 2600, date: '2026-01-20'
   });
   const paycheckAfter = store.getMonth('2026-01').paychecks[0];
   assert.deepEqual(paycheckAfter, {
     id: paycheckBefore.id,
+    earnerId: 'earner-example-1',
     earner: 'Example Earner',
     amount: 2600,
     date: '2026-01-20'
@@ -35,13 +36,15 @@ test('record edits transact once and preserve fields outside the edit form', () 
 
   storage.operations.length = 0;
   const expenseBefore = store.getMonth('2026-01').expenses[0];
-  store.updateExpense('2026-01', expenseBefore.id, {
-    category: 'Home', name: 'Updated rent', paymentMethod: 'credit_card'
+  store.editExpense('2026-01', expenseBefore.id, {
+    categoryId: 'category-example-1', categoryItemId: null,
+    name: 'Updated rent', paymentMethod: 'credit_card'
   });
   const expenseAfter = store.getMonth('2026-01').expenses[0];
   assert.deepEqual(expenseAfter, {
     ...expenseBefore,
-    category: 'Home',
+    categoryId: 'category-example-1',
+    category: 'Home', categoryItemId: null,
     name: 'Updated rent',
     paymentMethod: 'credit_card'
   });

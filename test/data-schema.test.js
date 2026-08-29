@@ -15,10 +15,15 @@ function expectCode(code, fn) {
   assert.throws(fn, error => error instanceof Schema.DataError && error.code === code);
 }
 
+function validateV1Input(input) {
+  Schema.migrateToV2(input);
+  return true;
+}
+
 test('validates canonical data without mutating it', () => {
   const budget = makeBudget();
   const before = JSON.stringify(budget);
-  assert.equal(Schema.validateActive(budget), true);
+  assert.equal(validateV1Input(budget), true);
   assert.equal(JSON.stringify(budget), before);
 });
 
@@ -44,42 +49,42 @@ test('clone rejects cycles, unsafe keys, sparse arrays, and non-JSON values', ()
 
 test('rejects unknown and missing canonical fields', () => {
   const unknown = makeBudget(); unknown.extra = true;
-  expectCode('UNKNOWN_FIELD', () => Schema.validateActive(unknown));
+  expectCode('UNKNOWN_FIELD', () => validateV1Input(unknown));
   const missing = makeBudget(); delete missing.settings;
-  expectCode('MISSING_FIELD', () => Schema.validateActive(missing));
+  expectCode('MISSING_FIELD', () => validateV1Input(missing));
 });
 
 test('enforces collection and string bounds', () => {
   const tooManyCategories = makeBudget();
   tooManyCategories.categories = Array.from({ length: 101 }, (_, index) => ({ name: `C${index}`, items: [] }));
-  expectCode('TOO_MANY_ITEMS', () => Schema.validateActive(tooManyCategories));
+  expectCode('TOO_MANY_ITEMS', () => validateV1Input(tooManyCategories));
   const longId = makeBudget();
   longId.months['2026-01'].paychecks[0].id = 'x'.repeat(129);
-  expectCode('INVALID_STRING', () => Schema.validateActive(longId));
+  expectCode('INVALID_STRING', () => validateV1Input(longId));
   const duplicate = makeBudget(); duplicate.settings.earners.push('Example Earner');
-  expectCode('DUPLICATE_VALUE', () => Schema.validateActive(duplicate));
+  expectCode('DUPLICATE_VALUE', () => validateV1Input(duplicate));
 });
 
 test('validates real month and date values while allowing an empty paycheck date', () => {
   const emptyDate = makeBudget(); emptyDate.months['2026-01'].paychecks[0].date = '';
-  assert.equal(Schema.validateActive(emptyDate), true);
+  assert.equal(validateV1Input(emptyDate), true);
   const badMonth = makeBudget(); badMonth.months['2026-13'] = badMonth.months['2026-01']; delete badMonth.months['2026-01'];
-  expectCode('INVALID_MONTH', () => Schema.validateActive(badMonth));
+  expectCode('INVALID_MONTH', () => validateV1Input(badMonth));
   const badDate = makeBudget(); badDate.months['2026-01'].paychecks[0].date = '2026-02-30';
-  expectCode('INVALID_DATE', () => Schema.validateActive(badDate));
+  expectCode('INVALID_DATE', () => validateV1Input(badDate));
   const leapDate = makeBudget(); leapDate.months['2026-01'].paychecks[0].date = '2024-02-29';
-  assert.equal(Schema.validateActive(leapDate), true);
+  assert.equal(validateV1Input(leapDate), true);
 });
 
 test('enforces amounts and supported enums', () => {
   const zeroIncome = makeBudget(); zeroIncome.months['2026-01'].paychecks[0].amount = 0;
-  expectCode('AMOUNT_OUT_OF_RANGE', () => Schema.validateActive(zeroIncome));
+  expectCode('AMOUNT_OUT_OF_RANGE', () => validateV1Input(zeroIncome));
   const negative = makeBudget(); negative.months['2026-01'].expenses[0].actual = -1;
-  expectCode('AMOUNT_OUT_OF_RANGE', () => Schema.validateActive(negative));
+  expectCode('AMOUNT_OUT_OF_RANGE', () => validateV1Input(negative));
   const nonFinite = makeBudget(); nonFinite.months['2026-01'].expenses[0].actual = NaN;
-  expectCode('NON_FINITE_NUMBER', () => Schema.validateActive(nonFinite));
+  expectCode('NON_FINITE_NUMBER', () => validateV1Input(nonFinite));
   const method = makeBudget(); method.months['2026-01'].expenses[0].paymentMethod = 'cash';
-  expectCode('INVALID_PAYMENT_METHOD', () => Schema.validateActive(method));
+  expectCode('INVALID_PAYMENT_METHOD', () => validateV1Input(method));
 });
 
 test('caps monthly monetary aggregates independently of individual values', () => {
@@ -87,7 +92,7 @@ test('caps monthly monetary aggregates independently of individual values', () =
   income.months['2026-01'].paychecks.push({
     id: 'paycheck-example-2', earner: 'Example Earner', amount: 1_000_000_000_000, date: ''
   });
-  expectCode('AGGREGATE_OUT_OF_RANGE', () => Schema.validateActive(income));
+  expectCode('AGGREGATE_OUT_OF_RANGE', () => validateV1Input(income));
 
   const projected = makeBudget();
   projected.months['2026-01'].paychecks[0].amount = 1_000_000_000_000;
@@ -95,32 +100,32 @@ test('caps monthly monetary aggregates independently of individual values', () =
     id: 'expense-example-2', category: 'Home', name: 'Utilities',
     paycheckAmounts: { 'paycheck-example-1': 1_000_000_000_000 }, actual: 0, paymentMethod: 'bank'
   });
-  expectCode('AGGREGATE_OUT_OF_RANGE', () => Schema.validateActive(projected));
+  expectCode('AGGREGATE_OUT_OF_RANGE', () => validateV1Input(projected));
 
   const actual = makeBudget();
   actual.months['2026-01'].expenses.push({
     id: 'expense-example-2', category: 'Home', name: 'Utilities',
     paycheckAmounts: {}, actual: 1_000_000_000_000, paymentMethod: 'bank'
   });
-  expectCode('AGGREGATE_OUT_OF_RANGE', () => Schema.validateActive(actual));
+  expectCode('AGGREGATE_OUT_OF_RANGE', () => validateV1Input(actual));
 
   const allocated = makeBudget();
   allocated.months['2026-01'].allocations.savings = 1_000_000_000_000;
-  expectCode('AGGREGATE_OUT_OF_RANGE', () => Schema.validateActive(allocated));
+  expectCode('AGGREGATE_OUT_OF_RANGE', () => validateV1Input(allocated));
 });
 
 test('rejects duplicate IDs and dangling paycheck references', () => {
   const duplicate = makeBudget(); duplicate.months['2026-01'].expenses[0].id = duplicate.months['2026-01'].paychecks[0].id;
-  expectCode('DUPLICATE_ID', () => Schema.validateActive(duplicate));
+  expectCode('DUPLICATE_ID', () => validateV1Input(duplicate));
   const dangling = makeBudget(); dangling.months['2026-01'].expenses[0].paycheckAmounts = { missing: 10 };
-  expectCode('DANGLING_PAYCHECK_REFERENCE', () => Schema.validateActive(dangling));
+  expectCode('DANGLING_PAYCHECK_REFERENCE', () => validateV1Input(dangling));
 });
 
 test('requires declared earners and categories', () => {
   const earner = makeBudget(); earner.months['2026-01'].paychecks[0].earner = 'Unknown';
-  expectCode('UNKNOWN_EARNER', () => Schema.validateActive(earner));
+  expectCode('UNKNOWN_EARNER', () => validateV1Input(earner));
   const category = makeBudget(); category.months['2026-01'].expenses[0].category = 'Unknown';
-  expectCode('UNKNOWN_CATEGORY', () => Schema.validateActive(category));
+  expectCode('UNKNOWN_CATEGORY', () => validateV1Input(category));
 });
 
 test('migrates legacy paycheck allocations losslessly and does not mutate input', () => {
@@ -133,7 +138,7 @@ test('migrates legacy paycheck allocations losslessly and does not mutate input'
   const before = JSON.stringify(legacy);
   const migrated = Schema.migrateActive(legacy);
   assert.equal(JSON.stringify(legacy), before);
-  assert.equal(migrated.schemaVersion, 1);
+  assert.equal(migrated.schemaVersion, 2);
   assert.deepEqual(migrated.months['2026-01'].expenses[0].paycheckAmounts, { 'paycheck-example-1': 1200 });
   assert.equal(Object.hasOwn(migrated.months['2026-01'].expenses[0], 'paycheckId'), false);
 });
@@ -161,11 +166,11 @@ test('uses fixed generic defaults for missing legacy categories and earners', ()
   const legacy = { months: {} };
   const migrated = Schema.migrateActive(legacy);
   assert.equal(migrated.categories.some(category => category.name === 'Housing'), true);
-  assert.deepEqual(migrated.settings, { earners: ['Primary', 'Secondary'] });
+  assert.deepEqual(migrated.settings.earners.map(earner => earner.name), ['Primary', 'Secondary']);
 });
 
 test('rejects unsupported active versions and malformed legacy references', () => {
-  const future = makeBudget(); future.schemaVersion = 2;
+  const future = makeBudget(); future.schemaVersion = 3;
   expectCode('UNSUPPORTED_SCHEMA_VERSION', () => Schema.migrateActive(future));
   const legacy = makeBudget(); delete legacy.schemaVersion;
   const expense = legacy.months['2026-01'].expenses[0]; delete expense.paycheckAmounts;
@@ -175,7 +180,7 @@ test('rejects unsupported active versions and malformed legacy references', () =
 
 test('parses active JSON with stable safe errors', () => {
   const parsed = Schema.parseActive(JSON.stringify(makeBudget()));
-  assert.deepEqual(parsed, makeBudget());
+  assert.deepEqual(parsed, Schema.migrateToV2(makeBudget()));
   expectCode('INVALID_JSON', () => Schema.parseActive('{'));
   const sentinel = 'PRIVATE-SENTINEL';
   try {
@@ -204,7 +209,7 @@ test('rejects malformed and future backup envelopes', () => {
   envelope.formatVersion = 1; envelope.exportedAt = 'not-a-date';
   expectCode('INVALID_TIMESTAMP', () => Schema.parseBackup(JSON.stringify(envelope)));
   envelope.exportedAt = '2026-01-15T12:00:00.000Z'; delete envelope.data.schemaVersion;
-  expectCode('MISSING_FIELD', () => Schema.parseBackup(JSON.stringify(envelope)));
+  expectCode('UNKNOWN_FIELD', () => Schema.parseBackup(JSON.stringify(envelope)));
 });
 
 test('builds and parses validated snapshot envelopes for every supported reason', () => {
@@ -249,7 +254,7 @@ test('caps one expense projected sum across multiple valid paycheck references',
     { id: 'p2', earner: 'Example Earner', amount: 500_000_000_000, date: '' }
   ];
   month.expenses[0].paycheckAmounts = { p1: 500_000_000_000, p2: 500_000_000_001 };
-  expectCode('AGGREGATE_OUT_OF_RANGE', () => Schema.validateActive(budget));
+  expectCode('AGGREGATE_OUT_OF_RANGE', () => validateV1Input(budget));
 });
 
 test('enforces exact nested keys for every canonical record type', () => {
@@ -269,7 +274,7 @@ test('enforces exact nested keys for every canonical record type', () => {
   ];
   for (const [label, mutate, code] of cases) {
     const budget = makeBudget(); mutate(budget);
-    assert.throws(() => Schema.validateActive(budget), error => error.code === code, label);
+    assert.throws(() => validateV1Input(budget), error => error.code === code, label);
   }
 });
 
@@ -277,46 +282,46 @@ test('accepts boundary sizes and rejects collection limits plus one', () => {
   const categoryBoundary = makeBudget();
   categoryBoundary.categories = Array.from({ length: 100 }, (_, i) => ({ name: `Category ${i}`, items: [] }));
   categoryBoundary.months['2026-01'].expenses[0].category = 'Category 0';
-  assert.equal(Schema.validateActive(categoryBoundary), true);
+  assert.equal(validateV1Input(categoryBoundary), true);
   const categoryOverflow = makeBudget();
   categoryOverflow.categories = Array.from({ length: 101 }, (_, i) => ({ name: `Category ${i}`, items: [] }));
-  expectCode('TOO_MANY_ITEMS', () => Schema.validateActive(categoryOverflow));
+  expectCode('TOO_MANY_ITEMS', () => validateV1Input(categoryOverflow));
 
   const itemOverflow = makeBudget(); itemOverflow.categories[0].items = Array.from({ length: 201 }, (_, i) => `Item ${i}`);
-  expectCode('TOO_MANY_ITEMS', () => Schema.validateActive(itemOverflow));
+  expectCode('TOO_MANY_ITEMS', () => validateV1Input(itemOverflow));
   const earnerOverflow = makeBudget(); earnerOverflow.settings.earners = Array.from({ length: 51 }, (_, i) => `Earner ${i}`);
-  expectCode('TOO_MANY_ITEMS', () => Schema.validateActive(earnerOverflow));
+  expectCode('TOO_MANY_ITEMS', () => validateV1Input(earnerOverflow));
 
   const itemBoundary = makeBudget(); itemBoundary.categories[0].items = Array.from({ length: 200 }, (_, i) => `Item ${i}`);
-  assert.equal(Schema.validateActive(itemBoundary), true);
+  assert.equal(validateV1Input(itemBoundary), true);
   const earnerBoundary = makeBudget(); earnerBoundary.settings.earners = Array.from({ length: 50 }, (_, i) => `Earner ${i}`);
   earnerBoundary.months['2026-01'].paychecks[0].earner = 'Earner 0';
-  assert.equal(Schema.validateActive(earnerBoundary), true);
+  assert.equal(validateV1Input(earnerBoundary), true);
 
   const monthOverflow = makeBudget(); monthOverflow.months = {};
   for (let i = 0; i < 601; i += 1) {
     const year = 2000 + Math.floor(i / 12); const month = String((i % 12) + 1).padStart(2, '0');
     monthOverflow.months[`${year}-${month}`] = { paychecks: [], expenses: [], allocations: { savings: 0, credit_card_debt: 0, investments: 0 } };
   }
-  expectCode('TOO_MANY_ITEMS', () => Schema.validateActive(monthOverflow));
+  expectCode('TOO_MANY_ITEMS', () => validateV1Input(monthOverflow));
   delete monthOverflow.months['2050-01'];
   assert.equal(Object.keys(monthOverflow.months).length, 600);
-  assert.equal(Schema.validateActive(monthOverflow), true);
+  assert.equal(validateV1Input(monthOverflow), true);
 
   const paycheckOverflow = makeBudget(); paycheckOverflow.months['2026-01'].paychecks = Array.from({ length: 501 }, (_, i) => ({
     id: `p${i}`, earner: 'Example Earner', amount: 1, date: ''
   })); paycheckOverflow.months['2026-01'].expenses = [];
-  expectCode('TOO_MANY_ITEMS', () => Schema.validateActive(paycheckOverflow));
+  expectCode('TOO_MANY_ITEMS', () => validateV1Input(paycheckOverflow));
   paycheckOverflow.months['2026-01'].paychecks.pop();
-  assert.equal(Schema.validateActive(paycheckOverflow), true);
+  assert.equal(validateV1Input(paycheckOverflow), true);
 
   const expenseOverflow = makeBudget(); expenseOverflow.months['2026-01'].paychecks = [];
   expenseOverflow.months['2026-01'].expenses = Array.from({ length: 5001 }, (_, i) => ({
     id: `e${i}`, category: 'Home', name: 'Item', paycheckAmounts: {}, actual: 0, paymentMethod: 'bank'
   }));
-  expectCode('TOO_MANY_ITEMS', () => Schema.validateActive(expenseOverflow));
+  expectCode('TOO_MANY_ITEMS', () => validateV1Input(expenseOverflow));
   expenseOverflow.months['2026-01'].expenses.pop();
-  assert.equal(Schema.validateActive(expenseOverflow), true);
+  assert.equal(validateV1Input(expenseOverflow), true);
 });
 
 test('accepts exact string and money boundaries and rejects plus one', () => {
@@ -329,34 +334,34 @@ test('accepts exact string and money boundaries and rejects plus one', () => {
   stringBoundary.months['2026-01'].expenses[0].category = 'c'.repeat(120);
   stringBoundary.months['2026-01'].expenses[0].name = 'n'.repeat(120);
   stringBoundary.months['2026-01'].expenses[0].paycheckAmounts = { ['p'.repeat(128)]: 0 };
-  assert.equal(Schema.validateActive(stringBoundary), true);
+  assert.equal(validateV1Input(stringBoundary), true);
   const nameOverflow = makeBudget(); nameOverflow.categories[0].name = 'n'.repeat(121);
-  expectCode('INVALID_STRING', () => Schema.validateActive(nameOverflow));
+  expectCode('INVALID_STRING', () => validateV1Input(nameOverflow));
   const idOverflow = makeBudget(); idOverflow.months['2026-01'].paychecks[0].id = 'p'.repeat(129);
-  expectCode('INVALID_STRING', () => Schema.validateActive(idOverflow));
+  expectCode('INVALID_STRING', () => validateV1Input(idOverflow));
 
   const moneyBoundary = makeBudget();
   const month = moneyBoundary.months['2026-01'];
   month.paychecks[0].amount = 1_000_000_000_000;
   month.expenses[0].paycheckAmounts = {}; month.expenses[0].actual = 0;
   month.allocations = { savings: 0, credit_card_debt: 0, investments: 0 };
-  assert.equal(Schema.validateActive(moneyBoundary), true);
+  assert.equal(validateV1Input(moneyBoundary), true);
   const moneyOverflow = makeBudget(); moneyOverflow.months['2026-01'].expenses[0].actual = 1_000_000_000_001;
-  expectCode('AMOUNT_OUT_OF_RANGE', () => Schema.validateActive(moneyOverflow));
+  expectCode('AMOUNT_OUT_OF_RANGE', () => validateV1Input(moneyOverflow));
   const paycheckZero = makeBudget(); paycheckZero.months['2026-01'].paychecks[0].amount = 0;
-  expectCode('AMOUNT_OUT_OF_RANGE', () => Schema.validateActive(paycheckZero));
+  expectCode('AMOUNT_OUT_OF_RANGE', () => validateV1Input(paycheckZero));
 });
 
 test('rejects unsafe keys at nested depths from JSON input', () => {
   const category = makeBudget();
   category.categories[0] = JSON.parse('{"name":"Home","items":[],"__proto__":{}}');
-  expectCode('UNSAFE_KEY', () => Schema.validateActive(category));
+  expectCode('UNSAFE_KEY', () => validateV1Input(category));
   const amounts = makeBudget();
   amounts.months['2026-01'].expenses[0].paycheckAmounts = JSON.parse('{"__proto__":10}');
-  expectCode('UNSAFE_KEY', () => Schema.validateActive(amounts));
+  expectCode('UNSAFE_KEY', () => validateV1Input(amounts));
   const monthMap = makeBudget();
   monthMap.months = JSON.parse('{"constructor":{}}');
-  expectCode('UNSAFE_KEY', () => Schema.validateActive(monthMap));
+  expectCode('UNSAFE_KEY', () => validateV1Input(monthMap));
 });
 
 test('accepts Object.prototype and null prototypes but rejects custom prototypes', () => {
@@ -369,17 +374,17 @@ test('accepts Object.prototype and null prototypes but rejects custom prototypes
 
 test('detects duplicate category names, IDs in each collection, and dangling refs', () => {
   const categories = makeBudget(); categories.categories.push({ name: 'Home', items: [] });
-  expectCode('DUPLICATE_VALUE', () => Schema.validateActive(categories));
+  expectCode('DUPLICATE_VALUE', () => validateV1Input(categories));
   const paychecks = makeBudget(); paychecks.months['2026-01'].paychecks.push({
     id: 'paycheck-example-1', earner: 'Example Earner', amount: 1, date: ''
   });
-  expectCode('DUPLICATE_ID', () => Schema.validateActive(paychecks));
+  expectCode('DUPLICATE_ID', () => validateV1Input(paychecks));
   const expenses = makeBudget(); expenses.months['2026-01'].expenses.push({
     ...expenses.months['2026-01'].expenses[0], paycheckAmounts: {}
   });
-  expectCode('DUPLICATE_ID', () => Schema.validateActive(expenses));
+  expectCode('DUPLICATE_ID', () => validateV1Input(expenses));
   const dangling = makeBudget(); dangling.months['2026-01'].expenses[0].paycheckAmounts = { missing: 0 };
-  expectCode('DANGLING_PAYCHECK_REFERENCE', () => Schema.validateActive(dangling));
+  expectCode('DANGLING_PAYCHECK_REFERENCE', () => validateV1Input(dangling));
 });
 
 test('rejects blocked identifier values before they can become dynamic keys', () => {
@@ -387,11 +392,11 @@ test('rejects blocked identifier values before they can become dynamic keys', ()
     const paycheck = makeBudget();
     paycheck.months['2026-01'].paychecks[0].id = blocked;
     paycheck.months['2026-01'].expenses[0].paycheckAmounts = {};
-    expectCode('UNSAFE_IDENTIFIER', () => Schema.validateActive(paycheck));
+    expectCode('UNSAFE_IDENTIFIER', () => validateV1Input(paycheck));
 
     const expense = makeBudget();
     expense.months['2026-01'].expenses[0].id = blocked;
-    expectCode('UNSAFE_IDENTIFIER', () => Schema.validateActive(expense));
+    expectCode('UNSAFE_IDENTIFIER', () => validateV1Input(expense));
   }
 });
 
@@ -415,7 +420,7 @@ test('category display names retain hostile key spellings as ordinary string val
   const budget = makeBudget();
   budget.categories[0].name = '__proto__';
   budget.months['2026-01'].expenses[0].category = '__proto__';
-  assert.equal(Schema.validateActive(budget), true);
+  assert.equal(validateV1Input(budget), true);
 });
 
 test('classic-script and CommonJS expose the exact same public API and behavior', () => {
@@ -447,7 +452,7 @@ test('dormant v2 migration matches its exact golden deterministically without mu
   assert.equal(JSON.stringify(first), JSON.stringify(second));
   assert.equal(JSON.stringify(source), before);
   assert.equal(Schema.validateV2(first), true);
-  assert.equal(Schema.SCHEMA_VERSION, 1);
+  assert.equal(Schema.SCHEMA_VERSION, 2);
   assert.equal(Schema.V2_SCHEMA_VERSION, 2);
 });
 
@@ -526,21 +531,51 @@ test('v2 retains v1 bounds and rejects unsupported migration versions', () => {
   expectCode('UNSUPPORTED_SCHEMA_VERSION', () => Schema.migrateToV2(invalid));
 });
 
-test('active v1 parsers and envelopes remain v1 and reject dormant v2', () => {
+test('active validation is strict v2 while parsers and v1 envelopes migrate to v2', () => {
   const v2 = readFixture('schema-v2-golden.json');
-  expectCode('UNSUPPORTED_SCHEMA_VERSION', () => Schema.validateActive(v2));
-  expectCode('UNSUPPORTED_SCHEMA_VERSION', () => Schema.parseActive(JSON.stringify(v2)));
-  const backup = { format: Schema.BACKUP_FORMAT, formatVersion: Schema.BACKUP_FORMAT_VERSION, exportedAt: '2027-03-01T00:00:00.000Z', data: v2 };
-  expectCode('UNSUPPORTED_SCHEMA_VERSION', () => Schema.parseBackup(JSON.stringify(backup)));
-  assert.equal(Schema.buildBackup(makeBudget(), '2027-03-01T00:00:00.000Z').data.schemaVersion, 1);
+  assert.equal(Schema.validateActive(v2), true);
+  expectCode('UNSUPPORTED_SCHEMA_VERSION', () => Schema.validateActive(makeBudget()));
+  assert.deepEqual(Schema.parseActive(JSON.stringify(v2)), v2);
+  assert.equal(Schema.parseActive(JSON.stringify(makeBudget())).schemaVersion, 2);
+  const backup = { format: Schema.BACKUP_FORMAT, formatVersion: Schema.BACKUP_FORMAT_VERSION, exportedAt: '2027-03-01T00:00:00.000Z', data: makeBudget() };
+  assert.equal(Schema.parseBackup(JSON.stringify(backup)).data.schemaVersion, 2);
+  assert.equal(Schema.buildBackup(makeBudget(), '2027-03-01T00:00:00.000Z').data.schemaVersion, 2);
   const snapshot = {
     format: Schema.SNAPSHOT_FORMAT, formatVersion: Schema.SNAPSHOT_FORMAT_VERSION,
-    createdAt: '2027-03-01T00:00:00.000Z', localDate: '2027-03-01', reason: 'daily', data: v2
+    createdAt: '2027-03-01T00:00:00.000Z', localDate: '2027-03-01', reason: 'daily', data: makeBudget()
   };
-  expectCode('UNSUPPORTED_SCHEMA_VERSION', () => Schema.parseSnapshot(JSON.stringify(snapshot)));
+  assert.equal(Schema.parseSnapshot(JSON.stringify(snapshot)).data.schemaVersion, 2);
   assert.equal(Schema.buildSnapshot(makeBudget(), {
     createdAt: '2027-03-01T00:00:00.000Z', localDate: '2027-03-01', reason: 'daily'
-  }).data.schemaVersion, 1);
+  }).data.schemaVersion, 2);
+  assert.equal(Schema.BACKUP_FORMAT_VERSION, 1);
+  assert.equal(Schema.SNAPSHOT_FORMAT_VERSION, 1);
+});
+
+test('format-v1 backup and snapshot parsers migrate embedded v0, v1, and v2 data', () => {
+  const v1 = makeBudget();
+  const v0 = structuredClone(v1); delete v0.schemaVersion;
+  const v2 = Schema.migrateToV2(v1);
+  for (const embedded of [v0, v1, v2]) {
+    const backup = {
+      format: Schema.BACKUP_FORMAT,
+      formatVersion: 1,
+      exportedAt: '2027-03-01T00:00:00.000Z',
+      data: embedded
+    };
+    assert.equal(Schema.parseBackup(JSON.stringify(backup)).data.schemaVersion, 2);
+    for (const reason of ['daily', 'pre-import', 'pre-reset']) {
+      const snapshot = {
+        format: Schema.SNAPSHOT_FORMAT,
+        formatVersion: 1,
+        createdAt: '2027-03-01T00:00:00.000Z',
+        localDate: '2027-03-01',
+        reason,
+        data: embedded
+      };
+      assert.equal(Schema.parseSnapshot(JSON.stringify(snapshot)).data.schemaVersion, 2);
+    }
+  }
 });
 
 test('backup envelopes enforce exact shape, format, date, and detachment', () => {

@@ -102,7 +102,7 @@ const BudgetView = {
   },
 
   showPaycheckModal(existing) {
-    const earners = Store.getData().settings.earners;
+    const earners = Store.getEarners();
     const title = existing ? 'Edit Paycheck' : 'Add Paycheck';
 
     App.showModal(title, `
@@ -121,25 +121,37 @@ const BudgetView = {
         </div>
       </div>
     `, () => {
-      const earner = document.getElementById('field-earner').value;
+      const earnerId = document.getElementById('field-earner').value;
       const amountInput = document.getElementById('field-amount');
       if (!amountInput.reportValidity()) return false;
       const amount = Number(amountInput.value);
       const date = document.getElementById('field-date').value;
 
+      const updates = { amount, date };
+      if (!existing || earnerId !== existing.earnerId) updates.earnerId = earnerId;
       return App.runMutation(() => existing
-        ? Store.updatePaycheck(this.currentMonth, existing.id, { earner, amount, date })
-        : Store.addPaycheck(this.currentMonth, { earner, amount, date }),
+        ? Store.editPaycheck(this.currentMonth, existing.id, updates)
+        : Store.addPaycheck(this.currentMonth, { earnerId, amount, date }),
       { onSuccess: () => {
         this.render();
         if (existing) this.focusEditControl('paycheck', existing.id);
       } });
     });
+    document.getElementById('modal-save').disabled = false;
     const earnerSelect = document.getElementById('field-earner');
+    const currentEarner = existing ? Store.getEarner(existing.earnerId) : null;
+    if (currentEarner && currentEarner.archived) {
+      const option = document.createElement('option'); option.value = currentEarner.id;
+      option.textContent = `${currentEarner.name} (Archived)`; option.selected = true; earnerSelect.append(option);
+    }
     earners.forEach(earner => {
-      const option = document.createElement('option'); option.value = earner; option.textContent = earner;
-      option.selected = Boolean(existing && existing.earner === earner); earnerSelect.append(option);
+      const option = document.createElement('option'); option.value = earner.id; option.textContent = earner.name;
+      option.selected = Boolean(existing && existing.earnerId === earner.id); earnerSelect.append(option);
     });
+    if (!earnerSelect.options.length) {
+      const option = document.createElement('option'); option.textContent = 'No active earners available'; option.disabled = true; option.selected = true;
+      earnerSelect.append(option); document.getElementById('modal-save').disabled = true;
+    }
     document.getElementById('field-amount').value = existing ? existing.amount : '';
     document.getElementById('field-date').value = existing ? existing.date : '';
   },
@@ -159,7 +171,7 @@ const BudgetView = {
 
   renderExpenses() {
     const month = Store.getMonth(this.currentMonth);
-    const categories = Store.getData().categories;
+    const categories = Store.getCategories({ includeArchived: true });
     const container = document.getElementById('expenses-container');
     const paychecks = month.paychecks;
 
@@ -172,20 +184,19 @@ const BudgetView = {
     });
 
     container.replaceChildren();
-    for (const cat of categories) {
-      const items = grouped.get(cat.name) || [];
+    for (const [categoryLabel, items] of grouped) {
       if (items.length === 0) continue;
 
       const catProjected = items.reduce((s, e) => s + Store.expenseProjected(e), 0);
       const catActual = items.reduce((s, e) => s + (e.actual || 0), 0);
-      const isCollapsed = this.collapsedCategories.get(cat.name);
+      const isCollapsed = this.collapsedCategories.get(categoryLabel);
 
-      const group = this.element('div', 'category-group'); group.dataset.category = cat.name;
+      const group = this.element('div', 'category-group'); group.dataset.category = categoryLabel;
       const header = this.element('button', 'category-header'); header.type = 'button'; header.setAttribute('aria-expanded', String(!isCollapsed));
       const name = this.element('span', 'category-name');
-      name.append(this.element('span', `category-toggle ${isCollapsed ? '' : 'open'}`, '▶'), document.createTextNode(cat.name), this.element('span', 'category-count', `(${items.length})`));
+      name.append(this.element('span', `category-toggle ${isCollapsed ? '' : 'open'}`, '▶'), document.createTextNode(categoryLabel), this.element('span', 'category-count', `(${items.length})`));
       header.append(name, this.element('span', 'category-total', `Proj: ${this.fmt(catProjected)} | Act: ${this.fmt(catActual)}`));
-      header.addEventListener('click', () => this.toggleCategory(cat.name));
+      header.addEventListener('click', () => this.toggleCategory(categoryLabel));
       const itemsContainer = this.element('div', 'category-items'); itemsContainer.hidden = Boolean(isCollapsed);
       const table = this.element('table', 'expense-table'); const head = table.createTHead().insertRow();
       const labels = [['Name', 'col-name'], ...paychecks.map(p => [this.getPaycheckShortLabel(p), 'col-pc']), ['Total', 'col-total'], ['Actual', 'col-actual'], ['Method', 'col-method'], ['Actions', 'col-actions']];
@@ -281,7 +292,7 @@ const BudgetView = {
   },
 
   showExpenseModal(existing) {
-    const categories = Store.getData().categories;
+    const categories = Store.getCategories();
     const title = existing ? 'Edit Expense' : 'Add Expense';
 
     App.showModal(title, `
@@ -309,53 +320,74 @@ const BudgetView = {
         </select>
       </div>
     `, () => {
-      const category = document.getElementById('field-category').value;
-      const preset = document.getElementById('field-preset').value;
+      const categoryId = document.getElementById('field-category').value;
+      const categoryItemId = document.getElementById('field-preset').value || null;
       const customName = document.getElementById('field-name').value.trim();
-      const name = customName || preset;
       const paymentMethod = document.getElementById('field-method').value;
 
-      if (!name || name.length > 120) { document.getElementById('field-name').reportValidity(); return false; }
+      if (categoryItemId === null && (!customName || customName.length > 120)) { document.getElementById('field-name').reportValidity(); return false; }
+      const updates = { paymentMethod };
+      const structureChanged = !existing || categoryId !== existing.categoryId || categoryItemId !== existing.categoryItemId;
+      if (structureChanged) Object.assign(updates, { categoryId, categoryItemId, name: customName });
+      else if (categoryItemId === null && customName !== existing.name) updates.name = customName;
       return App.runMutation(() => existing
-        ? Store.updateExpense(this.currentMonth, existing.id, { category, name, paymentMethod })
+        ? Store.editExpense(this.currentMonth, existing.id, updates)
         : Store.addExpense(this.currentMonth, {
-          category,
-          name,
-          paycheckAmounts: {},
+          categoryId, categoryItemId, name: customName, paycheckAmounts: {},
           actual: 0,
           paymentMethod
         }), { onSuccess: () => {
           this.render();
           if (existing) this.focusEditControl('expense', existing.id);
-        } });
+      } });
     });
+    document.getElementById('modal-save').disabled = false;
 
     const categorySelect = document.getElementById('field-category');
+    const currentCategory = existing ? Store.getCategory(existing.categoryId) : null;
+    if (currentCategory && currentCategory.archived) {
+      const option = document.createElement('option'); option.value = currentCategory.id;
+      option.textContent = `${currentCategory.name} (Archived)`; option.selected = true; categorySelect.append(option);
+    }
     categories.forEach(category => {
-      const option = document.createElement('option'); option.value = category.name; option.textContent = category.name;
-      option.selected = Boolean(existing && existing.category === category.name); categorySelect.append(option);
+      const option = document.createElement('option'); option.value = category.id; option.textContent = category.name;
+      option.selected = Boolean(existing && existing.categoryId === category.id); categorySelect.append(option);
     });
-    categorySelect.addEventListener('change', () => this.onCategoryChange());
-    this.onCategoryChange();
+    categorySelect.addEventListener('change', () => this.onCategoryChange(null));
+    this.onCategoryChange(existing ? existing.categoryItemId : null);
 
-    document.getElementById('field-name').value = existing ? existing.name : '';
+    document.getElementById('field-name').value = existing && existing.categoryItemId === null ? existing.name : '';
     document.getElementById('field-method').value = existing ? existing.paymentMethod : 'bank';
-    if (existing) document.getElementById('preset-group').hidden = true;
-
-    // Wire up preset selection to fill name
     document.getElementById('field-preset').addEventListener('change', function() {
-      if (this.value) document.getElementById('field-name').value = this.value;
+      const isPreset = Boolean(this.value);
+      document.getElementById('field-name').disabled = isPreset;
+      document.getElementById('field-name').required = !isPreset;
     });
+    if (!categorySelect.options.length) {
+      const option = document.createElement('option'); option.textContent = 'No active categories available'; option.disabled = true; option.selected = true;
+      categorySelect.append(option); document.getElementById('field-preset').disabled = true; document.getElementById('field-name').disabled = true;
+      document.getElementById('modal-save').disabled = true;
+    }
   },
 
-  onCategoryChange() {
-    const categories = Store.getData().categories;
+  onCategoryChange(existingId = null) {
     const selected = document.getElementById('field-category').value;
-    const cat = categories.find(c => c.name === selected);
+    const cat = Store.getCategory(selected);
     const presetEl = document.getElementById('field-preset');
     presetEl.replaceChildren();
     const custom = document.createElement('option'); custom.value = ''; custom.textContent = '-- Custom --'; presetEl.append(custom);
-    if (cat) cat.items.forEach(item => { const option = document.createElement('option'); option.value = item; option.textContent = item; presetEl.append(option); });
+    const currentItem = existingId && cat ? Store.getCategoryItem(cat.id, existingId) : null;
+    if (currentItem && currentItem.archived) {
+      const option = document.createElement('option'); option.value = currentItem.id; option.textContent = `${currentItem.name} (Archived)`;
+      option.selected = true; presetEl.append(option);
+    }
+    if (cat) Store.getCategoryItems(cat.id).forEach(item => {
+      const option = document.createElement('option'); option.value = item.id; option.textContent = item.name;
+      option.selected = item.id === existingId; presetEl.append(option);
+    });
+    const isPreset = Boolean(presetEl.value);
+    document.getElementById('field-name').disabled = isPreset;
+    document.getElementById('field-name').required = !isPreset;
   },
 
   deleteExpense(id) {

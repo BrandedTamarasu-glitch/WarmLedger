@@ -21,26 +21,52 @@ test('editing controls are visible, accessibly named, and listener-driven', () =
   assert.doesNotMatch(source, /querySelector\s*\(\s*`[^`]*\$\{/);
 });
 
-test('edit saves use the existing mutation boundary and update methods', () => {
+test('create and edit saves use structural IDs and one atomic mutation boundary', () => {
   const source = fs.readFileSync(budgetPath, 'utf8');
 
-  assert.match(source,
-    /App\.runMutation\(\(\) => existing\s*\?\s*Store\.updatePaycheck\(this\.currentMonth, existing\.id, \{ earner, amount, date \}\)/s);
-  assert.match(source,
-    /App\.runMutation\(\(\) => existing\s*\?\s*Store\.updateExpense\(this\.currentMonth, existing\.id, \{ category, name, paymentMethod \}\)/s);
+  assert.match(source, /Store\.editPaycheck\(this\.currentMonth, existing\.id, updates\)/);
+  assert.match(source, /Store\.addPaycheck\(this\.currentMonth, \{ earnerId, amount, date \}\)/);
+  assert.match(source, /Store\.editExpense\(this\.currentMonth, existing\.id, updates\)/);
+  assert.match(source, /categoryId, categoryItemId, name: customName, paycheckAmounts: \{\}/);
+  assert.doesNotMatch(source, /Store\.updatePaycheck\([^\n]+earner/);
+  assert.doesNotMatch(source, /Store\.updateExpense\([^\n]+category/);
   assert.match(source, /const title = existing \? 'Edit Paycheck' : 'Add Paycheck'/);
   assert.match(source, /const title = existing \? 'Edit Expense' : 'Add Expense'/);
 });
 
-test('edit modals prefill detached record values and preserve option selection', () => {
+test('edit modals prefill detached records and select definitions by stable ID', () => {
   const source = fs.readFileSync(budgetPath, 'utf8');
 
-  assert.match(source, /option\.selected = Boolean\(existing && existing\.earner === earner\)/);
+  assert.match(source, /option\.value = earner\.id/);
+  assert.match(source, /existing\.earnerId === earner\.id/);
   assert.match(source, /field-amount'\)\.value = existing \? existing\.amount : ''/);
   assert.match(source, /field-date'\)\.value = existing \? existing\.date : ''/);
-  assert.match(source, /option\.selected = Boolean\(existing && existing\.category === category\.name\)/);
-  assert.match(source, /field-name'\)\.value = existing \? existing\.name : ''/);
+  assert.match(source, /option\.value = category\.id/);
+  assert.match(source, /existing\.categoryId === category\.id/);
+  assert.match(source, /field-name'\)\.value = existing && existing\.categoryItemId === null \? existing\.name : ''/);
   assert.match(source, /field-method'\)\.value = existing \? existing\.paymentMethod : 'bank'/);
+});
+
+test('forms expose archived current references but only list active new choices', () => {
+  const source = fs.readFileSync(budgetPath, 'utf8');
+
+  assert.match(source, /const earners = Store\.getEarners\(\)/);
+  assert.match(source, /currentEarner\.name\} \(Archived\)/);
+  assert.match(source, /const categories = Store\.getCategories\(\)/);
+  assert.match(source, /currentCategory\.name\} \(Archived\)/);
+  assert.match(source, /Store\.getCategoryItems\(cat\.id\)/);
+  assert.match(source, /currentItem\.name\} \(Archived\)/);
+  assert.match(source, /No active earners available/);
+  assert.match(source, /No active categories available/);
+});
+
+test('preset and custom expense provenance is explicit', () => {
+  const source = fs.readFileSync(budgetPath, 'utf8');
+
+  assert.match(source, /const categoryItemId = document\.getElementById\('field-preset'\)\.value \|\| null/);
+  assert.match(source, /categoryId !== existing\.categoryId \|\| categoryItemId !== existing\.categoryItemId/);
+  assert.match(source, /categoryItemId === null && customName !== existing\.name/);
+  assert.match(source, /document\.getElementById\('field-name'\)\.disabled = isPreset/);
 });
 
 test('successful edits restore focus to the safely located replacement control', () => {

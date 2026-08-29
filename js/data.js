@@ -27,11 +27,11 @@
     Object.freeze({ key: 'investments', label: 'Investments' })
   ]);
   const EMPTY_ALLOCATIONS = Object.freeze({ savings: 0, credit_card_debt: 0, investments: 0 });
-  const GENERIC_CATEGORIES = Object.freeze([
+  const GENERIC_CATEGORY_NAMES = Object.freeze([
     'Housing', 'Transportation', 'Insurance', 'Food', 'Pets', 'Personal Care',
     'Miscellaneous', 'Debt', 'Taxes', 'Subscriptions', 'Other'
-  ].map(name => Object.freeze({ name, items: Object.freeze([]) })));
-  const GENERIC_EARNERS = Object.freeze(['Primary', 'Secondary']);
+  ]);
+  const GENERIC_EARNER_NAMES = Object.freeze(['Primary', 'Secondary']);
 
   class StoreError extends Error {
     constructor(code) {
@@ -52,10 +52,31 @@
   function defaultData() {
     return {
       schemaVersion: Schema.SCHEMA_VERSION,
-      categories: GENERIC_CATEGORIES.map(category => ({ name: category.name, items: [] })),
-      settings: { earners: [...GENERIC_EARNERS] },
+      categories: GENERIC_CATEGORY_NAMES.map((name, index) => ({
+        id: `default-category-${String(index + 1).padStart(4, '0')}`,
+        name,
+        archived: false,
+        items: []
+      })),
+      settings: { earners: GENERIC_EARNER_NAMES.map((name, index) => ({
+        id: `default-earner-${String(index + 1).padStart(4, '0')}`,
+        name,
+        archived: false
+      })) },
       months: {}
     };
+  }
+
+  function freezeDetached(value) {
+    const detached = Schema.clone(value);
+    const freeze = item => {
+      if (item && typeof item === 'object' && !Object.isFrozen(item)) {
+        Object.values(item).forEach(freeze);
+        Object.freeze(item);
+      }
+      return item;
+    };
+    return freeze(detached);
   }
 
   function localDate(date) {
@@ -261,7 +282,7 @@
       try {
         const parsed = Schema.parseActive(raw);
         data = parsed; committedRaw = raw; corruptEvidence = null;
-        loadState = 'ready'; generation += 1; pruneSnapshots();
+        loadState = 'ready'; generation += 1;
         return { state: loadState, warnings: [], migrated: raw !== JSON.stringify(parsed) };
       } catch {
         data = null; committedRaw = null; loadState = 'recovery-required'; generation += 1;
@@ -274,6 +295,36 @@
     }
 
     function getData() { requireReady(); return Schema.clone(data); }
+    function getCategories({ includeArchived = false } = {}) {
+      requireReady();
+      return freezeDetached(data.categories.filter(category => includeArchived || !category.archived));
+    }
+    function getCategory(categoryId) {
+      requireReady();
+      const category = data.categories.find(item => item.id === categoryId);
+      return category ? freezeDetached(category) : null;
+    }
+    function getCategoryItems(categoryId, { includeArchived = false } = {}) {
+      requireReady();
+      const category = data.categories.find(item => item.id === categoryId);
+      if (!category) return [];
+      return freezeDetached(category.items.filter(item => includeArchived || !item.archived));
+    }
+    function getCategoryItem(categoryId, itemId) {
+      requireReady();
+      const category = data.categories.find(item => item.id === categoryId);
+      const item = category && category.items.find(entry => entry.id === itemId);
+      return item ? freezeDetached(item) : null;
+    }
+    function getEarners({ includeArchived = false } = {}) {
+      requireReady();
+      return freezeDetached(data.settings.earners.filter(earner => includeArchived || !earner.archived));
+    }
+    function getEarner(earnerId) {
+      requireReady();
+      const earner = data.settings.earners.find(item => item.id === earnerId);
+      return earner ? freezeDetached(earner) : null;
+    }
     function peekMonth(monthKey) { requireReady(); return Schema.clone(data.months[monthKey] || emptyMonth()); }
     function ensureMonth(monthKey) {
       return transact(candidate => {
@@ -295,19 +346,93 @@
       catch (error) { throw storageError('IDENTIFIER_GENERATION_FAILED', error); }
     }
 
-    function addPaycheck(monthKey, paycheck) {
+    function patchOf(value, allowed) {
+      requireReady();
+      const patch = Schema.clone(value);
+      if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new StoreError('INVALID_PATCH');
+      const keys = Object.keys(patch);
+      if (keys.length === 0) throw new StoreError('EMPTY_PATCH');
+      if (keys.some(key => !allowed.includes(key))) throw new StoreError('FORBIDDEN_FIELD');
+      return patch;
+    }
+
+    function activeEarner(candidate, id) {
+      const earner = candidate.settings.earners.find(item => item.id === id);
+      if (!earner) throw new StoreError('EARNER_NOT_FOUND');
+      if (earner.archived) throw new StoreError('EARNER_ARCHIVED');
+      return earner;
+    }
+
+    function activeCategory(candidate, id) {
+      const category = candidate.categories.find(item => item.id === id);
+      if (!category) throw new StoreError('CATEGORY_NOT_FOUND');
+      if (category.archived) throw new StoreError('CATEGORY_ARCHIVED');
+      return category;
+    }
+
+    function activeCategoryItem(category, id) {
+      const item = category.items.find(entry => entry.id === id);
+      if (!item) throw new StoreError('CATEGORY_ITEM_NOT_FOUND');
+      if (item.archived) throw new StoreError('CATEGORY_ITEM_ARCHIVED');
+      return item;
+    }
+
+    function applyExpenseStructure(expense, category, categoryItemId, customName) {
+      expense.categoryId = category.id;
+      expense.category = category.name;
+      expense.categoryItemId = categoryItemId;
+      if (categoryItemId === null) {
+        if (typeof customName !== 'string' || customName.length === 0) throw new StoreError('EXPENSE_NAME_REQUIRED');
+        expense.name = customName;
+      } else {
+        expense.name = activeCategoryItem(category, categoryItemId).name;
+      }
+    }
+
+    function addPaycheck(monthKey, input) {
+      const paycheck = patchOf(input, ['earnerId', 'amount', 'date']);
+      if (!Object.hasOwn(paycheck, 'earnerId') || !Object.hasOwn(paycheck, 'amount') || !Object.hasOwn(paycheck, 'date')) {
+        throw new StoreError('MISSING_FIELD');
+      }
       return transact(candidate => {
-        const created = { ...Schema.clone(paycheck), id: newId() };
+        const earner = activeEarner(candidate, paycheck.earnerId);
+        const created = { id: newId(), earnerId: earner.id, earner: earner.name, amount: paycheck.amount, date: paycheck.date };
         requireMonth(candidate, monthKey).paychecks.push(created);
         return created;
       });
     }
     function updatePaycheck(monthKey, id, updates) {
+      const patch = patchOf(updates, ['amount', 'date']);
       return transact(candidate => {
         const month = candidate.months[monthKey];
         if (!month) throw new StoreError('MONTH_NOT_FOUND');
         const paycheck = findOrThrow(month.paychecks, id, 'PAYCHECK_NOT_FOUND');
-        Object.assign(paycheck, Schema.clone(updates));
+        Object.assign(paycheck, patch);
+        return paycheck;
+      });
+    }
+    function reassignPaycheckEarner(monthKey, id, earnerId) {
+      return transact(candidate => {
+        const month = candidate.months[monthKey];
+        if (!month) throw new StoreError('MONTH_NOT_FOUND');
+        const paycheck = findOrThrow(month.paychecks, id, 'PAYCHECK_NOT_FOUND');
+        const earner = activeEarner(candidate, earnerId);
+        paycheck.earnerId = earner.id; paycheck.earner = earner.name;
+        return paycheck;
+      });
+    }
+    function editPaycheck(monthKey, id, updates) {
+      const patch = patchOf(updates, ['earnerId', 'amount', 'date']);
+      return transact(candidate => {
+        const month = candidate.months[monthKey];
+        if (!month) throw new StoreError('MONTH_NOT_FOUND');
+        const paycheck = findOrThrow(month.paychecks, id, 'PAYCHECK_NOT_FOUND');
+        if (Object.hasOwn(patch, 'earnerId')) {
+          const earner = activeEarner(candidate, patch.earnerId);
+          paycheck.earnerId = earner.id; paycheck.earner = earner.name;
+        }
+        if (Object.hasOwn(patch, 'amount')) paycheck.amount = patch.amount;
+        if (Object.hasOwn(patch, 'date')) paycheck.date = patch.date;
         return paycheck;
       });
     }
@@ -321,22 +446,63 @@
         for (const expense of month.expenses) delete expense.paycheckAmounts[id];
       });
     }
-    function addExpense(monthKey, expense) {
+    function addExpense(monthKey, input) {
+      const expense = patchOf(input, ['categoryId', 'categoryItemId', 'name', 'paycheckAmounts', 'actual', 'paymentMethod']);
+      if (!Object.hasOwn(expense, 'categoryId') || !Object.hasOwn(expense, 'categoryItemId') ||
+          !Object.hasOwn(expense, 'paymentMethod')) throw new StoreError('MISSING_FIELD');
       return transact(candidate => {
-        const created = {
-          ...Schema.clone(expense), id: newId(),
-          paycheckAmounts: expense.paycheckAmounts ? Schema.clone(expense.paycheckAmounts) : {}
-        };
+        const category = activeCategory(candidate, expense.categoryId);
+        const created = { id: newId() };
+        applyExpenseStructure(created, category, expense.categoryItemId, expense.name);
+        created.paycheckAmounts = expense.paycheckAmounts || {};
+        created.actual = Object.hasOwn(expense, 'actual') ? expense.actual : 0;
+        created.paymentMethod = expense.paymentMethod;
         requireMonth(candidate, monthKey).expenses.push(created);
         return created;
       });
     }
     function updateExpense(monthKey, id, updates) {
+      const patch = patchOf(updates, ['name', 'actual', 'paymentMethod']);
       return transact(candidate => {
         const month = candidate.months[monthKey];
         if (!month) throw new StoreError('MONTH_NOT_FOUND');
         const expense = findOrThrow(month.expenses, id, 'EXPENSE_NOT_FOUND');
-        Object.assign(expense, Schema.clone(updates));
+        if (Object.hasOwn(patch, 'name') && patch.name !== expense.name) {
+          expense.name = patch.name;
+          expense.categoryItemId = null;
+        }
+        if (Object.hasOwn(patch, 'actual')) expense.actual = patch.actual;
+        if (Object.hasOwn(patch, 'paymentMethod')) expense.paymentMethod = patch.paymentMethod;
+        return expense;
+      });
+    }
+    function reassignExpenseStructure(monthKey, id, structure) {
+      const patch = patchOf(structure, ['categoryId', 'categoryItemId', 'name']);
+      if (!Object.hasOwn(patch, 'categoryId') || !Object.hasOwn(patch, 'categoryItemId')) throw new StoreError('MISSING_FIELD');
+      return transact(candidate => {
+        const month = candidate.months[monthKey];
+        if (!month) throw new StoreError('MONTH_NOT_FOUND');
+        const expense = findOrThrow(month.expenses, id, 'EXPENSE_NOT_FOUND');
+        applyExpenseStructure(expense, activeCategory(candidate, patch.categoryId), patch.categoryItemId, patch.name);
+        return expense;
+      });
+    }
+    function editExpense(monthKey, id, updates) {
+      const patch = patchOf(updates, ['categoryId', 'categoryItemId', 'name', 'actual', 'paymentMethod']);
+      const structural = Object.hasOwn(patch, 'categoryId') || Object.hasOwn(patch, 'categoryItemId');
+      if (structural && (!Object.hasOwn(patch, 'categoryId') || !Object.hasOwn(patch, 'categoryItemId'))) {
+        throw new StoreError('MISSING_FIELD');
+      }
+      return transact(candidate => {
+        const month = candidate.months[monthKey];
+        if (!month) throw new StoreError('MONTH_NOT_FOUND');
+        const expense = findOrThrow(month.expenses, id, 'EXPENSE_NOT_FOUND');
+        if (structural) applyExpenseStructure(expense, activeCategory(candidate, patch.categoryId), patch.categoryItemId, patch.name);
+        else if (Object.hasOwn(patch, 'name') && patch.name !== expense.name) {
+          expense.name = patch.name; expense.categoryItemId = null;
+        }
+        if (Object.hasOwn(patch, 'actual')) expense.actual = patch.actual;
+        if (Object.hasOwn(patch, 'paymentMethod')) expense.paymentMethod = patch.paymentMethod;
         return expense;
       });
     }
@@ -520,7 +686,9 @@
 
     return Object.freeze({
       load, getStatus, getData, getMonth: peekMonth, peekMonth, ensureMonth, getAllMonthKeys,
-      expenseProjected, addPaycheck, updatePaycheck, deletePaycheck, addExpense, updateExpense,
+      getCategories, getCategory, getCategoryItems, getCategoryItem, getEarners, getEarner,
+      expenseProjected, addPaycheck, updatePaycheck, reassignPaycheckEarner, editPaycheck, deletePaycheck, addExpense, updateExpense,
+      reassignExpenseStructure, editExpense,
       updateExpensePaycheckAmount, deleteExpense, updateAllocations, updateAllocation, copyFromMonth,
       clearMonth, calcMonthSummary, calcPaycheckRemaining, calcCategoryTotals, calcPaymentMethodTotals,
       buildExport, exportData, previewImport, commitImport, importData, listSnapshots,

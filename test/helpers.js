@@ -5,22 +5,28 @@ const SAMPLE_IDS = Object.freeze({
   expense: 'expense-example-1'
 });
 
-function makeBudget(overrides = {}) {
+function makeV2Budget(overrides = {}) {
   const budget = {
-    schemaVersion: 1,
-    categories: [{ name: 'Home', items: ['Rent'] }],
-    settings: { earners: ['Example Earner'] },
+    schemaVersion: 2,
+    categories: [{
+      id: 'category-example-1', name: 'Home', archived: false,
+      items: [{ id: 'item-example-1', name: 'Rent', archived: false }]
+    }],
+    settings: { earners: [{ id: 'earner-example-1', name: 'Example Earner', archived: false }] },
     months: {
       '2026-01': {
         paychecks: [{
           id: SAMPLE_IDS.paycheck,
+          earnerId: 'earner-example-1',
           earner: 'Example Earner',
           amount: 2500,
           date: '2026-01-15'
         }],
         expenses: [{
           id: SAMPLE_IDS.expense,
+          categoryId: 'category-example-1',
           category: 'Home',
+          categoryItemId: 'item-example-1',
           name: 'Rent',
           paycheckAmounts: { [SAMPLE_IDS.paycheck]: 1200 },
           actual: 1200,
@@ -35,6 +41,25 @@ function makeBudget(overrides = {}) {
     }
   };
 
+  return Object.assign(budget, overrides);
+}
+
+function makeBudget(overrides = {}) {
+  const budget = {
+    schemaVersion: 1,
+    categories: [{ name: 'Home', items: ['Rent'] }],
+    settings: { earners: ['Example Earner'] },
+    months: {
+      '2026-01': {
+        paychecks: [{ id: SAMPLE_IDS.paycheck, earner: 'Example Earner', amount: 2500, date: '2026-01-15' }],
+        expenses: [{
+          id: SAMPLE_IDS.expense, category: 'Home', name: 'Rent',
+          paycheckAmounts: { [SAMPLE_IDS.paycheck]: 1200 }, actual: 1200, paymentMethod: 'bank'
+        }],
+        allocations: { savings: 400, credit_card_debt: 100, investments: 200 }
+      }
+    }
+  };
   return Object.assign(budget, overrides);
 }
 
@@ -118,4 +143,4 @@ function makeUuid(...ids) {
   };
 }
 
-module.exports = { SAMPLE_IDS, makeBudget, MemoryStorage, makeClock, makeUuid };
+module.exports = { SAMPLE_IDS, makeBudget, makeV1Budget: makeBudget, makeV2Budget, MemoryStorage, makeClock, makeUuid };

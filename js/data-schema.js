@@ -7,8 +7,9 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function() {
   'use strict';
 
-  const SCHEMA_VERSION = 1;
+  const SCHEMA_VERSION = 2;
   const V2_SCHEMA_VERSION = 2;
+  const LEGACY_SCHEMA_VERSION = 1;
   const BACKUP_FORMAT = 'zerobudget-backup';
   const BACKUP_FORMAT_VERSION = 1;
   const SNAPSHOT_FORMAT = 'zerobudget-snapshot';
@@ -210,10 +211,10 @@
     }
   }
 
-  function validateActive(input) {
+  function validateV1(input) {
     clone(input);
     expectExactKeys(input, ['schemaVersion', 'categories', 'settings', 'months'], '$');
-    if (input.schemaVersion !== SCHEMA_VERSION) fail('UNSUPPORTED_SCHEMA_VERSION', '$.schemaVersion');
+    if (input.schemaVersion !== LEGACY_SCHEMA_VERSION) fail('UNSUPPORTED_SCHEMA_VERSION', '$.schemaVersion');
 
     expectArray(input.categories, '$.categories', 100);
     const categoryNames = [];
@@ -433,12 +434,12 @@
     return true;
   }
 
-  function migrateActive(input) {
+  function migrateToV1(input) {
     const migrated = clone(input);
     if (!isPlainObject(migrated)) fail('EXPECTED_OBJECT', '$');
     if (Object.hasOwn(migrated, 'schemaVersion')) {
-      if (migrated.schemaVersion !== SCHEMA_VERSION) fail('UNSUPPORTED_SCHEMA_VERSION', '$.schemaVersion');
-      validateActive(migrated);
+      if (migrated.schemaVersion !== LEGACY_SCHEMA_VERSION) fail('UNSUPPORTED_SCHEMA_VERSION', '$.schemaVersion');
+      validateV1(migrated);
       return clone(migrated);
     }
     for (const key of Object.keys(migrated)) {
@@ -472,8 +473,8 @@
 
     if (!Object.hasOwn(migrated, 'categories')) migrated.categories = clone(DEFAULT_CATEGORIES);
     if (!Object.hasOwn(migrated, 'settings')) migrated.settings = { earners: clone(DEFAULT_EARNERS) };
-    migrated.schemaVersion = SCHEMA_VERSION;
-    validateActive(migrated);
+    migrated.schemaVersion = LEGACY_SCHEMA_VERSION;
+    validateV1(migrated);
     return clone(migrated);
   }
 
@@ -484,10 +485,10 @@
       validateV2(source);
       return clone(source);
     }
-    if (Object.hasOwn(source, 'schemaVersion') && source.schemaVersion !== SCHEMA_VERSION) {
+    if (Object.hasOwn(source, 'schemaVersion') && source.schemaVersion !== LEGACY_SCHEMA_VERSION) {
       fail('UNSUPPORTED_SCHEMA_VERSION', '$.schemaVersion');
     }
-    const active = migrateActive(source);
+    const active = migrateToV1(source);
     const categoryIdsByName = new Map();
     const categories = active.categories.map((category, categoryIndex) => {
       const number = String(categoryIndex + 1).padStart(4, '0');
@@ -538,6 +539,14 @@
     return clone(migrated);
   }
 
+  function validateActive(input) {
+    return validateV2(input);
+  }
+
+  function migrateActive(input) {
+    return migrateToV2(input);
+  }
+
   function parseJson(text, path) {
     if (typeof text !== 'string') fail('EXPECTED_JSON_TEXT', path);
     try {
@@ -569,8 +578,7 @@
     if (envelope.format !== BACKUP_FORMAT) fail('INVALID_BACKUP_FORMAT', '$.format');
     if (envelope.formatVersion !== BACKUP_FORMAT_VERSION) fail('UNSUPPORTED_BACKUP_VERSION', '$.formatVersion');
     expectTimestamp(envelope.exportedAt, '$.exportedAt');
-    validateActive(envelope.data);
-    const data = clone(envelope.data);
+    const data = migrateActive(envelope.data);
     return { format: envelope.format, formatVersion: envelope.formatVersion, exportedAt: envelope.exportedAt, data };
   }
 
@@ -602,8 +610,7 @@
     if (typeof envelope.localDate !== 'string') fail('INVALID_DATE', '$.localDate');
     expectDate(envelope.localDate, '$.localDate');
     if (!SNAPSHOT_REASONS.has(envelope.reason)) fail('INVALID_SNAPSHOT_REASON', '$.reason');
-    validateActive(envelope.data);
-    const data = clone(envelope.data);
+    const data = migrateActive(envelope.data);
     return {
       format: envelope.format,
       formatVersion: envelope.formatVersion,
