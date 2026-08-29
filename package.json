@@ -1,0 +1,7 @@
+{
+  "name": "zerobudget",
+  "private": true,
+  "scripts": {
+    "test": "node --test"
+  }
+}

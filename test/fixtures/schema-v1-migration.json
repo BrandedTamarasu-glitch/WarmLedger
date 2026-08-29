@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "categories": [
+    { "name": "Shelter", "items": ["Lease", "Shared", "Shared"] },
+    { "name": "Travel", "items": [] }
+  ],
+  "settings": { "earners": ["Example A", "Example B"] },
+  "months": {
+    "2027-03": {
+      "paychecks": [
+        { "id": "pay-1", "earner": "Example A", "amount": 2400, "date": "2027-03-12" }
+      ],
+      "expenses": [
+        {
+          "id": "expense-1",
+          "category": "Shelter",
+          "name": "Historical label",
+          "paycheckAmounts": { "pay-1": 975 },
+          "actual": 980,
+          "paymentMethod": "bank"
+        }
+      ],
+      "allocations": { "savings": 225, "credit_card_debt": 75, "investments": 125 }
+    }
+  }
+}

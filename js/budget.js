@@ -2,7 +2,7 @@
 
 const BudgetView = {
   currentMonth: null,
-  collapsedCategories: {},
+  collapsedCategories: new Map(),
 
   init() {
     const now = new Date();
@@ -56,41 +56,49 @@ const BudgetView = {
     return '$' + (n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   },
 
+  element(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  },
+
+  focusEditControl(type, id) {
+    requestAnimationFrame(() => {
+      const control = [...document.querySelectorAll('.btn-edit')]
+        .find(button => button.dataset.editType === type && button.dataset.recordId === id);
+      if (control) control.focus();
+    });
+  },
+
   // ---- Paychecks ----
   renderPaychecks() {
     const month = Store.getMonth(this.currentMonth);
     const container = document.getElementById('paychecks-list');
 
     if (month.paychecks.length === 0) {
-      container.innerHTML = '<div style="color:var(--text-muted);font-size:14px;">No paychecks added yet. Click "+ Add Paycheck" to start.</div>';
+      container.replaceChildren(this.element('div', 'muted-text', 'No paychecks added yet. Click “Add Paycheck” to start.'));
       return;
     }
-
-    container.innerHTML = month.paychecks.map(p => {
+    container.replaceChildren();
+    month.paychecks.forEach(p => {
       const remaining = Store.calcPaycheckRemaining(this.currentMonth, p.id);
       let remClass = 'zero';
       if (remaining > 0.01) remClass = 'positive';
       else if (remaining < -0.01) remClass = 'negative';
-
-      return `
-        <div class="paycheck-card" data-id="${p.id}">
-          <div class="paycheck-header">
-            <div>
-              <div class="paycheck-earner">${this.esc(p.earner)}</div>
-              <div class="paycheck-date">${p.date || ''}</div>
-            </div>
-            <div style="display:flex;align-items:center;gap:8px;">
-              <div class="paycheck-amount">${this.fmt(p.amount)}</div>
-              <button class="btn-delete" onclick="BudgetView.deletePaycheck('${p.id}')" title="Delete">&times;</button>
-            </div>
-          </div>
-          <div class="paycheck-remaining">
-            <span>Remaining</span>
-            <span class="paycheck-remaining-value ${remClass}">${this.fmt(remaining)}</span>
-          </div>
-        </div>
-      `;
-    }).join('');
+      const card = this.element('div', 'paycheck-card'); card.dataset.id = p.id;
+      const header = this.element('div', 'paycheck-header'); const identity = this.element('div');
+      identity.append(this.element('div', 'paycheck-earner', p.earner), this.element('div', 'paycheck-date', p.date));
+      const actions = this.element('div', 'paycheck-actions'); actions.append(this.element('div', 'paycheck-amount', this.fmt(p.amount)));
+      const editButton = this.element('button', 'btn btn-sm btn-edit', 'Edit'); editButton.type = 'button';
+      editButton.dataset.editType = 'paycheck'; editButton.dataset.recordId = p.id;
+      editButton.setAttribute('aria-label', `Edit paycheck for ${p.earner}`);
+      editButton.addEventListener('click', () => this.showPaycheckModal(p)); actions.append(editButton);
+      const button = this.element('button', 'btn-delete', '×'); button.type = 'button'; button.setAttribute('aria-label', `Delete paycheck for ${p.earner}`);
+      button.addEventListener('click', () => this.deletePaycheck(p.id)); actions.append(button); header.append(identity, actions);
+      const remainder = this.element('div', 'paycheck-remaining'); remainder.append(this.element('span', '', 'Remaining'), this.element('span', `paycheck-remaining-value ${remClass}`, this.fmt(remaining)));
+      card.append(header, remainder); container.append(card);
+    });
   },
 
   showPaycheckModal(existing) {
@@ -99,41 +107,46 @@ const BudgetView = {
 
     App.showModal(title, `
       <div class="form-group">
-        <label>Earner</label>
-        <select id="field-earner">
-          ${earners.map(e => `<option value="${e}" ${existing && existing.earner === e ? 'selected' : ''}>${e}</option>`).join('')}
-        </select>
+        <label for="field-earner">Earner</label>
+        <select id="field-earner"></select>
       </div>
       <div class="form-row">
         <div class="form-group">
-          <label>Amount (net/take-home)</label>
-          <input type="number" id="field-amount" step="0.01" value="${existing ? existing.amount : ''}">
+          <label for="field-amount">Amount (net/take-home)</label>
+          <input type="number" id="field-amount" step="0.01" min="0.01" max="1000000000000" required>
         </div>
         <div class="form-group">
-          <label>Pay Date</label>
-          <input type="date" id="field-date" value="${existing ? existing.date : ''}">
+          <label for="field-date">Pay Date</label>
+          <input type="date" id="field-date">
         </div>
       </div>
     `, () => {
       const earner = document.getElementById('field-earner').value;
-      const amount = parseFloat(document.getElementById('field-amount').value) || 0;
+      const amountInput = document.getElementById('field-amount');
+      if (!amountInput.reportValidity()) return false;
+      const amount = Number(amountInput.value);
       const date = document.getElementById('field-date').value;
 
-      if (amount <= 0) return;
-
-      if (existing) {
-        Store.updatePaycheck(this.currentMonth, existing.id, { earner, amount, date });
-      } else {
-        Store.addPaycheck(this.currentMonth, { earner, amount, date });
-      }
-      this.render();
+      return App.runMutation(() => existing
+        ? Store.updatePaycheck(this.currentMonth, existing.id, { earner, amount, date })
+        : Store.addPaycheck(this.currentMonth, { earner, amount, date }),
+      { onSuccess: () => {
+        this.render();
+        if (existing) this.focusEditControl('paycheck', existing.id);
+      } });
     });
+    const earnerSelect = document.getElementById('field-earner');
+    earners.forEach(earner => {
+      const option = document.createElement('option'); option.value = earner; option.textContent = earner;
+      option.selected = Boolean(existing && existing.earner === earner); earnerSelect.append(option);
+    });
+    document.getElementById('field-amount').value = existing ? existing.amount : '';
+    document.getElementById('field-date').value = existing ? existing.date : '';
   },
 
   deletePaycheck(id) {
     if (confirm('Delete this paycheck?')) {
-      Store.deletePaycheck(this.currentMonth, id);
-      this.render();
+      App.runMutation(() => Store.deletePaycheck(this.currentMonth, id), { onSuccess: () => this.render(), onFailure: () => this.render() });
     }
   },
 
@@ -151,94 +164,77 @@ const BudgetView = {
     const paychecks = month.paychecks;
 
     // Group expenses by category
-    const grouped = {};
-    categories.forEach(c => { grouped[c.name] = []; });
+    const grouped = new Map();
+    categories.forEach(c => { grouped.set(c.name, []); });
     month.expenses.forEach(e => {
-      if (!grouped[e.category]) grouped[e.category] = [];
-      grouped[e.category].push(e);
+      if (!grouped.has(e.category)) grouped.set(e.category, []);
+      grouped.get(e.category).push(e);
     });
 
-    // Build table header columns
-    let thCols = '<th class="col-name">Name</th>';
-    paychecks.forEach(p => {
-      thCols += `<th class="col-pc" title="${this.esc(p.earner)} - ${p.date || ''}">${this.esc(this.getPaycheckShortLabel(p))}</th>`;
-    });
-    thCols += '<th class="col-total">Total</th><th class="col-actual">Actual</th><th class="col-method">Method</th><th class="col-del"></th>';
-
-    let html = '';
+    container.replaceChildren();
     for (const cat of categories) {
-      const items = grouped[cat.name] || [];
+      const items = grouped.get(cat.name) || [];
       if (items.length === 0) continue;
 
       const catProjected = items.reduce((s, e) => s + Store.expenseProjected(e), 0);
       const catActual = items.reduce((s, e) => s + (e.actual || 0), 0);
-      const isCollapsed = this.collapsedCategories[cat.name];
+      const isCollapsed = this.collapsedCategories.get(cat.name);
 
-      html += `
-        <div class="category-group">
-          <div class="category-header" onclick="BudgetView.toggleCategory('${cat.name}')">
-            <div class="category-name">
-              <span class="category-toggle ${isCollapsed ? '' : 'open'}">&#9654;</span>
-              ${this.esc(cat.name)}
-              <span style="color:var(--text-muted);font-size:12px;">(${items.length})</span>
-            </div>
-            <div class="category-total">Proj: ${this.fmt(catProjected)} | Act: ${this.fmt(catActual)}</div>
-          </div>
-          <div class="category-items" style="display:${isCollapsed ? 'none' : 'block'}">
-            <table class="expense-table">
-              <thead><tr>${thCols}</tr></thead>
-              <tbody>
-                ${items.map(e => this.renderExpenseRow(e, paychecks)).join('')}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      `;
+      const group = this.element('div', 'category-group'); group.dataset.category = cat.name;
+      const header = this.element('button', 'category-header'); header.type = 'button'; header.setAttribute('aria-expanded', String(!isCollapsed));
+      const name = this.element('span', 'category-name');
+      name.append(this.element('span', `category-toggle ${isCollapsed ? '' : 'open'}`, '▶'), document.createTextNode(cat.name), this.element('span', 'category-count', `(${items.length})`));
+      header.append(name, this.element('span', 'category-total', `Proj: ${this.fmt(catProjected)} | Act: ${this.fmt(catActual)}`));
+      header.addEventListener('click', () => this.toggleCategory(cat.name));
+      const itemsContainer = this.element('div', 'category-items'); itemsContainer.hidden = Boolean(isCollapsed);
+      const table = this.element('table', 'expense-table'); const head = table.createTHead().insertRow();
+      const labels = [['Name', 'col-name'], ...paychecks.map(p => [this.getPaycheckShortLabel(p), 'col-pc']), ['Total', 'col-total'], ['Actual', 'col-actual'], ['Method', 'col-method'], ['Actions', 'col-actions']];
+      labels.forEach(([label, cls], index) => { const th = document.createElement('th'); th.className = cls; th.textContent = label;
+        if (index > 0 && index <= paychecks.length) th.title = `${paychecks[index - 1].earner} - ${paychecks[index - 1].date}`; head.append(th); });
+      const body = table.createTBody(); items.forEach(expense => body.append(this.renderExpenseRow(expense, paychecks)));
+      itemsContainer.append(table); group.append(header, itemsContainer); container.append(group);
     }
-
-    if (!html) {
-      html = '<div style="color:var(--text-muted);font-size:14px;">No expenses added yet. Click "+ Add Expense" to start.</div>';
-    }
-
-    container.innerHTML = html;
+    if (!container.children.length) container.append(this.element('div', 'muted-text', 'No expenses added yet. Click “Add Expense” to start.'));
   },
 
   renderExpenseRow(expense, paychecks) {
     const projected = Store.expenseProjected(expense);
     const amounts = expense.paycheckAmounts || {};
 
-    let pcCells = '';
-    paychecks.forEach(p => {
-      const val = amounts[p.id] || '';
-      pcCells += `<td class="col-pc"><input type="number" value="${val}" step="0.01" placeholder="0"
-        onchange="BudgetView.updatePaycheckAmount('${expense.id}', '${p.id}', this.value)"></td>`;
+    const row = document.createElement('tr'); row.dataset.id = expense.id;
+    const name = row.insertCell(); name.className = 'col-name'; name.textContent = expense.name;
+    paychecks.forEach(paycheck => {
+      const cell = row.insertCell(); cell.className = 'col-pc'; const input = document.createElement('input');
+      input.type = 'number'; input.step = '0.01'; input.placeholder = '0'; input.value = amounts[paycheck.id] || '';
+      input.min = '0'; input.max = '1000000000000';
+      input.addEventListener('change', () => input.reportValidity() ? this.updatePaycheckAmount(expense.id, paycheck.id, input.value) : this.rejectAmount()); cell.append(input);
     });
-
-    return `
-      <tr data-id="${expense.id}">
-        <td class="col-name">${this.esc(expense.name)}</td>
-        ${pcCells}
-        <td class="col-total expense-total">${this.fmt(projected)}</td>
-        <td class="col-actual"><input type="number" value="${expense.actual || ''}" step="0.01" placeholder="0.00"
-          onchange="BudgetView.updateExpenseField('${expense.id}', 'actual', this.value)"></td>
-        <td class="col-method"><select onchange="BudgetView.updateExpenseField('${expense.id}', 'paymentMethod', this.value)">
-          <option value="bank" ${expense.paymentMethod === 'bank' ? 'selected' : ''}>Bank</option>
-          <option value="credit_card" ${expense.paymentMethod === 'credit_card' ? 'selected' : ''}>Credit Card</option>
-          <option value="savings" ${expense.paymentMethod === 'savings' ? 'selected' : ''}>Savings</option>
-          <option value="investments" ${expense.paymentMethod === 'investments' ? 'selected' : ''}>Investments</option>
-        </select></td>
-        <td class="col-del"><button class="btn-delete" onclick="BudgetView.deleteExpense('${expense.id}')" title="Delete">&times;</button></td>
-      </tr>
-    `;
+    const total = row.insertCell(); total.className = 'col-total expense-total'; total.textContent = this.fmt(projected);
+    const actualCell = row.insertCell(); actualCell.className = 'col-actual'; const actual = document.createElement('input');
+    actual.type = 'number'; actual.step = '0.01'; actual.placeholder = '0.00'; actual.value = expense.actual || '';
+    actual.min = '0'; actual.max = '1000000000000';
+    actual.addEventListener('change', () => actual.reportValidity() ? this.updateExpenseField(expense.id, 'actual', actual.value) : this.rejectAmount()); actualCell.append(actual);
+    const methodCell = row.insertCell(); methodCell.className = 'col-method'; const method = document.createElement('select');
+    [['bank', 'Bank'], ['credit_card', 'Credit Card'], ['savings', 'Savings'], ['investments', 'Investments']].forEach(([value, label]) => {
+      const option = document.createElement('option'); option.value = value; option.textContent = label; option.selected = expense.paymentMethod === value; method.append(option);
+    });
+    method.addEventListener('change', () => this.updateExpenseField(expense.id, 'paymentMethod', method.value)); methodCell.append(method);
+    const actionCell = row.insertCell(); actionCell.className = 'col-actions';
+    const editButton = this.element('button', 'btn btn-sm btn-edit', 'Edit'); editButton.type = 'button';
+    editButton.dataset.editType = 'expense'; editButton.dataset.recordId = expense.id;
+    editButton.setAttribute('aria-label', `Edit ${expense.name}`); editButton.addEventListener('click', () => this.showExpenseModal(expense));
+    const deleteButton = this.element('button', 'btn-delete', '×'); deleteButton.type = 'button';
+    deleteButton.setAttribute('aria-label', `Delete ${expense.name}`); deleteButton.addEventListener('click', () => this.deleteExpense(expense.id));
+    actionCell.append(editButton, deleteButton);
+    return row;
   },
 
   updatePaycheckAmount(expenseId, paycheckId, value) {
-    Store.updateExpensePaycheckAmount(this.currentMonth, expenseId, paycheckId, parseFloat(value) || 0);
-    // Re-render totals without full re-render (avoid losing focus)
-    this.refreshTotals(expenseId);
-    this.renderPaychecks();
-    this.renderAllocation();
-    this.updateSummary();
+    const amount = Number(value || 0);
+    App.runMutation(() => Store.updateExpensePaycheckAmount(this.currentMonth, expenseId, paycheckId, amount), {
+      onSuccess: () => { this.refreshTotals(expenseId); this.renderPaychecks(); this.renderAllocation(); this.updateSummary(); },
+      onFailure: () => this.render()
+    });
   },
 
   refreshTotals(expenseId) {
@@ -246,7 +242,7 @@ const BudgetView = {
     const expense = month.expenses.find(e => e.id === expenseId);
     if (!expense) return;
 
-    const row = document.querySelector(`tr[data-id="${expenseId}"]`);
+    const row = [...document.querySelectorAll('tr[data-id]')].find(item => item.dataset.id === expenseId);
     if (!row) return;
     const totalCell = row.querySelector('.expense-total');
     if (totalCell) {
@@ -259,8 +255,7 @@ const BudgetView = {
     const catActual = allInCat.reduce((s, e) => s + (e.actual || 0), 0);
     const groups = document.querySelectorAll('.category-group');
     groups.forEach(g => {
-      const nameEl = g.querySelector('.category-name');
-      if (nameEl && nameEl.textContent.includes(expense.category)) {
+      if (g.dataset.category === expense.category) {
         const totalEl = g.querySelector('.category-total');
         if (totalEl) totalEl.textContent = `Proj: ${this.fmt(catProjected)} | Act: ${this.fmt(catActual)}`;
       }
@@ -271,43 +266,41 @@ const BudgetView = {
     if (field === 'actual') {
       value = parseFloat(value) || 0;
     }
-    Store.updateExpense(this.currentMonth, id, { [field]: value });
-    if (field === 'actual') {
-      this.refreshTotals(id);
-    }
-    this.renderPaychecks();
-    this.renderAllocation();
-    this.updateSummary();
+    App.runMutation(() => Store.updateExpense(this.currentMonth, id, { [field]: value }), {
+      onSuccess: () => {
+        if (field === 'actual') this.refreshTotals(id);
+        this.renderPaychecks(); this.renderAllocation(); this.updateSummary();
+      },
+      onFailure: () => this.render()
+    });
   },
 
   toggleCategory(name) {
-    this.collapsedCategories[name] = !this.collapsedCategories[name];
+    this.collapsedCategories.set(name, !this.collapsedCategories.get(name));
     this.renderExpenses();
   },
 
-  showExpenseModal() {
+  showExpenseModal(existing) {
     const categories = Store.getData().categories;
+    const title = existing ? 'Edit Expense' : 'Add Expense';
 
-    App.showModal('Add Expense', `
+    App.showModal(title, `
       <div class="form-group">
-        <label>Category</label>
-        <select id="field-category" onchange="BudgetView.onCategoryChange()">
-          ${categories.map(c => `<option value="${c.name}">${c.name}</option>`).join('')}
-        </select>
+        <label for="field-category">Category</label>
+        <select id="field-category"></select>
       </div>
-      <div class="form-group">
-        <label>Preset Item (or type custom below)</label>
+      <div class="form-group" id="preset-group">
+        <label for="field-preset">Preset Item (or type custom below)</label>
         <select id="field-preset">
           <option value="">-- Custom --</option>
-          ${categories[0].items.map(i => `<option value="${i}">${i}</option>`).join('')}
         </select>
       </div>
       <div class="form-group">
-        <label>Name</label>
-        <input type="text" id="field-name" placeholder="Expense name">
+        <label for="field-name">Name</label>
+        <input type="text" id="field-name" maxlength="120" placeholder="Expense name" required>
       </div>
       <div class="form-group">
-        <label>Payment Method</label>
+        <label for="field-method">Payment Method</label>
         <select id="field-method">
           <option value="bank">Bank</option>
           <option value="credit_card">Credit Card</option>
@@ -322,17 +315,32 @@ const BudgetView = {
       const name = customName || preset;
       const paymentMethod = document.getElementById('field-method').value;
 
-      if (!name) return;
-
-      Store.addExpense(this.currentMonth, {
-        category,
-        name,
-        paycheckAmounts: {},
-        actual: 0,
-        paymentMethod
-      });
-      this.render();
+      if (!name || name.length > 120) { document.getElementById('field-name').reportValidity(); return false; }
+      return App.runMutation(() => existing
+        ? Store.updateExpense(this.currentMonth, existing.id, { category, name, paymentMethod })
+        : Store.addExpense(this.currentMonth, {
+          category,
+          name,
+          paycheckAmounts: {},
+          actual: 0,
+          paymentMethod
+        }), { onSuccess: () => {
+          this.render();
+          if (existing) this.focusEditControl('expense', existing.id);
+        } });
     });
+
+    const categorySelect = document.getElementById('field-category');
+    categories.forEach(category => {
+      const option = document.createElement('option'); option.value = category.name; option.textContent = category.name;
+      option.selected = Boolean(existing && existing.category === category.name); categorySelect.append(option);
+    });
+    categorySelect.addEventListener('change', () => this.onCategoryChange());
+    this.onCategoryChange();
+
+    document.getElementById('field-name').value = existing ? existing.name : '';
+    document.getElementById('field-method').value = existing ? existing.paymentMethod : 'bank';
+    if (existing) document.getElementById('preset-group').hidden = true;
 
     // Wire up preset selection to fill name
     document.getElementById('field-preset').addEventListener('change', function() {
@@ -345,13 +353,13 @@ const BudgetView = {
     const selected = document.getElementById('field-category').value;
     const cat = categories.find(c => c.name === selected);
     const presetEl = document.getElementById('field-preset');
-    presetEl.innerHTML = '<option value="">-- Custom --</option>' +
-      (cat ? cat.items.map(i => `<option value="${i}">${i}</option>`).join('') : '');
+    presetEl.replaceChildren();
+    const custom = document.createElement('option'); custom.value = ''; custom.textContent = '-- Custom --'; presetEl.append(custom);
+    if (cat) cat.items.forEach(item => { const option = document.createElement('option'); option.value = item; option.textContent = item; presetEl.append(option); });
   },
 
   deleteExpense(id) {
-    Store.deleteExpense(this.currentMonth, id);
-    this.render();
+    App.runMutation(() => Store.deleteExpense(this.currentMonth, id), { onSuccess: () => this.render(), onFailure: () => this.render() });
   },
 
   // ---- Allocation ----
@@ -378,13 +386,15 @@ const BudgetView = {
     const allocTotal = Object.values(alloc).reduce((s, v) => s + (v || 0), 0);
     const unallocated = expenseRemaining - allocTotal;
 
-    document.getElementById('allocation-inputs').innerHTML = ALLOCATION_TYPES.map(t => `
-      <div class="allocation-item">
-        <label>${t.label}</label>
-        <input type="number" step="0.01" value="${alloc[t.key] || ''}" placeholder="0.00"
-          onchange="BudgetView.updateAllocation('${t.key}', this.value)">
-      </div>
-    `).join('');
+    const inputs = document.getElementById('allocation-inputs'); inputs.replaceChildren();
+    ALLOCATION_TYPES.forEach(type => {
+      const item = this.element('div', 'allocation-item'); const label = document.createElement('label'); const input = document.createElement('input');
+      input.id = `allocation-${type.key}`; label.htmlFor = input.id; label.textContent = type.label; input.type = 'number'; input.step = '0.01';
+      input.min = '0'; input.max = '1000000000000';
+      input.value = alloc[type.key] || ''; input.placeholder = '0.00';
+      input.addEventListener('change', () => input.reportValidity() ? this.updateAllocation(type.key, input.value) : this.rejectAmount());
+      item.append(label, input); inputs.append(item);
+    });
 
     const unallocEl = document.getElementById('allocation-unallocated');
     unallocEl.textContent = this.fmt(unallocated);
@@ -392,12 +402,14 @@ const BudgetView = {
   },
 
   updateAllocation(key, value) {
-    const month = Store.getMonth(this.currentMonth);
-    const alloc = month.allocations || { savings: 0, credit_card_debt: 0, investments: 0 };
-    alloc[key] = parseFloat(value) || 0;
-    Store.updateAllocations(this.currentMonth, alloc);
-    this.renderAllocation();
-    this.updateSummary();
+    App.runMutation(() => Store.updateAllocation(this.currentMonth, key, Number(value || 0)), {
+      onSuccess: () => { this.renderAllocation(); this.updateSummary(); }, onFailure: () => this.render()
+    });
+  },
+
+  rejectAmount() {
+    App.showErrorCode('AMOUNT_OUT_OF_RANGE');
+    this.render();
   },
 
   // ---- Copy / Clear ----
@@ -413,21 +425,13 @@ const BudgetView = {
     }
 
     if (confirm(`Copy budget template from ${this.formatMonthLabel(prevKey)}? This will overwrite current month's data.`)) {
-      Store.copyFromMonth(this.currentMonth, prevKey);
-      this.render();
+      App.runMutation(() => Store.copyFromMonth(this.currentMonth, prevKey), { onSuccess: () => this.render(), onFailure: () => this.render() });
     }
   },
 
   clearMonth() {
     if (confirm('Clear all data for this month?')) {
-      Store.clearMonth(this.currentMonth);
-      this.render();
+      App.runMutation(() => Store.clearMonth(this.currentMonth), { onSuccess: () => this.render(), onFailure: () => this.render() });
     }
-  },
-
-  esc(str) {
-    const div = document.createElement('div');
-    div.textContent = str || '';
-    return div.innerHTML;
   }
 };

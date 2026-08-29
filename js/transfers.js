@@ -1,239 +1,84 @@
-// Transfers view - per-paycheck breakdown of credit card vs bank
-
+// Transfers view - per-paycheck breakdown of credit card vs bank.
 const TransfersView = {
   currentMonth: null,
-
   init() {
-    const now = new Date();
-    this.currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const now = new Date(); this.currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    document.getElementById('btn-transfers-prev').addEventListener('click', () => this.changeMonth(-1));
+    document.getElementById('btn-transfers-next').addEventListener('click', () => this.changeMonth(1));
   },
-
   changeMonth(delta) {
-    const [y, m] = this.currentMonth.split('-').map(Number);
-    const d = new Date(y, m - 1 + delta, 1);
-    this.currentMonth = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-    this.render();
+    const [y, m] = this.currentMonth.split('-').map(Number); const date = new Date(y, m - 1 + delta, 1);
+    this.currentMonth = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`; this.render();
   },
-
-  syncMonth() {
-    // Stay in sync with budget view's month
-    if (BudgetView.currentMonth) {
-      this.currentMonth = BudgetView.currentMonth;
-    }
+  syncMonth() { if (BudgetView.currentMonth) this.currentMonth = BudgetView.currentMonth; },
+  formatMonthLabel(key) { const [y, m] = key.split('-').map(Number); return new Date(y, m - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' }); },
+  fmt(value) { return '$' + (value || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); },
+  element(tag, className, text) {
+    const node = document.createElement(tag); if (className) node.className = className; if (text !== undefined) node.textContent = text; return node;
   },
-
-  formatMonthLabel(key) {
-    const [y, m] = key.split('-').map(Number);
-    const d = new Date(y, m - 1, 1);
-    return d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  detailSection(className, label, total, expenses, paycheckId, emptyText) {
+    const section = this.element('div', `transfer-action ${className}`);
+    const header = this.element('div', 'transfer-action-header');
+    header.append(this.element('span', 'transfer-action-label', label), this.element('span', 'transfer-action-amount', this.fmt(total)));
+    section.append(header);
+    if (!expenses.length) { section.append(this.element('div', 'transfer-empty', emptyText)); return section; }
+    const table = this.element('table', 'transfer-detail-table'); const body = table.createTBody();
+    expenses.forEach(expense => {
+      const row = body.insertRow();
+      const name = row.insertCell(); name.className = 'td-name'; name.textContent = expense.name;
+      const category = row.insertCell(); category.className = 'td-cat'; category.textContent = expense.category;
+      const amount = row.insertCell(); amount.className = 'td-amt'; amount.textContent = this.fmt(expense.paycheckAmounts[paycheckId]);
+    });
+    section.append(table); return section;
   },
-
-  fmt(n) {
-    return '$' + (n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  summaryRow(body, label, amount, className) {
+    const row = body.insertRow(); if (className) row.className = className;
+    row.insertCell().textContent = label; const value = row.insertCell(); value.className = 'td-amt'; value.textContent = this.fmt(amount);
   },
-
   render() {
     document.getElementById('transfers-month-label').textContent = this.formatMonthLabel(this.currentMonth);
-
-    const month = Store.getMonth(this.currentMonth);
-    const container = document.getElementById('transfers-content');
-
-    if (month.paychecks.length === 0) {
-      container.innerHTML = '<div class="budget-section"><p style="color:var(--text-muted);">No paychecks for this month. Add paychecks in the Budget tab first.</p></div>';
-      return;
+    const month = Store.getMonth(this.currentMonth); const container = document.getElementById('transfers-content'); container.replaceChildren();
+    if (!month.paychecks.length) {
+      const section = this.element('div', 'budget-section'); section.append(this.element('p', 'muted-text', 'No paychecks for this month. Add paychecks in the Budget tab first.')); container.append(section); return;
     }
-
-    let totalCCAll = 0;
-    let totalBankAll = 0;
-    let totalSavingsAll = 0;
-    let totalInvestAll = 0;
-    let totalIncomeAll = 0;
-
-    let html = '<div class="transfers-grid">';
-
-    month.paychecks.forEach(pc => {
-      // Get all expenses assigned to this paycheck
-      const expenses = month.expenses.filter(e =>
-        e.paycheckAmounts && e.paycheckAmounts[pc.id] && e.paycheckAmounts[pc.id] > 0
-      );
-
-      const ccExpenses = expenses.filter(e => e.paymentMethod === 'credit_card');
-      const bankExpenses = expenses.filter(e => e.paymentMethod === 'bank');
-      const savingsExpenses = expenses.filter(e => e.paymentMethod === 'savings');
-      const investExpenses = expenses.filter(e => e.paymentMethod === 'investments');
-
-      const ccTotal = ccExpenses.reduce((s, e) => s + (e.paycheckAmounts[pc.id] || 0), 0);
-      const bankTotal = bankExpenses.reduce((s, e) => s + (e.paycheckAmounts[pc.id] || 0), 0);
-      const savingsTotal = savingsExpenses.reduce((s, e) => s + (e.paycheckAmounts[pc.id] || 0), 0);
-      const investTotal = investExpenses.reduce((s, e) => s + (e.paycheckAmounts[pc.id] || 0), 0);
-      const assigned = ccTotal + bankTotal + savingsTotal + investTotal;
-      const unassigned = pc.amount - assigned;
-
-      totalCCAll += ccTotal;
-      totalBankAll += bankTotal;
-      totalSavingsAll += savingsTotal;
-      totalInvestAll += investTotal;
-      totalIncomeAll += pc.amount;
-
-      const datePart = pc.date ? new Date(pc.date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
-
-      html += `
-        <div class="transfer-card">
-          <div class="transfer-card-header">
-            <div>
-              <div class="transfer-earner">${this.esc(pc.earner)}</div>
-              <div class="transfer-date">${datePart}</div>
-            </div>
-            <div class="transfer-amount">${this.fmt(pc.amount)}</div>
-          </div>
-
-          <div class="transfer-action send-cc">
-            <div class="transfer-action-header">
-              <span class="transfer-action-label">Send to Credit Card</span>
-              <span class="transfer-action-amount">${this.fmt(ccTotal)}</span>
-            </div>
-            ${ccExpenses.length > 0 ? `
-              <table class="transfer-detail-table">
-                ${ccExpenses.map(e => `
-                  <tr>
-                    <td class="td-name">${this.esc(e.name)}</td>
-                    <td class="td-cat">${this.esc(e.category)}</td>
-                    <td class="td-amt">${this.fmt(e.paycheckAmounts[pc.id])}</td>
-                  </tr>
-                `).join('')}
-              </table>
-            ` : '<div class="transfer-empty">No credit card expenses</div>'}
-          </div>
-
-          <div class="transfer-action keep-bank">
-            <div class="transfer-action-header">
-              <span class="transfer-action-label">Keep in Bank</span>
-              <span class="transfer-action-amount">${this.fmt(bankTotal)}</span>
-            </div>
-            ${bankExpenses.length > 0 ? `
-              <table class="transfer-detail-table">
-                ${bankExpenses.map(e => `
-                  <tr>
-                    <td class="td-name">${this.esc(e.name)}</td>
-                    <td class="td-cat">${this.esc(e.category)}</td>
-                    <td class="td-amt">${this.fmt(e.paycheckAmounts[pc.id])}</td>
-                  </tr>
-                `).join('')}
-              </table>
-            ` : '<div class="transfer-empty">No bank expenses</div>'}
-          </div>
-
-          <div class="transfer-action send-savings">
-            <div class="transfer-action-header">
-              <span class="transfer-action-label">Transfer to Savings</span>
-              <span class="transfer-action-amount">${this.fmt(savingsTotal)}</span>
-            </div>
-            ${savingsExpenses.length > 0 ? `
-              <table class="transfer-detail-table">
-                ${savingsExpenses.map(e => `
-                  <tr>
-                    <td class="td-name">${this.esc(e.name)}</td>
-                    <td class="td-cat">${this.esc(e.category)}</td>
-                    <td class="td-amt">${this.fmt(e.paycheckAmounts[pc.id])}</td>
-                  </tr>
-                `).join('')}
-              </table>
-            ` : '<div class="transfer-empty">No savings transfers</div>'}
-          </div>
-
-          <div class="transfer-action send-invest">
-            <div class="transfer-action-header">
-              <span class="transfer-action-label">Transfer to Investments</span>
-              <span class="transfer-action-amount">${this.fmt(investTotal)}</span>
-            </div>
-            ${investExpenses.length > 0 ? `
-              <table class="transfer-detail-table">
-                ${investExpenses.map(e => `
-                  <tr>
-                    <td class="td-name">${this.esc(e.name)}</td>
-                    <td class="td-cat">${this.esc(e.category)}</td>
-                    <td class="td-amt">${this.fmt(e.paycheckAmounts[pc.id])}</td>
-                  </tr>
-                `).join('')}
-              </table>
-            ` : '<div class="transfer-empty">No investment transfers</div>'}
-          </div>
-
-          ${unassigned > 0.01 ? `
-            <div class="transfer-action unassigned">
-              <div class="transfer-action-header">
-                <span class="transfer-action-label">Unassigned</span>
-                <span class="transfer-action-amount">${this.fmt(unassigned)}</span>
-              </div>
-            </div>
-          ` : ''}
-        </div>
-      `;
+    const totals = { credit_card: 0, bank: 0, savings: 0, investments: 0, income: 0 };
+    const grid = this.element('div', 'transfers-grid');
+    month.paychecks.forEach(paycheck => {
+      const expenses = month.expenses.filter(expense => (expense.paycheckAmounts[paycheck.id] || 0) > 0);
+      const groups = {};
+      ['credit_card', 'bank', 'savings', 'investments'].forEach(method => {
+        groups[method] = expenses.filter(expense => expense.paymentMethod === method);
+        totals[method] += groups[method].reduce((sum, expense) => sum + expense.paycheckAmounts[paycheck.id], 0);
+      });
+      totals.income += paycheck.amount;
+      const card = this.element('div', 'transfer-card'); const header = this.element('div', 'transfer-card-header'); const identity = this.element('div');
+      identity.append(this.element('div', 'transfer-earner', paycheck.earner), this.element('div', 'transfer-date', paycheck.date ? new Date(`${paycheck.date}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''));
+      header.append(identity, this.element('div', 'transfer-amount', this.fmt(paycheck.amount))); card.append(header);
+      const definitions = [
+        ['credit_card', 'send-cc', 'Send to Credit Card', 'No credit card expenses'], ['bank', 'keep-bank', 'Keep in Bank', 'No bank expenses'],
+        ['savings', 'send-savings', 'Transfer to Savings', 'No savings transfers'], ['investments', 'send-invest', 'Transfer to Investments', 'No investment transfers']
+      ];
+      let assigned = 0;
+      definitions.forEach(([method, className, label, empty]) => {
+        const amount = groups[method].reduce((sum, expense) => sum + expense.paycheckAmounts[paycheck.id], 0); assigned += amount;
+        card.append(this.detailSection(className, label, amount, groups[method], paycheck.id, empty));
+      });
+      if (paycheck.amount - assigned > 0.01) card.append(this.detailSection('unassigned', 'Unassigned', paycheck.amount - assigned, [], paycheck.id, ''));
+      grid.append(card);
     });
-
-    html += '</div>';
-
-    // Monthly totals summary
-    const allocations = month.allocations || {};
-    const allocSavings = allocations.savings || 0;
-    const allocDebt = allocations.credit_card_debt || 0;
-    const allocInvest = allocations.investments || 0;
-
-    html += `
-      <div class="budget-section" style="margin-top:16px;">
-        <h3 style="margin-bottom:16px;">Monthly Transfer Summary</h3>
-        <table class="transfer-summary-table">
-          <tbody>
-            <tr>
-              <td>Total Income</td>
-              <td class="td-amt">${this.fmt(totalIncomeAll)}</td>
-            </tr>
-            <tr class="row-cc">
-              <td>Total to Credit Card</td>
-              <td class="td-amt">${this.fmt(totalCCAll)}</td>
-            </tr>
-            <tr class="row-bank">
-              <td>Total Kept in Bank (expenses)</td>
-              <td class="td-amt">${this.fmt(totalBankAll)}</td>
-            </tr>
-            <tr class="row-savings">
-              <td>Total to Savings (expenses)</td>
-              <td class="td-amt">${this.fmt(totalSavingsAll)}</td>
-            </tr>
-            <tr class="row-invest">
-              <td>Total to Investments (expenses)</td>
-              <td class="td-amt">${this.fmt(totalInvestAll)}</td>
-            </tr>
-            ${allocSavings > 0 ? `<tr class="row-savings"><td>+ Allocated to Savings (remaining funds)</td><td class="td-amt">${this.fmt(allocSavings)}</td></tr>` : ''}
-            ${allocDebt > 0 ? `<tr class="row-cc"><td>+ Allocated to Credit Card Debt (remaining funds)</td><td class="td-amt">${this.fmt(allocDebt)}</td></tr>` : ''}
-            ${allocInvest > 0 ? `<tr class="row-invest"><td>+ Allocated to Investments (remaining funds)</td><td class="td-amt">${this.fmt(allocInvest)}</td></tr>` : ''}
-            <tr class="row-total">
-              <td>Total Credit Card Payment</td>
-              <td class="td-amt">${this.fmt(totalCCAll + allocDebt)}</td>
-            </tr>
-            <tr class="row-total">
-              <td>Total to Keep in Bank</td>
-              <td class="td-amt">${this.fmt(totalBankAll)}</td>
-            </tr>
-            <tr class="row-total">
-              <td>Total to Transfer to Savings</td>
-              <td class="td-amt">${this.fmt(totalSavingsAll + allocSavings)}</td>
-            </tr>
-            <tr class="row-total">
-              <td>Total to Transfer to Investments</td>
-              <td class="td-amt">${this.fmt(totalInvestAll + allocInvest)}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    `;
-
-    container.innerHTML = html;
-  },
-
-  esc(str) {
-    const div = document.createElement('div');
-    div.textContent = str || '';
-    return div.innerHTML;
+    container.append(grid);
+    const allocations = month.allocations; const summary = this.element('section', 'budget-section transfer-summary'); summary.append(this.element('h3', '', 'Monthly Transfer Summary'));
+    const table = this.element('table', 'transfer-summary-table'); const body = table.createTBody();
+    this.summaryRow(body, 'Total Income', totals.income); this.summaryRow(body, 'Total to Credit Card', totals.credit_card, 'row-cc');
+    this.summaryRow(body, 'Total Kept in Bank (expenses)', totals.bank, 'row-bank'); this.summaryRow(body, 'Total to Savings (expenses)', totals.savings, 'row-savings');
+    this.summaryRow(body, 'Total to Investments (expenses)', totals.investments, 'row-invest');
+    if (allocations.savings > 0) this.summaryRow(body, '+ Allocated to Savings (remaining funds)', allocations.savings, 'row-savings');
+    if (allocations.credit_card_debt > 0) this.summaryRow(body, '+ Allocated to Credit Card Debt (remaining funds)', allocations.credit_card_debt, 'row-cc');
+    if (allocations.investments > 0) this.summaryRow(body, '+ Allocated to Investments (remaining funds)', allocations.investments, 'row-invest');
+    this.summaryRow(body, 'Total Credit Card Payment', totals.credit_card + allocations.credit_card_debt, 'row-total');
+    this.summaryRow(body, 'Total to Keep in Bank', totals.bank, 'row-total');
+    this.summaryRow(body, 'Total to Transfer to Savings', totals.savings + allocations.savings, 'row-total');
+    this.summaryRow(body, 'Total to Transfer to Investments', totals.investments + allocations.investments, 'row-total');
+    summary.append(table); container.append(summary);
   }
 };

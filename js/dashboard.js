@@ -71,6 +71,10 @@ const DashboardView = {
     }
   },
 
+  destroyAllCharts() {
+    Object.keys(this.charts).forEach(id => this.destroyChart(id));
+  },
+
   COLORS: [
     '#6366f1', '#22c55e', '#ef4444', '#eab308', '#3b82f6',
     '#ec4899', '#14b8a6', '#f97316', '#8b5cf6', '#06b6d4',
@@ -323,47 +327,50 @@ const DashboardView = {
 
     const cats = [...allCats];
 
-    let html = '<table><thead><tr><th>Category</th>';
-    months.forEach(m => { html += `<th>${this.formatMonthShort(m)}</th>`; });
-    html += '<th>Avg</th></tr></thead><tbody>';
-
+    const table = document.createElement('table');
+    const thead = table.createTHead();
+    const headRow = thead.insertRow();
+    ['Category', ...months.map(m => this.formatMonthShort(m)), 'Avg'].forEach(label => {
+      const th = document.createElement('th'); th.textContent = label; headRow.append(th);
+    });
+    const tbody = table.createTBody();
     cats.forEach(cat => {
-      html += `<tr><td>${cat}</td>`;
+      const row = tbody.insertRow(); const name = row.insertCell(); name.textContent = cat;
       let total = 0;
       let count = 0;
       months.forEach(mk => {
         const val = dataByMonth[mk][cat]?.actual || dataByMonth[mk][cat]?.projected || 0;
-        html += `<td>$${val.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</td>`;
+        row.insertCell().textContent = `$${val.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
         total += val;
         if (val > 0) count++;
       });
       const avg = count > 0 ? total / count : 0;
-      html += `<td><strong>$${avg.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</strong></td></tr>`;
+      const cell = row.insertCell(); const strong = document.createElement('strong');
+      strong.textContent = `$${avg.toLocaleString(undefined, { maximumFractionDigits: 0 })}`; cell.append(strong);
     });
 
-    // Totals row
-    html += '<tr style="border-top:2px solid var(--border)"><td><strong>Total</strong></td>';
+    const totalRow = tbody.insertRow(); totalRow.className = 'summary-total-row';
+    let cell = totalRow.insertCell(); let strong = document.createElement('strong'); strong.textContent = 'Total'; cell.append(strong);
     let grandTotal = 0;
     let monthCount = 0;
     months.forEach(mk => {
       const s = Store.calcMonthSummary(mk);
       const val = s.totalActual || s.totalProjected;
-      html += `<td><strong>$${val.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</strong></td>`;
+      cell = totalRow.insertCell(); strong = document.createElement('strong');
+      strong.textContent = `$${val.toLocaleString(undefined, { maximumFractionDigits: 0 })}`; cell.append(strong);
       grandTotal += val;
       if (val > 0) monthCount++;
     });
     const grandAvg = monthCount > 0 ? grandTotal / monthCount : 0;
-    html += `<td><strong>$${grandAvg.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</strong></td></tr>`;
-
-    // Income row
-    html += '<tr><td><strong>Income</strong></td>';
+    cell = totalRow.insertCell(); strong = document.createElement('strong');
+    strong.textContent = `$${grandAvg.toLocaleString(undefined, { maximumFractionDigits: 0 })}`; cell.append(strong);
+    const incomeRow = tbody.insertRow(); cell = incomeRow.insertCell(); strong = document.createElement('strong');
+    strong.textContent = 'Income'; cell.append(strong);
     months.forEach(mk => {
       const s = Store.calcMonthSummary(mk);
-      html += `<td>$${s.totalIncome.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</td>`;
+      incomeRow.insertCell().textContent = `$${s.totalIncome.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
     });
-    html += '<td></td></tr>';
-
-    html += '</tbody></table>';
-    document.getElementById('summary-table-container').innerHTML = html;
+    incomeRow.insertCell();
+    document.getElementById('summary-table-container').replaceChildren(table);
   }
 };
