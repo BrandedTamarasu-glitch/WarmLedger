@@ -609,6 +609,14 @@
         for (const expense of month.expenses) delete expense.paycheckAmounts[id];
       });
     }
+    function reorderPaychecks(monthKey, orderedIds) {
+      return transact(candidate => {
+        const month = candidate.months[monthKey];
+        if (!month) throw new StoreError('MONTH_NOT_FOUND');
+        month.paychecks = orderedPermutation(orderedIds, month.paychecks);
+        return month.paychecks;
+      });
+    }
     function addExpense(monthKey, input) {
       const expense = patchOf(input, ['categoryId', 'categoryItemId', 'name', 'paycheckAmounts', 'actual', 'paymentMethod']);
       if (!Object.hasOwn(expense, 'categoryId') || !Object.hasOwn(expense, 'categoryItemId') ||
@@ -686,6 +694,14 @@
         const index = month.expenses.findIndex(expense => expense.id === id);
         if (index < 0) throw new StoreError('EXPENSE_NOT_FOUND');
         month.expenses.splice(index, 1);
+      });
+    }
+    function reorderExpenses(monthKey, orderedIds) {
+      return transact(candidate => {
+        const month = candidate.months[monthKey];
+        if (!month) throw new StoreError('MONTH_NOT_FOUND');
+        month.expenses = orderedPermutation(orderedIds, month.expenses);
+        return month.expenses;
       });
     }
     function updateAllocations(monthKey, allocations) {
@@ -853,9 +869,10 @@
       getStructureUsage, addCategory, renameCategory, setCategoryArchived, reorderCategories,
       addCategoryItem, renameCategoryItem, setCategoryItemArchived, reorderCategoryItems,
       addEarner, renameEarner, setEarnerArchived, reorderEarners,
-      expenseProjected, addPaycheck, updatePaycheck, reassignPaycheckEarner, editPaycheck, deletePaycheck, addExpense, updateExpense,
+      expenseProjected, addPaycheck, updatePaycheck, reassignPaycheckEarner, editPaycheck, deletePaycheck, reorderPaychecks,
+      addExpense, updateExpense,
       reassignExpenseStructure, editExpense,
-      updateExpensePaycheckAmount, deleteExpense, updateAllocations, updateAllocation, copyFromMonth,
+      updateExpensePaycheckAmount, deleteExpense, reorderExpenses, updateAllocations, updateAllocation, copyFromMonth,
       clearMonth, calcMonthSummary, calcPaycheckRemaining, calcCategoryTotals, calcPaymentMethodTotals,
       buildExport, exportData, previewImport, commitImport, importData, listSnapshots,
       listSnapshotMetadata, restoreSnapshot, startFresh, getCorruptEvidence

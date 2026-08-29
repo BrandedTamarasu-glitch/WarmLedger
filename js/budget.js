@@ -7,8 +7,16 @@ const BudgetView = {
   init() {
     const now = new Date();
     this.currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    this.prepareFocusHeadings();
     this.bindEvents();
     this.render();
+  },
+
+  prepareFocusHeadings() {
+    const paycheckHeading = document.querySelector('#paychecks-list')?.closest('section')?.querySelector('h3');
+    const expenseHeading = document.querySelector('#expenses-container')?.closest('section')?.querySelector('h3');
+    if (paycheckHeading) { paycheckHeading.id = 'paychecks-heading'; paycheckHeading.tabIndex = -1; }
+    if (expenseHeading) { expenseHeading.id = 'expenses-heading'; expenseHeading.tabIndex = -1; }
   },
 
   bindEvents() {
@@ -71,6 +79,26 @@ const BudgetView = {
     });
   },
 
+  focusMoveControl(type, action, id) {
+    requestAnimationFrame(() => {
+      const controls = [...document.querySelectorAll('[data-move-type][data-move-action]')];
+      const sameRecord = control => !control.disabled && control.dataset.moveType === type && control.dataset.recordId === id;
+      const requested = controls.find(control => sameRecord(control) && control.dataset.moveAction === action);
+      const fallback = controls.find(sameRecord);
+      (requested || fallback || document.getElementById(type === 'paycheck' ? 'paychecks-heading' : 'expenses-heading'))
+        .focus({ preventScroll: true });
+    });
+  },
+
+  moveButton(type, action, record, disabled, handler) {
+    const direction = action === 'move-up' ? 'up' : 'down';
+    const button = this.element('button', 'btn btn-sm btn-move', direction === 'up' ? '↑' : '↓');
+    button.type = 'button'; button.disabled = disabled;
+    button.dataset.moveType = type; button.dataset.moveAction = action; button.dataset.recordId = record.id;
+    button.setAttribute('aria-label', `Move ${record.earner || record.name} ${direction}`);
+    button.addEventListener('click', handler); return button;
+  },
+
   // ---- Paychecks ----
   renderPaychecks() {
     const month = Store.getMonth(this.currentMonth);
@@ -81,7 +109,7 @@ const BudgetView = {
       return;
     }
     container.replaceChildren();
-    month.paychecks.forEach(p => {
+    month.paychecks.forEach((p, index) => {
       const remaining = Store.calcPaycheckRemaining(this.currentMonth, p.id);
       let remClass = 'zero';
       if (remaining > 0.01) remClass = 'positive';
@@ -94,6 +122,10 @@ const BudgetView = {
       editButton.dataset.editType = 'paycheck'; editButton.dataset.recordId = p.id;
       editButton.setAttribute('aria-label', `Edit paycheck for ${p.earner}`);
       editButton.addEventListener('click', () => this.showPaycheckModal(p)); actions.append(editButton);
+      actions.append(
+        this.moveButton('paycheck', 'move-up', p, index === 0, event => this.movePaycheck(p, -1, event.currentTarget)),
+        this.moveButton('paycheck', 'move-down', p, index === month.paychecks.length - 1, event => this.movePaycheck(p, 1, event.currentTarget))
+      );
       const button = this.element('button', 'btn-delete', '×'); button.type = 'button'; button.setAttribute('aria-label', `Delete paycheck for ${p.earner}`);
       button.addEventListener('click', () => this.deletePaycheck(p.id)); actions.append(button); header.append(identity, actions);
       const remainder = this.element('div', 'paycheck-remaining'); remainder.append(this.element('span', '', 'Remaining'), this.element('span', `paycheck-remaining-value ${remClass}`, this.fmt(remaining)));
@@ -162,6 +194,20 @@ const BudgetView = {
     }
   },
 
+  movePaycheck(paycheck, delta, trigger) {
+    const paychecks = Store.getMonth(this.currentMonth).paychecks;
+    const from = paychecks.findIndex(record => record.id === paycheck.id); const to = from + delta;
+    if (from < 0 || to < 0 || to >= paychecks.length) return;
+    const ids = paychecks.map(record => record.id); [ids[from], ids[to]] = [ids[to], ids[from]];
+    App.runMutation(() => Store.reorderPaychecks(this.currentMonth, ids), {
+      onSuccess: () => {
+        this.render(); App.announceStatus(`${paycheck.earner} paycheck moved to position ${to + 1} of ${paychecks.length}.`);
+        this.focusMoveControl('paycheck', delta < 0 ? 'move-up' : 'move-down', paycheck.id);
+      },
+      onFailure: () => trigger.focus()
+    });
+  },
+
   // ---- Expenses ----
 
   getPaycheckShortLabel(paycheck) {
@@ -202,13 +248,14 @@ const BudgetView = {
       const labels = [['Name', 'col-name'], ...paychecks.map(p => [this.getPaycheckShortLabel(p), 'col-pc']), ['Total', 'col-total'], ['Actual', 'col-actual'], ['Method', 'col-method'], ['Actions', 'col-actions']];
       labels.forEach(([label, cls], index) => { const th = document.createElement('th'); th.className = cls; th.textContent = label;
         if (index > 0 && index <= paychecks.length) th.title = `${paychecks[index - 1].earner} - ${paychecks[index - 1].date}`; head.append(th); });
-      const body = table.createTBody(); items.forEach(expense => body.append(this.renderExpenseRow(expense, paychecks)));
+      const body = table.createTBody(); items.forEach((expense, index) =>
+        body.append(this.renderExpenseRow(expense, paychecks, index, items.length)));
       itemsContainer.append(table); group.append(header, itemsContainer); container.append(group);
     }
     if (!container.children.length) container.append(this.element('div', 'muted-text', 'No expenses added yet. Click “Add Expense” to start.'));
   },
 
-  renderExpenseRow(expense, paychecks) {
+  renderExpenseRow(expense, paychecks, groupIndex, groupSize) {
     const projected = Store.expenseProjected(expense);
     const amounts = expense.paycheckAmounts || {};
 
@@ -234,10 +281,32 @@ const BudgetView = {
     const editButton = this.element('button', 'btn btn-sm btn-edit', 'Edit'); editButton.type = 'button';
     editButton.dataset.editType = 'expense'; editButton.dataset.recordId = expense.id;
     editButton.setAttribute('aria-label', `Edit ${expense.name}`); editButton.addEventListener('click', () => this.showExpenseModal(expense));
+    const moveUp = this.moveButton('expense', 'move-up', expense, groupIndex === 0,
+      event => this.moveExpense(expense, -1, event.currentTarget));
+    const moveDown = this.moveButton('expense', 'move-down', expense, groupIndex === groupSize - 1,
+      event => this.moveExpense(expense, 1, event.currentTarget));
     const deleteButton = this.element('button', 'btn-delete', '×'); deleteButton.type = 'button';
     deleteButton.setAttribute('aria-label', `Delete ${expense.name}`); deleteButton.addEventListener('click', () => this.deleteExpense(expense.id));
-    actionCell.append(editButton, deleteButton);
+    actionCell.append(editButton, moveUp, moveDown, deleteButton);
     return row;
+  },
+
+  moveExpense(expense, delta, trigger) {
+    const expenses = Store.getMonth(this.currentMonth).expenses;
+    const group = expenses.filter(record => record.category === expense.category);
+    const groupIndex = group.findIndex(record => record.id === expense.id); const targetGroupIndex = groupIndex + delta;
+    if (groupIndex < 0 || targetGroupIndex < 0 || targetGroupIndex >= group.length) return;
+    const ids = expenses.map(record => record.id);
+    const from = expenses.findIndex(record => record.id === expense.id);
+    const to = expenses.findIndex(record => record.id === group[targetGroupIndex].id);
+    [ids[from], ids[to]] = [ids[to], ids[from]];
+    App.runMutation(() => Store.reorderExpenses(this.currentMonth, ids), {
+      onSuccess: () => {
+        this.render(); App.announceStatus(`${expense.name} moved to position ${targetGroupIndex + 1} of ${group.length} in ${expense.category}.`);
+        this.focusMoveControl('expense', delta < 0 ? 'move-up' : 'move-down', expense.id);
+      },
+      onFailure: () => trigger.focus()
+    });
   },
 
   updatePaycheckAmount(expenseId, paycheckId, value) {

@@ -43,6 +43,28 @@ function makeStructureBudget() {
   return budget;
 }
 
+function makeOrderedMonthBudget() {
+  const budget = makeStructureBudget();
+  const month = budget.months['2026-01'];
+  month.paychecks.push(
+    { id: 'paycheck-example-2', earnerId: 'earner-example-2', earner: 'Historical Two', amount: 800, date: '2026-01-20' },
+    { id: 'paycheck-example-3', earnerId: 'earner-example-1', earner: 'Historical One', amount: 600, date: '' }
+  );
+  month.expenses.push(
+    {
+      id: 'expense-example-2', categoryId: 'category-example-2', category: 'Historical Travel',
+      categoryItemId: 'item-example-2', name: 'Historical fare',
+      paycheckAmounts: { 'paycheck-example-2': 300 }, actual: 280, paymentMethod: 'credit_card'
+    },
+    {
+      id: 'expense-example-3', categoryId: 'category-example-1', category: 'Historical Home',
+      categoryItemId: null, name: 'Custom service',
+      paycheckAmounts: { 'paycheck-example-1': 50, 'paycheck-example-3': 75 }, actual: 120, paymentMethod: 'bank'
+    }
+  );
+  return budget;
+}
+
 class AttemptStorage extends MemoryStorage {
   constructor(initial) {
     super(initial);
@@ -457,6 +479,109 @@ test('copy and clear use transactions and remap paycheck references', () => {
   });
 });
 
+test('monthly record reorder uses exact permutations and preserves every record value and total', () => {
+  const { store, storage } = readyStore({ budget: makeOrderedMonthBudget() });
+  const before = store.getMonth('2026-01');
+  const summary = store.calcMonthSummary('2026-01');
+  const categories = store.getCategories({ includeArchived: true });
+  const earners = store.getEarners({ includeArchived: true });
+  const paycheckById = new Map(before.paychecks.map(record => [record.id, record]));
+  const expenseById = new Map(before.expenses.map(record => [record.id, record]));
+
+  storage.operations.length = 0;
+  store.reorderPaychecks('2026-01', ['paycheck-example-3', 'paycheck-example-1', 'paycheck-example-2']);
+  assert.equal(storage.operations.filter(entry => entry.op === 'setItem' && entry.key === STORAGE_KEY).length, 1);
+  storage.operations.length = 0;
+  store.reorderExpenses('2026-01', ['expense-example-2', 'expense-example-3', 'expense-example-1']);
+  assert.equal(storage.operations.filter(entry => entry.op === 'setItem' && entry.key === STORAGE_KEY).length, 1);
+
+  const after = store.getMonth('2026-01');
+  assert.deepEqual(after.paychecks.map(record => record.id), ['paycheck-example-3', 'paycheck-example-1', 'paycheck-example-2']);
+  assert.deepEqual(after.expenses.map(record => record.id), ['expense-example-2', 'expense-example-3', 'expense-example-1']);
+  for (const record of after.paychecks) assert.deepEqual(record, paycheckById.get(record.id));
+  for (const record of after.expenses) assert.deepEqual(record, expenseById.get(record.id));
+  assert.deepEqual(store.calcMonthSummary('2026-01'), summary);
+  assert.deepEqual(store.getCategories({ includeArchived: true }), categories);
+  assert.deepEqual(store.getEarners({ includeArchived: true }), earners);
+});
+
+test('monthly reorder rejects missing months and every non-exact permutation without writes', () => {
+  const { store, storage } = readyStore({ budget: makeOrderedMonthBudget() });
+  const validPaychecks = ['paycheck-example-1', 'paycheck-example-2', 'paycheck-example-3'];
+  const validExpenses = ['expense-example-1', 'expense-example-2', 'expense-example-3'];
+  const cases = [
+    ['MONTH_NOT_FOUND', () => store.reorderPaychecks('2099-01', [])],
+    ['MONTH_NOT_FOUND', () => store.reorderExpenses('2099-01', [])],
+    ['INVALID_PERMUTATION', () => store.reorderPaychecks('2026-01', validPaychecks.slice(0, 2))],
+    ['INVALID_PERMUTATION', () => store.reorderPaychecks('2026-01', [validPaychecks[0], validPaychecks[0], validPaychecks[2]])],
+    ['INVALID_PERMUTATION', () => store.reorderPaychecks('2026-01', [validPaychecks[0], validPaychecks[1], 'foreign'])],
+    ['INVALID_PERMUTATION', () => store.reorderPaychecks('2026-01', null)],
+    ['INVALID_PERMUTATION', () => store.reorderExpenses('2026-01', validExpenses.slice(0, 2))],
+    ['INVALID_PERMUTATION', () => store.reorderExpenses('2026-01', [validExpenses[0], validExpenses[0], validExpenses[2]])],
+    ['INVALID_PERMUTATION', () => store.reorderExpenses('2026-01', [validExpenses[0], validExpenses[1], '__proto__'])],
+    ['INVALID_PERMUTATION', () => store.reorderExpenses('2026-01', { 0: validExpenses[0] })]
+  ];
+  for (const [code, operation] of cases) {
+    const beforeRaw = storage.getItem(STORAGE_KEY); const beforeData = store.getData();
+    storage.operations.length = 0;
+    expectStoreCode(code, operation);
+    assert.equal(storage.getItem(STORAGE_KEY), beforeRaw);
+    assert.deepEqual(store.getData(), beforeData);
+    assert.equal(storage.operations.some(entry => entry.op === 'setItem' || entry.op === 'removeItem'), false);
+  }
+  const sparse = new Array(3); sparse[0] = validPaychecks[0]; sparse[2] = validPaychecks[2];
+  const beforeRaw = storage.getItem(STORAGE_KEY); const beforeData = store.getData();
+  storage.operations.length = 0;
+  assert.throws(() => store.reorderPaychecks('2026-01', sparse),
+    error => error instanceof Schema.DataError && error.code === 'SPARSE_ARRAY');
+  assert.equal(storage.getItem(STORAGE_KEY), beforeRaw);
+  assert.deepEqual(store.getData(), beforeData);
+  assert.equal(storage.operations.some(entry => entry.op === 'setItem' || entry.op === 'removeItem'), false);
+});
+
+test('monthly reorder rolls back on primary failure and no-op order does not write', () => {
+  for (const [method, ids] of [
+    ['reorderPaychecks', ['paycheck-example-3', 'paycheck-example-2', 'paycheck-example-1']],
+    ['reorderExpenses', ['expense-example-3', 'expense-example-2', 'expense-example-1']]
+  ]) {
+    const { store, storage } = readyStore({ budget: makeOrderedMonthBudget() });
+    const beforeRaw = storage.getItem(STORAGE_KEY); const beforeData = store.getData();
+    storage.fail({ op: 'setItem', key: STORAGE_KEY, name: 'QuotaExceededError', once: true });
+    expectStoreCode('PRIMARY_WRITE_FAILED', () => store[method]('2026-01', ids));
+    assert.equal(storage.getItem(STORAGE_KEY), beforeRaw);
+    assert.deepEqual(store.getData(), beforeData);
+  }
+  const { store, storage } = readyStore({ budget: makeOrderedMonthBudget() });
+  storage.operations.length = 0;
+  store.reorderPaychecks('2026-01', store.getMonth('2026-01').paychecks.map(record => record.id));
+  store.reorderExpenses('2026-01', store.getMonth('2026-01').expenses.map(record => record.id));
+  assert.equal(storage.operations.some(entry => entry.op === 'setItem' || entry.op === 'removeItem'), false);
+});
+
+test('monthly record order round-trips through reload, export/import, and copy', () => {
+  const { store, storage } = readyStore({ budget: makeOrderedMonthBudget(), uuid: ids('order') });
+  store.reorderPaychecks('2026-01', ['paycheck-example-3', 'paycheck-example-1', 'paycheck-example-2']);
+  store.reorderExpenses('2026-01', ['expense-example-2', 'expense-example-3', 'expense-example-1']);
+  const expectedPaycheckLabels = ['Historical One', 'Example Earner', 'Historical Two'];
+  const expectedExpenseLabels = ['Historical fare', 'Custom service', 'Rent'];
+  const reloaded = createStore({ storage, now: makeClock(), uuid: ids() });
+  reloaded.load();
+  assert.deepEqual(reloaded.getMonth('2026-01').paychecks.map(record => record.earner), expectedPaycheckLabels);
+  assert.deepEqual(reloaded.getMonth('2026-01').expenses.map(record => record.name), expectedExpenseLabels);
+
+  const importedStorage = new MemoryStorage();
+  const imported = createStore({ storage: importedStorage, now: makeClock(), uuid: ids('import-order') });
+  imported.load(); imported.importData(store.exportData());
+  assert.deepEqual(imported.getMonth('2026-01').paychecks.map(record => record.earner), expectedPaycheckLabels);
+  assert.deepEqual(imported.getMonth('2026-01').expenses.map(record => record.name), expectedExpenseLabels);
+
+  const copied = store.copyFromMonth('2026-02', '2026-01');
+  assert.deepEqual(copied.paychecks.map(record => record.earner), expectedPaycheckLabels);
+  assert.deepEqual(copied.expenses.map(record => record.name), expectedExpenseLabels);
+  assert.deepEqual(Object.keys(copied.expenses[0].paycheckAmounts), [copied.paychecks[2].id]);
+  assert.deepEqual(Object.keys(copied.expenses[1].paycheckAmounts), [copied.paychecks[1].id, copied.paychecks[0].id]);
+});
+
 test('copy overwrite aborts when its required protective snapshot cannot be written', () => {
   const { store, storage } = readyStore({ uuid: ids('copy-fail') });
   const before = storage.getItem(STORAGE_KEY);
@@ -768,6 +893,8 @@ test('recovery-required blocks every ordinary mutation and import commit entry p
     () => store.updateExpense('2026-01', 'x', { actual: 1 }),
     () => store.updateExpensePaycheckAmount('2026-01', 'x', 'y', 1),
     () => store.deleteExpense('2026-01', 'x'),
+    () => store.reorderPaychecks('2026-01', ['paycheck-example-1']),
+    () => store.reorderExpenses('2026-01', ['expense-example-1']),
     () => store.updateAllocations('2026-01', { savings: 0, credit_card_debt: 0, investments: 0 }),
     () => store.updateAllocation('2026-01', 'savings', 1),
     () => store.addCategory({ name: 'New' }),

@@ -279,7 +279,7 @@ body {
 .expense-table thead th.col-total { width: 100px; }
 .expense-table thead th.col-actual { width: 100px; }
 .expense-table thead th.col-method { width: 110px; }
-.expense-table thead th.col-actions { width: 92px; text-align: center; }
+.expense-table thead th.col-actions { width: 190px; text-align: center; }
 
 .expense-table tbody td {
   padding: 6px;
@@ -306,6 +306,8 @@ body {
 
 .expense-table td.col-actions { text-align: center; white-space: nowrap; }
 .expense-table td.col-actions .btn-delete { margin-left: 4px; }
+.expense-table td.col-actions .btn-move { margin-left: 4px; }
+.btn-move:disabled { cursor: not-allowed; opacity: .45; }
 
 .expense-table input[type="number"] {
   width: 100%;

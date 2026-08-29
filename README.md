@@ -6,12 +6,15 @@ ZeroBudget is a local, dependency-free budgeting application. It runs directly i
 
 - Monthly paychecks, expenses, allocations, transfers, and dashboard summaries.
 - Add and edit paycheck and expense records.
+- Reorder monthly paychecks and reorder expenses within their displayed category using keyboard-accessible controls.
 - A **Structure** view for adding, renaming, archiving, restoring, and reordering categories, preset expense items, and earners.
 - Stable structural IDs with historical labels preserved in existing monthly records.
 - Versioned JSON backup and restore with validation and preview.
 - Local safety snapshots and a startup recovery workflow.
 
 Archived Structure choices remain visible in historical records and totals but are hidden when creating new records. Archiving does not delete or rewrite prior months. ZeroBudget prevents archiving the last active category or earner so new expenses and paychecks can still be created.
+
+Paycheck and expense order is stored as part of each month and survives reload, backup/restore, and copying a month. Expense movement stays within its displayed historical category group and does not change its category or any financial values.
 
 ## Run locally
 
