@@ -7,7 +7,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function() {
   'use strict';
 
-  const SCHEMA_VERSION = 2;
+  const SCHEMA_VERSION = 3;
   const V2_SCHEMA_VERSION = 2;
   const V3_SCHEMA_VERSION = 3;
   const LEGACY_SCHEMA_VERSION = 1;
@@ -784,11 +784,11 @@
   }
 
   function validateActive(input) {
-    return validateV2(input);
+    return validateV3(input);
   }
 
   function migrateActive(input) {
-    return migrateToV2(input);
+    return migrateToV3(input);
   }
 
   function parseJson(text, path) {

@@ -52,39 +52,25 @@ const DashboardView = {
   },
 
   plannedIncome(summary) {
-    return Object.hasOwn(summary, 'totalPlannedIncome') ? summary.totalPlannedIncome : summary.totalIncome;
+    return summary.totalPlannedIncome;
   },
 
   plannedExpenses(summary) {
-    return Object.hasOwn(summary, 'totalPlannedExpenses') ? summary.totalPlannedExpenses : summary.totalProjected;
+    return summary.totalPlannedExpenses;
   },
 
   actualExpenses(summary) {
-    if (Object.hasOwn(summary, 'unresolvedExpenseCount')) {
-      return summary.unresolvedExpenseCount === 0 ? summary.totalActualExpenses : null;
-    }
-    return summary.totalActual !== 0 ? summary.totalActual : summary.totalProjected;
+    return summary.unresolvedExpenseCount === 0 ? summary.totalActualExpenses : null;
   },
 
   categoryPlanned(total) {
     if (!total) return 0;
-    return Object.hasOwn(total, 'planned') ? total.planned : total.projected;
+    return total.planned;
   },
 
   categoryActual(total) {
     if (!total) return 0;
-    if (Object.hasOwn(total, 'unresolvedCount')) {
-      return total.unresolvedCount === 0 ? total.actual : null;
-    }
-    return total.actual !== 0 ? total.actual : total.projected;
-  },
-
-  isV3CategoryTotal(total) {
-    return Boolean(total && Object.hasOwn(total, 'unresolvedCount'));
-  },
-
-  isV3Summary(summary) {
-    return Object.hasOwn(summary, 'unresolvedExpenseCount');
+    return total.unresolvedCount === 0 ? total.actual : null;
   },
 
   formatWholeAmount(value) {
@@ -387,7 +373,7 @@ const DashboardView = {
         row.insertCell().textContent = this.formatWholeAmount(val);
         if (val !== null) {
           total += val;
-          if (this.isV3CategoryTotal(dataByMonth[mk][cat]) || val > 0) count++;
+          count++;
         }
       });
       const avg = count > 0 ? total / count : 0;
@@ -406,7 +392,7 @@ const DashboardView = {
       strong.textContent = this.formatWholeAmount(val); cell.append(strong);
       if (val !== null) {
         grandTotal += val;
-        if (this.isV3Summary(s) || val > 0) monthCount++;
+        monthCount++;
       }
     });
     const grandAvg = monthCount > 0 ? grandTotal / monthCount : 0;

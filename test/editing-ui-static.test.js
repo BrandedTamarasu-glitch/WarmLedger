@@ -25,9 +25,9 @@ test('create and edit saves use structural IDs and one atomic mutation boundary'
   const source = fs.readFileSync(budgetPath, 'utf8');
 
   assert.match(source, /Store\.editPaycheck\(this\.currentMonth, existing\.id, updates\)/);
-  assert.match(source, /Store\.addPaycheck\(this\.currentMonth, \{ earnerId, amount, date \}\)/);
+  assert.match(source, /Store\.addPaycheck\(this\.currentMonth, \{ earnerId, plannedAmount: updates\.plannedAmount, actualAmount: updates\.actualAmount, date \}\)/);
   assert.match(source, /Store\.editExpense\(this\.currentMonth, existing\.id, updates\)/);
-  assert.match(source, /categoryId, categoryItemId, name: customName, paycheckAmounts: \{\}/);
+  assert.match(source, /categoryId, categoryItemId, name: customName, date: updates\.date, paycheckAmounts: \{\}/);
   assert.doesNotMatch(source, /Store\.updatePaycheck\([^\n]+earner/);
   assert.doesNotMatch(source, /Store\.updateExpense\([^\n]+category/);
   assert.match(source, /const title = existing \? 'Edit Paycheck' : 'Add Paycheck'/);
@@ -39,7 +39,8 @@ test('edit modals prefill detached records and select definitions by stable ID',
 
   assert.match(source, /option\.value = earner\.id/);
   assert.match(source, /existing\.earnerId === earner\.id/);
-  assert.match(source, /field-amount'\)\.value = existing \? existing\.amount : ''/);
+  assert.match(source, /field-planned-amount'\)\.value = existing \? existing\.plannedAmount : ''/);
+  assert.match(source, /field-actual-amount'\)\.value = existing \? \(existing\.actualAmount \?\? ''\) : ''/);
   assert.match(source, /field-date'\)\.value = existing \? existing\.date : ''/);
   assert.match(source, /option\.value = category\.id/);
   assert.match(source, /existing\.categoryId === category\.id/);

@@ -2,7 +2,34 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { MemoryStorage, makeClock, makeUuid } = require('./helpers.js');
+const Schema = require('../js/data-schema.js');
+const {
+  SAMPLE_IDS, MemoryStorage, makeBudget, makeV1Budget, makeV2Budget, makeV3Budget,
+  makeClock, makeUuid
+} = require('./helpers.js');
+
+test('budget fixtures expose explicit canonical schema generations', () => {
+  const v1 = makeV1Budget();
+  const compatibilityV1 = makeBudget();
+  const v2 = makeV2Budget();
+  const v3 = makeV3Budget();
+
+  assert.deepEqual(compatibilityV1, v1);
+  assert.notEqual(compatibilityV1, v1);
+  assert.equal(v1.schemaVersion, 1);
+  assert.equal(v2.schemaVersion, 2);
+  assert.equal(v3.schemaVersion, 3);
+  Schema.validateV2(v2);
+  Schema.validateV3(v3);
+  assert.deepEqual(v3.months['2026-01'].paychecks[0], {
+    id: SAMPLE_IDS.paycheck, earnerId: 'earner-example-1', earner: 'Example Earner',
+    plannedAmount: 2500, actualAmount: 2500, date: '2026-01-15',
+    sourceTemplateId: null, occurrenceKey: null
+  });
+  assert.equal(v3.months['2026-01'].expenses[0].date, '');
+  assert.deepEqual(v3.templates, { income: [], expenses: [] });
+  assert.deepEqual(v3.months['2026-01'].suppressedOccurrences, []);
+});
 
 test('MemoryStorage follows string Web Storage semantics and logs no values', () => {
   const storage = new MemoryStorage({ initial: 1 });

@@ -62,8 +62,8 @@ const BudgetView = {
   },
 
   planningTotals(summary) {
-    const income = Object.hasOwn(summary, 'totalPlannedIncome') ? summary.totalPlannedIncome : summary.totalIncome;
-    const expenses = Object.hasOwn(summary, 'totalPlannedExpenses') ? summary.totalPlannedExpenses : summary.totalProjected;
+    const income = summary.totalPlannedIncome;
+    const expenses = summary.totalPlannedExpenses;
     const allocated = summary.totalAllocated;
     return {
       income,
@@ -83,20 +83,8 @@ const BudgetView = {
     return '$' + (n ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   },
 
-  usesV3() {
-    return Store.getData().schemaVersion >= 3;
-  },
-
-  plannedAmount(record) {
-    if (Object.hasOwn(record, 'plannedAmount')) return record.plannedAmount;
-    if (Object.hasOwn(record, 'amount')) return record.amount;
-    return Store.expenseProjected(record);
-  },
-
   actualAmount(record) {
-    if (Object.hasOwn(record, 'actualAmount')) return record.actualAmount;
-    if (Object.hasOwn(record, 'amount')) return record.amount;
-    return record.actual;
+    return record.actualAmount;
   },
 
   optionalAmount(input) {
@@ -166,11 +154,9 @@ const BudgetView = {
       this.appendRecordMarkers(identity, p);
       const actions = this.element('div', 'paycheck-actions');
       const amount = this.element('div', 'paycheck-amount');
-      if (Object.hasOwn(p, 'plannedAmount')) {
-        amount.append(this.element('span', 'amount-label', `Planned ${this.fmt(p.plannedAmount)}`));
-        amount.append(document.createTextNode(' · '));
-        amount.append(this.element('span', 'amount-label', p.actualAmount === null ? 'Actual not entered' : `Actual ${this.fmt(p.actualAmount)}`));
-      } else amount.textContent = this.fmt(p.amount);
+      amount.append(this.element('span', 'amount-label', `Planned ${this.fmt(p.plannedAmount)}`));
+      amount.append(document.createTextNode(' · '));
+      amount.append(this.element('span', 'amount-label', p.actualAmount === null ? 'Actual not entered' : `Actual ${this.fmt(p.actualAmount)}`));
       actions.append(amount);
       const editButton = this.element('button', 'btn btn-sm btn-edit', 'Edit'); editButton.type = 'button';
       editButton.dataset.editType = 'paycheck'; editButton.dataset.recordId = p.id;
@@ -190,8 +176,7 @@ const BudgetView = {
   showPaycheckModal(existing) {
     const earners = Store.getEarners();
     const title = existing ? 'Edit Paycheck' : 'Add Paycheck';
-    const v3 = this.usesV3();
-    const amountFields = v3 ? `
+    const amountFields = `
         <div class="form-group">
           <label for="field-planned-amount">Planned amount</label>
           <input type="number" id="field-planned-amount" step="0.01" min="0" max="1000000000000" required>
@@ -199,10 +184,6 @@ const BudgetView = {
         <div class="form-group">
           <label for="field-actual-amount">Actual amount</label>
           <input type="number" id="field-actual-amount" step="0.01" min="0" max="1000000000000" placeholder="Not entered">
-        </div>` : `
-        <div class="form-group">
-          <label for="field-amount">Amount (net/take-home)</label>
-          <input type="number" id="field-amount" step="0.01" min="0.01" max="1000000000000" required>
         </div>`;
 
     App.showModal(title, `
@@ -220,24 +201,14 @@ const BudgetView = {
     `, () => {
       const earnerId = document.getElementById('field-earner').value;
       const date = document.getElementById('field-date').value;
-      let updates;
-      if (v3) {
-        const plannedInput = document.getElementById('field-planned-amount');
-        const actualInput = document.getElementById('field-actual-amount');
-        if (!plannedInput.reportValidity() || !actualInput.reportValidity()) return false;
-        updates = { plannedAmount: Number(plannedInput.value), actualAmount: this.optionalAmount(actualInput), date };
-      } else {
-        const amountInput = document.getElementById('field-amount');
-        if (!amountInput.reportValidity()) return false;
-        const amount = Number(amountInput.value);
-        updates = { amount, date };
-      }
+      const plannedInput = document.getElementById('field-planned-amount');
+      const actualInput = document.getElementById('field-actual-amount');
+      if (!plannedInput.reportValidity() || !actualInput.reportValidity()) return false;
+      const updates = { plannedAmount: Number(plannedInput.value), actualAmount: this.optionalAmount(actualInput), date };
       if (!existing || earnerId !== existing.earnerId) updates.earnerId = earnerId;
       return App.runMutation(() => {
         if (existing) return Store.editPaycheck(this.currentMonth, existing.id, updates);
-        if (v3) return Store.addPaycheck(this.currentMonth, { earnerId, plannedAmount: updates.plannedAmount, actualAmount: updates.actualAmount, date });
-        const amount = updates.amount;
-        return Store.addPaycheck(this.currentMonth, { earnerId, amount, date });
+        return Store.addPaycheck(this.currentMonth, { earnerId, plannedAmount: updates.plannedAmount, actualAmount: updates.actualAmount, date });
       },
       { onSuccess: () => {
         this.render();
@@ -259,10 +230,8 @@ const BudgetView = {
       const option = document.createElement('option'); option.textContent = 'No active earners available'; option.disabled = true; option.selected = true;
       earnerSelect.append(option); document.getElementById('modal-save').disabled = true;
     }
-    if (v3) {
-      document.getElementById('field-planned-amount').value = existing ? existing.plannedAmount : '';
-      document.getElementById('field-actual-amount').value = existing ? (existing.actualAmount ?? '') : '';
-    } else document.getElementById('field-amount').value = existing ? existing.amount : '';
+    document.getElementById('field-planned-amount').value = existing ? existing.plannedAmount : '';
+    document.getElementById('field-actual-amount').value = existing ? (existing.actualAmount ?? '') : '';
     document.getElementById('field-date').value = existing ? existing.date : '';
   },
 
@@ -323,7 +292,7 @@ const BudgetView = {
       header.addEventListener('click', () => this.toggleCategory(categoryLabel));
       const itemsContainer = this.element('div', 'category-items'); itemsContainer.hidden = Boolean(isCollapsed);
       const table = this.element('table', 'expense-table'); const head = table.createTHead().insertRow();
-      const labels = [['Name', 'col-name'], ...paychecks.map(p => [this.getPaycheckShortLabel(p), 'col-pc']), [this.usesV3() ? 'Planned' : 'Total', 'col-total'], ['Actual', 'col-actual'], ['Method', 'col-method'], ['Actions', 'col-actions']];
+      const labels = [['Name', 'col-name'], ...paychecks.map(p => [this.getPaycheckShortLabel(p), 'col-pc']), ['Planned', 'col-total'], ['Actual', 'col-actual'], ['Method', 'col-method'], ['Actions', 'col-actions']];
       labels.forEach(([label, cls], index) => { const th = document.createElement('th'); th.className = cls; th.textContent = label;
         if (index > 0 && index <= paychecks.length) th.title = `${paychecks[index - 1].earner} - ${paychecks[index - 1].date}`; head.append(th); });
       const body = table.createTBody(); items.forEach((expense, index) =>
@@ -335,15 +304,15 @@ const BudgetView = {
 
   renderExpenseRow(expense, paychecks, groupIndex, groupSize) {
     const projected = Store.expenseProjected(expense);
-    const amounts = expense.paycheckAmounts || {};
+    const amounts = expense.paycheckAmounts;
 
     const row = document.createElement('tr'); row.dataset.id = expense.id;
     const name = row.insertCell(); name.className = 'col-name';
     name.append(this.element('span', 'expense-name', expense.name));
-    if (Object.hasOwn(expense, 'date') && expense.date) name.append(this.element('span', 'expense-date', ` · ${expense.date}`));
+    if (expense.date) name.append(this.element('span', 'expense-date', ` · ${expense.date}`));
     const assigned = Object.values(amounts).reduce((sum, amount) => sum + amount, 0);
     this.appendRecordMarkers(name, expense, {
-      needsAllocation: Object.hasOwn(expense, 'plannedAmount') && Math.abs(assigned - expense.plannedAmount) > 0.009
+      needsAllocation: Math.abs(assigned - expense.plannedAmount) > 0.009
     });
     paychecks.forEach(paycheck => {
       const cell = row.insertCell(); cell.className = 'col-pc'; const input = document.createElement('input');
@@ -351,20 +320,18 @@ const BudgetView = {
       input.value = Object.hasOwn(amounts, paycheck.id) ? amounts[paycheck.id] : '';
       input.setAttribute('aria-label', `${expense.name} allocated to ${this.getPaycheckShortLabel(paycheck)}`);
       input.min = '0';
-      if (Object.hasOwn(expense, 'plannedAmount')) {
-        const assignedElsewhere = assigned - (amounts[paycheck.id] ?? 0);
-        input.max = String(Math.max(0, expense.plannedAmount - assignedElsewhere));
-      } else input.max = '1000000000000';
+      const assignedElsewhere = assigned - (amounts[paycheck.id] ?? 0);
+      input.max = String(Math.max(0, expense.plannedAmount - assignedElsewhere));
       input.addEventListener('change', () => input.reportValidity() ? this.updatePaycheckAmount(expense.id, paycheck.id, input.value) : this.rejectAmount()); cell.append(input);
     });
     const total = row.insertCell(); total.className = 'col-total expense-total'; total.textContent = this.fmt(projected);
     const actualCell = row.insertCell(); actualCell.className = 'col-actual'; const actual = document.createElement('input');
-    actual.type = 'number'; actual.step = '0.01'; actual.placeholder = Object.hasOwn(expense, 'actualAmount') ? 'Not entered' : '0.00';
+    actual.type = 'number'; actual.step = '0.01'; actual.placeholder = 'Not entered';
     actual.value = this.actualAmount(expense) ?? '';
     actual.setAttribute('aria-label', `${expense.name} actual amount`);
     actual.min = '0'; actual.max = '1000000000000';
     actual.addEventListener('change', () => actual.reportValidity()
-      ? this.updateExpenseField(expense.id, Object.hasOwn(expense, 'actualAmount') ? 'actualAmount' : 'actual', actual.value)
+      ? this.updateExpenseField(expense.id, 'actualAmount', actual.value)
       : this.rejectAmount()); actualCell.append(actual);
     const methodCell = row.insertCell(); methodCell.className = 'col-method'; const method = document.createElement('select');
     [['bank', 'Bank'], ['credit_card', 'Credit Card'], ['savings', 'Savings'], ['investments', 'Investments']].forEach(([value, label]) => {
@@ -438,11 +405,10 @@ const BudgetView = {
   },
 
   updateExpenseField(id, field, value) {
-    if (field === 'actual') value = Number(value || 0);
     if (field === 'actualAmount') value = value === '' ? null : Number(value);
     App.runMutation(() => Store.updateExpense(this.currentMonth, id, { [field]: value }), {
       onSuccess: () => {
-        if (field === 'actual' || field === 'actualAmount') this.refreshTotals(id);
+        if (field === 'actualAmount') this.refreshTotals(id);
         this.renderPaychecks(); this.renderAllocation(); this.updateSummary();
       },
       onFailure: () => this.render()
@@ -457,8 +423,7 @@ const BudgetView = {
   showExpenseModal(existing) {
     const categories = Store.getCategories();
     const title = existing ? 'Edit Expense' : 'Add Expense';
-    const v3 = this.usesV3();
-    const amountAndDateFields = v3 ? `
+    const amountAndDateFields = `
       <div class="form-row">
         <div class="form-group">
           <label for="field-planned-amount">Planned amount</label>
@@ -472,7 +437,7 @@ const BudgetView = {
       <div class="form-group">
         <label for="field-expense-date">Expense date</label>
         <input type="date" id="field-expense-date">
-      </div>` : '';
+      </div>`;
 
     App.showModal(title, `
       <div class="form-group">
@@ -506,29 +471,23 @@ const BudgetView = {
       const paymentMethod = document.getElementById('field-method').value;
 
       if (categoryItemId === null && (!customName || customName.length > 120)) { document.getElementById('field-name').reportValidity(); return false; }
-      const updates = { paymentMethod };
-      if (v3) {
-        const plannedInput = document.getElementById('field-planned-amount');
-        const actualInput = document.getElementById('field-actual-amount');
-        if (!plannedInput.reportValidity() || !actualInput.reportValidity()) return false;
-        Object.assign(updates, {
-          plannedAmount: Number(plannedInput.value),
-          actualAmount: this.optionalAmount(actualInput),
-          date: document.getElementById('field-expense-date').value
-        });
-      }
+      const plannedInput = document.getElementById('field-planned-amount');
+      const actualInput = document.getElementById('field-actual-amount');
+      if (!plannedInput.reportValidity() || !actualInput.reportValidity()) return false;
+      const updates = {
+        paymentMethod,
+        plannedAmount: Number(plannedInput.value),
+        actualAmount: this.optionalAmount(actualInput),
+        date: document.getElementById('field-expense-date').value
+      };
       const structureChanged = !existing || categoryId !== existing.categoryId || categoryItemId !== existing.categoryItemId;
       if (structureChanged) Object.assign(updates, { categoryId, categoryItemId, name: customName });
       else if (categoryItemId === null && customName !== existing.name) updates.name = customName;
       return App.runMutation(() => {
         if (existing) return Store.editExpense(this.currentMonth, existing.id, updates);
-        if (v3) return Store.addExpense(this.currentMonth, {
+        return Store.addExpense(this.currentMonth, {
           categoryId, categoryItemId, name: customName, date: updates.date, paycheckAmounts: {},
           plannedAmount: updates.plannedAmount, actualAmount: updates.actualAmount, paymentMethod
-        });
-        return Store.addExpense(this.currentMonth, {
-          categoryId, categoryItemId, name: customName, paycheckAmounts: {},
-          actual: 0, paymentMethod
         });
       }, { onSuccess: () => {
           this.render();
@@ -552,13 +511,11 @@ const BudgetView = {
 
     document.getElementById('field-name').value = existing && existing.categoryItemId === null ? existing.name : '';
     document.getElementById('field-method').value = existing ? existing.paymentMethod : 'bank';
-    if (v3) {
-      const assigned = existing ? Object.values(existing.paycheckAmounts || {}).reduce((sum, amount) => sum + amount, 0) : 0;
-      const plannedInput = document.getElementById('field-planned-amount');
-      plannedInput.min = String(assigned); plannedInput.value = existing ? existing.plannedAmount : '';
-      document.getElementById('field-actual-amount').value = existing ? (existing.actualAmount ?? '') : '';
-      document.getElementById('field-expense-date').value = existing ? existing.date : '';
-    }
+    const assigned = existing ? Object.values(existing.paycheckAmounts).reduce((sum, amount) => sum + amount, 0) : 0;
+    const plannedInput = document.getElementById('field-planned-amount');
+    plannedInput.min = String(assigned); plannedInput.value = existing ? existing.plannedAmount : '';
+    document.getElementById('field-actual-amount').value = existing ? (existing.actualAmount ?? '') : '';
+    document.getElementById('field-expense-date').value = existing ? existing.date : '';
     document.getElementById('field-preset').addEventListener('change', function() {
       const isPreset = Boolean(this.value);
       document.getElementById('field-name').disabled = isPreset;
@@ -611,8 +568,8 @@ const BudgetView = {
     section.style.display = 'block';
     document.getElementById('allocation-remaining').textContent = this.fmt(expenseRemaining);
 
-    const alloc = month.allocations || { savings: 0, credit_card_debt: 0, investments: 0 };
-    const allocTotal = Object.values(alloc).reduce((s, v) => s + (v || 0), 0);
+    const alloc = month.allocations;
+    const allocTotal = Object.values(alloc).reduce((s, v) => s + v, 0);
     const unallocated = expenseRemaining - allocTotal;
 
     const inputs = document.getElementById('allocation-inputs'); inputs.replaceChildren();

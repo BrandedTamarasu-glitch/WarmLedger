@@ -155,7 +155,7 @@ test('migrates legacy paycheck allocations losslessly and does not mutate input'
   const before = JSON.stringify(legacy);
   const migrated = Schema.migrateActive(legacy);
   assert.equal(JSON.stringify(legacy), before);
-  assert.equal(migrated.schemaVersion, 2);
+  assert.equal(migrated.schemaVersion, 3);
   assert.deepEqual(migrated.months['2026-01'].expenses[0].paycheckAmounts, { 'paycheck-example-1': 1200 });
   assert.equal(Object.hasOwn(migrated.months['2026-01'].expenses[0], 'paycheckId'), false);
 });
@@ -168,7 +168,7 @@ test('preserves a zero projected legacy amount and backfills documented omission
   delete legacy.months['2026-01'].allocations;
   const migrated = Schema.migrateActive(legacy);
   assert.equal(migrated.months['2026-01'].expenses[0].paycheckAmounts['paycheck-example-1'], 0);
-  assert.equal(migrated.months['2026-01'].expenses[0].actual, 1200);
+  assert.equal(migrated.months['2026-01'].expenses[0].actualAmount, 1200);
   assert.equal(migrated.months['2026-01'].expenses[0].paymentMethod, 'bank');
   assert.deepEqual(migrated.months['2026-01'].allocations, { savings: 0, credit_card_debt: 0, investments: 0 });
 });
@@ -187,7 +187,7 @@ test('uses fixed generic defaults for missing legacy categories and earners', ()
 });
 
 test('rejects unsupported active versions and malformed legacy references', () => {
-  const future = makeBudget(); future.schemaVersion = 3;
+  const future = makeBudget(); future.schemaVersion = 4;
   expectCode('UNSUPPORTED_SCHEMA_VERSION', () => Schema.migrateActive(future));
   const legacy = makeBudget(); delete legacy.schemaVersion;
   const expense = legacy.months['2026-01'].expenses[0]; delete expense.paycheckAmounts;
@@ -197,7 +197,7 @@ test('rejects unsupported active versions and malformed legacy references', () =
 
 test('parses active JSON with stable safe errors', () => {
   const parsed = Schema.parseActive(JSON.stringify(makeBudget()));
-  assert.deepEqual(parsed, Schema.migrateToV2(makeBudget()));
+  assert.deepEqual(parsed, Schema.migrateToV3(makeBudget()));
   expectCode('INVALID_JSON', () => Schema.parseActive('{'));
   const sentinel = 'PRIVATE-SENTINEL';
   try {
@@ -259,7 +259,8 @@ test('legacy migration rejects missing months and backfills missing month collec
     months: { '2026-01': {} }
   };
   assert.deepEqual(Schema.migrateActive(legacy).months['2026-01'], {
-    paychecks: [], expenses: [], allocations: { savings: 0, credit_card_debt: 0, investments: 0 }
+    paychecks: [], expenses: [], allocations: { savings: 0, credit_card_debt: 0, investments: 0 },
+    suppressedOccurrences: []
   });
 });
 
@@ -455,11 +456,13 @@ test('classic-script and CommonJS expose the exact same public API and behavior'
   const text = JSON.stringify(makeBudget());
   assert.equal(JSON.stringify(browserApi.parseActive(text)), JSON.stringify(Schema.parseActive(text)));
   assert.equal(browserApi.BACKUP_FORMAT, Schema.BACKUP_FORMAT);
-  assert.equal(JSON.stringify(browserApi.migrateToV2(browserApi.parseActive(text))), JSON.stringify(Schema.migrateToV2(JSON.parse(text))));
+  context.activeText = text;
+  const browserV2 = vm.runInContext('ZeroBudgetSchema.migrateToV2(JSON.parse(activeText))', context);
+  assert.equal(JSON.stringify(browserV2), JSON.stringify(Schema.migrateToV2(JSON.parse(text))));
   assert.equal(JSON.stringify(browserApi.migrateToV3(browserApi.parseActive(text))), JSON.stringify(Schema.migrateToV3(JSON.parse(text))));
 });
 
-test('dormant v2 migration matches its exact golden deterministically without mutating v1', () => {
+test('explicit v2 migration matches its exact golden deterministically without mutating v1', () => {
   const source = readFixture('schema-v1-migration.json');
   const golden = readFixture('schema-v2-golden.json');
   const before = JSON.stringify(source);
@@ -470,7 +473,7 @@ test('dormant v2 migration matches its exact golden deterministically without mu
   assert.equal(JSON.stringify(first), JSON.stringify(second));
   assert.equal(JSON.stringify(source), before);
   assert.equal(Schema.validateV2(first), true);
-  assert.equal(Schema.SCHEMA_VERSION, 2);
+  assert.equal(Schema.SCHEMA_VERSION, 3);
   assert.equal(Schema.V2_SCHEMA_VERSION, 2);
 });
 
@@ -549,7 +552,7 @@ test('v2 retains v1 bounds and rejects unsupported migration versions', () => {
   expectCode('UNSUPPORTED_SCHEMA_VERSION', () => Schema.migrateToV2(invalid));
 });
 
-test('dormant v3 migration matches its golden deterministically without mutating v2', () => {
+test('v3 migration matches its golden deterministically without mutating v2', () => {
   const source = readFixture('schema-v2-golden.json');
   const golden = readFixture('schema-v3-golden.json');
   const before = JSON.stringify(source);
@@ -559,7 +562,7 @@ test('dormant v3 migration matches its golden deterministically without mutating
   assert.equal(JSON.stringify(first), JSON.stringify(second));
   assert.equal(JSON.stringify(source), before);
   assert.equal(Schema.validateV3(first), true);
-  assert.equal(Schema.SCHEMA_VERSION, 2);
+  assert.equal(Schema.SCHEMA_VERSION, 3);
   assert.equal(Schema.V3_SCHEMA_VERSION, 3);
 });
 
@@ -673,14 +676,17 @@ test('v3 enforces planned, actual, allocation, provenance, and occurrence unique
   }
 });
 
-test('active v2 APIs remain isolated from dormant v3', () => {
+test('active v3 APIs accept v0 through v3 while explicit v2 compatibility remains isolated', () => {
   const v2 = readFixture('schema-v2-golden.json'); const v3 = readFixture('schema-v3-golden.json');
-  expectCode('UNKNOWN_FIELD', () => Schema.validateActive(v3));
-  expectCode('UNSUPPORTED_SCHEMA_VERSION', () => Schema.migrateActive(v3));
-  expectCode('UNSUPPORTED_SCHEMA_VERSION', () => Schema.parseActive(JSON.stringify(v3)));
-  assert.equal(Schema.validateActive(v2), true);
-  assert.equal(Schema.buildBackup(v2, '2027-03-01T00:00:00.000Z').data.schemaVersion, 2);
-  expectCode('UNSUPPORTED_SCHEMA_VERSION', () => Schema.buildBackup(v3, '2027-03-01T00:00:00.000Z'));
+  assert.equal(Schema.validateActive(v3), true);
+  assert.deepEqual(Schema.migrateActive(v3), v3);
+  assert.deepEqual(Schema.parseActive(JSON.stringify(v3)), v3);
+  expectCode('MISSING_FIELD', () => Schema.validateActive(v2));
+  assert.equal(Schema.migrateActive(v2).schemaVersion, 3);
+  assert.equal(Schema.buildBackup(v2, '2027-03-01T00:00:00.000Z').data.schemaVersion, 3);
+  assert.equal(Schema.buildBackup(v3, '2027-03-01T00:00:00.000Z').data.schemaVersion, 3);
+  assert.equal(Schema.validateV2(v2), true);
+  assert.deepEqual(Schema.migrateToV2(v2), v2);
   const future = structuredClone(v3); future.schemaVersion = 4;
   expectCode('UNSUPPORTED_SCHEMA_VERSION', () => Schema.migrateToV3(future));
 });
@@ -689,7 +695,7 @@ test('schema policies are frozen, coherent, and retain their DataError and clone
   const active = Schema.ACTIVE_SCHEMA_POLICY; const v3 = Schema.V3_SCHEMA_POLICY;
   assert.equal(Object.isFrozen(active), true);
   assert.equal(Object.isFrozen(v3), true);
-  assert.equal(active.SCHEMA_VERSION, 2);
+  assert.equal(active.SCHEMA_VERSION, 3);
   assert.equal(v3.SCHEMA_VERSION, 3);
   assert.equal(active.DataError, Schema.DataError);
   assert.equal(v3.DataError, Schema.DataError);
@@ -701,7 +707,7 @@ test('schema policies are frozen, coherent, and retain their DataError and clone
   assert.equal(v3.validateActive, Schema.validateV3);
 });
 
-test('dormant v3 policy migrates and parses detached v0 through v3 data', () => {
+test('v3 policy migrates and parses detached v0 through v3 data', () => {
   const v1 = makeBudget(); const v0 = structuredClone(v1); delete v0.schemaVersion;
   const v2 = readFixture('schema-v2-golden.json'); const v3 = readFixture('schema-v3-golden.json');
   for (const source of [v0, v1, v2, v3]) {
@@ -718,7 +724,7 @@ test('dormant v3 policy migrates and parses detached v0 through v3 data', () => 
   }
 });
 
-test('dormant v3 policy builds and parses format-v1 backups and snapshots containing v0 through v3', () => {
+test('v3 policy builds and parses format-v1 backups and snapshots containing v0 through v3', () => {
   const v1 = makeBudget(); const v0 = structuredClone(v1); delete v0.schemaVersion;
   const inputs = [v0, v1, readFixture('schema-v2-golden.json'), readFixture('schema-v3-golden.json')];
   for (const source of inputs) {
@@ -747,7 +753,7 @@ test('dormant v3 policy builds and parses format-v1 backups and snapshots contai
   }
 });
 
-test('dormant v3 policy rejects future active and embedded versions', () => {
+test('v3 policy rejects future active and embedded versions', () => {
   const future = readFixture('schema-v3-golden.json'); future.schemaVersion = 4;
   expectCode('UNSUPPORTED_SCHEMA_VERSION', () => Schema.V3_SCHEMA_POLICY.migrateActive(future));
   expectCode('UNSUPPORTED_SCHEMA_VERSION', () => Schema.V3_SCHEMA_POLICY.parseActive(JSON.stringify(future)));
@@ -758,7 +764,7 @@ test('dormant v3 policy rejects future active and embedded versions', () => {
   expectCode('UNSUPPORTED_SCHEMA_VERSION', () => Schema.V3_SCHEMA_POLICY.parseBackup(JSON.stringify(backup)));
 });
 
-test('active v2 policy is behavior and serialization equivalent to existing active functions', () => {
+test('active v3 policy is behavior and serialization equivalent to existing active functions', () => {
   const source = makeBudget(); const timestamp = '2027-03-01T00:00:00.000Z';
   assert.equal(JSON.stringify(Schema.ACTIVE_SCHEMA_POLICY.migrateActive(source)), JSON.stringify(Schema.migrateActive(source)));
   assert.equal(JSON.stringify(Schema.ACTIVE_SCHEMA_POLICY.parseActive(JSON.stringify(source))), JSON.stringify(Schema.parseActive(JSON.stringify(source))));
@@ -766,42 +772,43 @@ test('active v2 policy is behavior and serialization equivalent to existing acti
   const snapshotMetadata = { createdAt: timestamp, localDate: '2027-03-01', reason: 'daily' };
   assert.equal(JSON.stringify(Schema.ACTIVE_SCHEMA_POLICY.buildSnapshot(source, snapshotMetadata)),
     JSON.stringify(Schema.buildSnapshot(source, snapshotMetadata)));
-  expectCode('UNKNOWN_FIELD', () => Schema.ACTIVE_SCHEMA_POLICY.validateActive(readFixture('schema-v3-golden.json')));
+  assert.equal(Schema.ACTIVE_SCHEMA_POLICY.validateActive(readFixture('schema-v3-golden.json')), true);
 });
 
-test('active validation is strict v2 while parsers and v1 envelopes migrate to v2', () => {
-  const v2 = readFixture('schema-v2-golden.json');
-  assert.equal(Schema.validateActive(v2), true);
-  expectCode('UNSUPPORTED_SCHEMA_VERSION', () => Schema.validateActive(makeBudget()));
-  assert.deepEqual(Schema.parseActive(JSON.stringify(v2)), v2);
-  assert.equal(Schema.parseActive(JSON.stringify(makeBudget())).schemaVersion, 2);
+test('active validation is strict v3 while parsers and legacy envelopes migrate to v3', () => {
+  const v2 = readFixture('schema-v2-golden.json'); const v3 = readFixture('schema-v3-golden.json');
+  assert.equal(Schema.validateActive(v3), true);
+  expectCode('MISSING_FIELD', () => Schema.validateActive(v2));
+  assert.deepEqual(Schema.parseActive(JSON.stringify(v3)), v3);
+  assert.equal(Schema.parseActive(JSON.stringify(makeBudget())).schemaVersion, 3);
   const backup = { format: Schema.BACKUP_FORMAT, formatVersion: Schema.BACKUP_FORMAT_VERSION, exportedAt: '2027-03-01T00:00:00.000Z', data: makeBudget() };
-  assert.equal(Schema.parseBackup(JSON.stringify(backup)).data.schemaVersion, 2);
-  assert.equal(Schema.buildBackup(makeBudget(), '2027-03-01T00:00:00.000Z').data.schemaVersion, 2);
+  assert.equal(Schema.parseBackup(JSON.stringify(backup)).data.schemaVersion, 3);
+  assert.equal(Schema.buildBackup(makeBudget(), '2027-03-01T00:00:00.000Z').data.schemaVersion, 3);
   const snapshot = {
     format: Schema.SNAPSHOT_FORMAT, formatVersion: Schema.SNAPSHOT_FORMAT_VERSION,
     createdAt: '2027-03-01T00:00:00.000Z', localDate: '2027-03-01', reason: 'daily', data: makeBudget()
   };
-  assert.equal(Schema.parseSnapshot(JSON.stringify(snapshot)).data.schemaVersion, 2);
+  assert.equal(Schema.parseSnapshot(JSON.stringify(snapshot)).data.schemaVersion, 3);
   assert.equal(Schema.buildSnapshot(makeBudget(), {
     createdAt: '2027-03-01T00:00:00.000Z', localDate: '2027-03-01', reason: 'daily'
-  }).data.schemaVersion, 2);
+  }).data.schemaVersion, 3);
   assert.equal(Schema.BACKUP_FORMAT_VERSION, 1);
   assert.equal(Schema.SNAPSHOT_FORMAT_VERSION, 1);
 });
 
-test('format-v1 backup and snapshot parsers migrate embedded v0, v1, and v2 data', () => {
+test('format-v1 backup and snapshot parsers migrate embedded v0 through v3 data', () => {
   const v1 = makeBudget();
   const v0 = structuredClone(v1); delete v0.schemaVersion;
   const v2 = Schema.migrateToV2(v1);
-  for (const embedded of [v0, v1, v2]) {
+  const v3 = Schema.migrateToV3(v2);
+  for (const embedded of [v0, v1, v2, v3]) {
     const backup = {
       format: Schema.BACKUP_FORMAT,
       formatVersion: 1,
       exportedAt: '2027-03-01T00:00:00.000Z',
       data: embedded
     };
-    assert.equal(Schema.parseBackup(JSON.stringify(backup)).data.schemaVersion, 2);
+    assert.equal(Schema.parseBackup(JSON.stringify(backup)).data.schemaVersion, 3);
     for (const reason of ['daily', 'pre-import', 'pre-reset']) {
       const snapshot = {
         format: Schema.SNAPSHOT_FORMAT,
@@ -811,7 +818,7 @@ test('format-v1 backup and snapshot parsers migrate embedded v0, v1, and v2 data
         reason,
         data: embedded
       };
-      assert.equal(Schema.parseSnapshot(JSON.stringify(snapshot)).data.schemaVersion, 2);
+      assert.equal(Schema.parseSnapshot(JSON.stringify(snapshot)).data.schemaVersion, 3);
     }
   }
 });

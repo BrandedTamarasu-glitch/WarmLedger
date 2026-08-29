@@ -8,6 +8,8 @@ ZeroBudget is a local, dependency-free budgeting application. It runs directly i
 - Add and edit paycheck and expense records.
 - Reorder monthly paychecks and reorder expenses within their displayed category using keyboard-accessible controls.
 - A **Structure** view for adding, renaming, archiving, restoring, and reordering categories, preset expense items, and earners.
+- A **Templates** view for recurring income and expenses with monthly, twice-monthly, weekly, and biweekly schedules.
+- Preview-first recurring generation that shows additions and skips before making one atomic change.
 - Stable structural IDs with historical labels preserved in existing monthly records.
 - Versioned JSON backup and restore with validation and preview.
 - Local safety snapshots and a startup recovery workflow.
@@ -34,17 +36,17 @@ npm test
 
 The test suite uses Node's built-in test runner and synthetic records only.
 
-## Recurring-template foundation
+## Recurring templates
 
-The repository now includes a dormant schema-version-3 migration and validation layer, a timezone-independent recurrence engine, and a tested Store foundation for recurring templates. The dormant Store supports income and expense template management, write-free month previews, atomic generation, idempotent reruns, and suppression of deliberately removed generated records. Recurrence supports monthly, twice-monthly, weekly, and biweekly schedules, including end-of-month clamping and leap-year boundaries.
+Use **Templates** to add recurring income and expense plans, pause or archive them, and control their order. From the Budget view, choose **Preview recurring items** to review a month's additions and skips before confirming. Previewing and cancelling write nothing; confirmation adds the complete preview atomically.
 
-The repository also contains the integrated Templates view, recurring preview dialog, and schema-version-3-compatible Budget, Transfers, and Dashboard consumers. These controls remain deliberately hidden while the browser application uses the active schema-version-2 policy. Schema-version-3 behavior is exercised through an isolated internal policy in automated tests; browser storage, backups, snapshots, and the interface will switch together during the activation phase.
+Generation is idempotent: rerunning a month does not duplicate existing occurrences or overwrite edited generated records. Deleting a generated record suppresses that occurrence so it does not unexpectedly return. Dates use timezone-independent calendar arithmetic, including short-month clamping and two distinct occurrences when twice-monthly dates clamp to the same final day.
 
 ## Data format compatibility
 
-The active data model is schema version 2. Existing legacy and schema-version-1 data is migrated deterministically in memory when opened; loading alone does not rewrite browser storage. The first later successful edit persists schema version 2 atomically. If that write fails, the original stored bytes and the last committed in-memory budget remain unchanged.
+The active data model is schema version 3. Existing unversioned, schema-version-1, and schema-version-2 data is migrated deterministically in memory when opened; loading alone does not rewrite browser storage. The first later successful edit persists schema version 3 atomically. If that write fails, the original stored bytes and the last committed in-memory budget remain unchanged.
 
-Backup and snapshot envelopes remain format version 1 and can contain older ZeroBudget data that the current application migrates during validation. Backups created by the current application contain schema-version-2 data and may be rejected by older application versions, so download and retain a backup before intentionally downgrading.
+Backup and snapshot envelopes remain format version 1 and can contain older ZeroBudget data that the current application migrates during validation. Backups created by the current application contain schema-version-3 data and may be rejected by older application versions, so download and retain a backup before intentionally downgrading.
 
 ## Back up and restore
 

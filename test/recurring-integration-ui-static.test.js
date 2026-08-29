@@ -25,12 +25,12 @@ test('recurrence and template scripts and required view controls are integrated 
   ]) assert.match(html, new RegExp(`id="${id}"`));
 });
 
-test('v3 feature gate protects the active v2 browser runtime', () => {
-  assert.match(app, /schemaVersion >= 3/);
-  assert.match(app, /nav-templates'\)\.hidden = !enabled/);
-  assert.match(app, /btn-preview-recurring'\)\.hidden = !enabled/);
-  assert.match(app, /if \(view === 'templates' && !this\.isV3\(\)\) return/);
-  assert.match(app, /if \(enabled && !this\.templatesInitialized\) \{ TemplatesView\.init\(\)/);
+test('active v3 application reveals and initializes recurring features after recovery gating', () => {
+  assert.match(app, /nav-templates'\)\.hidden = false/);
+  assert.match(app, /btn-preview-recurring'\)\.hidden = false/);
+  assert.match(app, /view-templates'\)\.hidden = false/);
+  assert.match(app, /if \(!this\.templatesInitialized\) \{ TemplatesView\.init\(\)/);
+  assert.doesNotMatch(app, /schemaVersion|isV3|SCHEMA_V3_REQUIRED/);
 });
 
 test('recurring generation is explicit preview-first with a Cancel-first dialog', () => {

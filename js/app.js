@@ -43,19 +43,14 @@ const App = {
   initializeViews() {
     if (this.viewsInitialized) return;
     BudgetView.init(); TransfersView.init(); DashboardView.init(); StructureView.init(); this.viewsInitialized = true;
-    this.syncV3Features();
+    this.initializeTemplateFeatures();
   },
 
-  isV3() { return Store.getData().schemaVersion >= 3; },
-
-  syncV3Features() {
-    const enabled = this.isV3();
-    document.getElementById('nav-templates').hidden = !enabled;
-    document.getElementById('btn-preview-recurring').hidden = !enabled;
-    document.getElementById('view-templates').hidden = !enabled;
-    if (enabled && !this.templatesInitialized) { TemplatesView.init(); this.templatesInitialized = true; }
-    if (!enabled && this.currentView === 'templates') this.switchView('budget');
-    return enabled;
+  initializeTemplateFeatures() {
+    document.getElementById('nav-templates').hidden = false;
+    document.getElementById('btn-preview-recurring').hidden = false;
+    document.getElementById('view-templates').hidden = false;
+    if (!this.templatesInitialized) { TemplatesView.init(); this.templatesInitialized = true; }
   },
 
   enterApplication(message, state = 'ready') {
@@ -119,7 +114,6 @@ const App = {
 
   switchView(view) {
     if (!this.viewsInitialized) return;
-    if (view === 'templates' && !this.isV3()) return;
     this.currentView = view;
     document.querySelectorAll('.nav-tab').forEach(tab => tab.classList.toggle('active', tab.dataset.view === view));
     document.querySelectorAll('.view').forEach(panel => panel.classList.toggle('active', panel.id === `view-${view}`));
@@ -131,13 +125,12 @@ const App = {
 
   refreshAllViews() {
     BudgetView.render(); TransfersView.syncMonth(); TransfersView.render(); DashboardView.destroyAllCharts(); StructureView.render();
-    const v3 = this.syncV3Features();
-    if (v3 && this.templatesInitialized) TemplatesView.render();
+    this.initializeTemplateFeatures();
+    TemplatesView.render();
     if (this.currentView === 'dashboard') requestAnimationFrame(() => DashboardView.render());
   },
 
   openRecurringPreview(trigger) {
-    if (!this.isV3()) return;
     this.recurringTrigger = trigger;
     try {
       const preview = Store.previewRecurringMonth(BudgetView.currentMonth);
@@ -321,7 +314,6 @@ const App = {
       INVALID_RECURRING_PREVIEW: 'This recurring preview is no longer valid. Preview the month again.',
       STALE_RECURRING_PREVIEW: 'Your budget changed after this preview. Preview the month again before adding items.',
       RECURRING_CONFLICT: 'Recurring items could not be added because the month contains conflicting generated records.',
-      SCHEMA_V3_REQUIRED: 'Recurring templates are unavailable until this budget is upgraded.',
       INCOME_TEMPLATE_NOT_FOUND: 'That income template is no longer available. Refresh Templates and try again.',
       EXPENSE_TEMPLATE_NOT_FOUND: 'That expense template is no longer available. Refresh Templates and try again.',
       EARNER_ARCHIVED: 'Choose an active earner for this template.',

@@ -6,7 +6,7 @@ const Schema = require('../js/data-schema.js');
 const {
   STORAGE_KEY, CORRUPT_KEY, SNAPSHOT_PREFIX, SNAPSHOT_LIMIT, StoreError, createStore
 } = require('../js/data.js');
-const { makeV1Budget, makeV2Budget: makeBudget, MemoryStorage, makeClock } = require('./helpers.js');
+const { makeV1Budget, makeV2Budget, makeV3Budget: makeBudget, MemoryStorage, makeClock } = require('./helpers.js');
 
 function ids(prefix = 'generated') {
   let index = 0;
@@ -71,19 +71,21 @@ function makeOrderedMonthBudget() {
   const budget = makeStructureBudget();
   const month = budget.months['2026-01'];
   month.paychecks.push(
-    { id: 'paycheck-example-2', earnerId: 'earner-example-2', earner: 'Historical Two', amount: 800, date: '2026-01-20' },
-    { id: 'paycheck-example-3', earnerId: 'earner-example-1', earner: 'Historical One', amount: 600, date: '' }
+    { id: 'paycheck-example-2', earnerId: 'earner-example-2', earner: 'Historical Two', plannedAmount: 800, actualAmount: 800, date: '2026-01-20', sourceTemplateId: null, occurrenceKey: null },
+    { id: 'paycheck-example-3', earnerId: 'earner-example-1', earner: 'Historical One', plannedAmount: 600, actualAmount: 600, date: '', sourceTemplateId: null, occurrenceKey: null }
   );
   month.expenses.push(
     {
       id: 'expense-example-2', categoryId: 'category-example-2', category: 'Historical Travel',
       categoryItemId: 'item-example-2', name: 'Historical fare',
-      paycheckAmounts: { 'paycheck-example-2': 300 }, actual: 280, paymentMethod: 'credit_card'
+      date: '', paycheckAmounts: { 'paycheck-example-2': 300 }, plannedAmount: 300, actualAmount: 280,
+      paymentMethod: 'credit_card', sourceTemplateId: null, occurrenceKey: null
     },
     {
       id: 'expense-example-3', categoryId: 'category-example-1', category: 'Historical Home',
       categoryItemId: null, name: 'Custom service',
-      paycheckAmounts: { 'paycheck-example-1': 50, 'paycheck-example-3': 75 }, actual: 120, paymentMethod: 'bank'
+      date: '', paycheckAmounts: { 'paycheck-example-1': 50, 'paycheck-example-3': 75 }, plannedAmount: 125,
+      actualAmount: 120, paymentMethod: 'bank', sourceTemplateId: null, occurrenceKey: null
     }
   );
   return budget;
@@ -126,15 +128,15 @@ test('legacy load migrates only in memory and preserves primary bytes', () => {
   const result = store.load();
   assert.equal(result.state, 'ready');
   assert.equal(result.migrated, true);
-  assert.equal(store.getData().schemaVersion, 2);
+  assert.equal(store.getData().schemaVersion, 3);
   assert.equal(storage.getItem(STORAGE_KEY), raw);
   assert.equal(storage.operations.filter(operation => operation.op === 'setItem').length, 0);
 });
 
-test('valid v0, v1, and v2 loads are write-free and do not prune snapshots', () => {
+test('valid v0, v1, v2, and v3 loads are write-free and do not prune snapshots', () => {
   const v1 = makeV1Budget();
   const v0 = structuredClone(v1); delete v0.schemaVersion;
-  for (const budget of [v0, v1, makeBudget()]) {
+  for (const budget of [v0, v1, makeV2Budget(), makeBudget()]) {
     const raw = JSON.stringify(budget);
     const storage = new MemoryStorage({ [STORAGE_KEY]: raw });
     for (let index = 0; index < SNAPSHOT_LIMIT + 2; index += 1) {
@@ -146,37 +148,70 @@ test('valid v0, v1, and v2 loads are write-free and do not prune snapshots', () 
     storage.operations.length = 0;
     const store = createStore({ storage, now: makeClock(), uuid: ids() });
     assert.equal(store.load().state, 'ready');
-    assert.equal(store.getData().schemaVersion, 2);
+    assert.equal(store.getData().schemaVersion, 3);
     assert.equal(storage.getItem(STORAGE_KEY), raw);
     assert.equal(storage.operations.some(operation => operation.op === 'setItem' || operation.op === 'removeItem'), false);
     assert.equal(snapshotKeys(storage).length, SNAPSHOT_LIMIT + 2);
   }
 });
 
-test('failed first persistence after v1 load preserves exact v1 bytes and canonical v2 memory', () => {
+test('failed first persistence after v1 load preserves exact v1 bytes and canonical v3 memory', () => {
   const v1Raw = JSON.stringify(makeV1Budget());
   const storage = new MemoryStorage({ [STORAGE_KEY]: v1Raw });
   const store = createStore({ storage, now: makeClock(), uuid: ids('first-write') });
   store.load();
   const before = store.getData();
-  assert.equal(before.schemaVersion, 2);
+  assert.equal(before.schemaVersion, 3);
   storage.fail({ op: 'setItem', key: STORAGE_KEY, name: 'QuotaExceededError', once: true });
-  expectStoreCode('PRIMARY_WRITE_FAILED', () => store.updateExpense('2026-01', 'expense-example-1', { actual: 999 }));
+  expectStoreCode('PRIMARY_WRITE_FAILED', () => store.updateExpense('2026-01', 'expense-example-1', { actualAmount: 999 }));
   assert.equal(storage.getItem(STORAGE_KEY), v1Raw);
   assert.deepEqual(store.getData(), before);
 });
 
-test('v3 policy owns canonical defaults while active-v2 template APIs fail without side effects', () => {
+test('v2 raw load stays byte-exact until the first successful mutation persists canonical v3', () => {
+  const raw = JSON.stringify(makeV2Budget());
+  const storage = new MemoryStorage({ [STORAGE_KEY]: raw });
+  const store = createStore({ storage, now: makeClock(), uuid: ids('v2-write') });
+  assert.equal(store.load().state, 'ready');
+  assert.equal(storage.getItem(STORAGE_KEY), raw);
+  assert.equal(store.getData().schemaVersion, 3);
+  store.updateExpense('2026-01', 'expense-example-1', { actualAmount: 777 });
+  const persisted = JSON.parse(storage.getItem(STORAGE_KEY));
+  assert.equal(persisted.schemaVersion, 3);
+  assert.equal(persisted.months['2026-01'].expenses[0].actualAmount, 777);
+  assert.equal(Object.hasOwn(persisted.months['2026-01'].expenses[0], 'actual'), false);
+});
+
+test('v0, v1, and v2 backup and snapshot envelopes migrate through active v3 Store paths without preview writes', () => {
+  const v1 = makeV1Budget(); const v0 = structuredClone(v1); delete v0.schemaVersion;
+  const legacy = [v0, v1, makeV2Budget()];
+  const envelope = (format, data, index) => JSON.stringify(format === 'zerobudget-backup' ? {
+    format, formatVersion: 1, exportedAt: `2026-01-${String(index + 10).padStart(2, '0')}T12:00:00.000Z`, data
+  } : {
+    format, formatVersion: 1, createdAt: `2026-01-${String(index + 10).padStart(2, '0')}T12:00:00.000Z`,
+    localDate: `2026-01-${String(index + 10).padStart(2, '0')}`, reason: 'daily', data
+  });
+  const storage = new MemoryStorage({ [STORAGE_KEY]: JSON.stringify(makeBudget()) });
+  legacy.forEach((data, index) => storage.setItem(`${SNAPSHOT_PREFIX}legacy-${index}`,
+    envelope('zerobudget-snapshot', data, index)));
+  const store = createStore({ storage, now: makeClock(), uuid: ids('envelope-v2') });
+  store.load(); storage.operations.length = 0;
+  legacy.forEach((data, index) => {
+    const preview = store.previewImport(envelope('zerobudget-backup', data, index));
+    assert.equal(preview.data.schemaVersion, 3);
+    assert.equal(preview.data.months['2026-01'].expenses[0].actualAmount, 1200);
+  });
+  assert.deepEqual(store.listSnapshots().map(record => record.data.schemaVersion), [3, 3, 3]);
+  assert.equal(storage.operations.some(entry => entry.op === 'setItem' || entry.op === 'removeItem'), false);
+});
+
+test('active v3 policy owns canonical defaults and exposes template APIs', () => {
   const active = readyStore();
-  const before = active.storage.getItem(STORAGE_KEY);
-  active.storage.operations.length = 0;
-  expectStoreCode('SCHEMA_V3_REQUIRED', () => active.store.getIncomeTemplates());
-  expectStoreCode('SCHEMA_V3_REQUIRED', () => active.store.addIncomeTemplate(incomeTemplate()));
-  assert.equal(active.storage.getItem(STORAGE_KEY), before);
-  assert.equal(active.storage.operations.some(entry => entry.op === 'setItem' || entry.op === 'removeItem'), false);
+  assert.deepEqual(active.store.getIncomeTemplates(), []);
+  assert.equal(active.store.addIncomeTemplate(incomeTemplate()).name, 'Primary payday');
 
   const storage = new MemoryStorage();
-  const store = createStore({ storage, now: makeClock(), uuid: ids(), schemaPolicy: Schema.V3_SCHEMA_POLICY });
+  const store = createStore({ storage, now: makeClock(), uuid: ids() });
   assert.equal(store.load().state, 'empty');
   assert.deepEqual(store.getData().templates, { income: [], expenses: [] });
   assert.deepEqual(store.getMonth('2026-04').suppressedOccurrences, []);
@@ -481,6 +516,7 @@ test('structure usage counts every month by structural ID and is frozen, detache
   budget.months['2026-02'].paychecks[0].id = 'paycheck-example-2';
   budget.months['2026-02'].paychecks[0].earnerId = 'earner-example-2';
   budget.months['2026-02'].paychecks[0].earner = 'Historical Earner Two';
+  budget.months['2026-02'].paychecks[0].date = '';
   budget.months['2026-02'].expenses[0].id = 'expense-example-2';
   budget.months['2026-02'].expenses[0].categoryId = 'category-example-2';
   budget.months['2026-02'].expenses[0].category = 'Historical Travel';
@@ -634,15 +670,17 @@ test('getters, calculations, and missing-month reads are detached and write-free
   const data = store.getData();
   const month = store.getMonth('2026-01');
   const absent = store.peekMonth('2029-01');
-  data.months['2026-01'].paychecks[0].amount = 1;
+  data.months['2026-01'].paychecks[0].plannedAmount = 1;
   month.expenses.length = 0;
   absent.allocations.savings = 99;
-  assert.equal(store.getData().months['2026-01'].paychecks[0].amount, 2500);
+  assert.equal(store.getData().months['2026-01'].paychecks[0].plannedAmount, 2500);
   assert.equal(store.getMonth('2026-01').expenses.length, 1);
   assert.equal(store.getAllMonthKeys().includes('2029-01'), false);
   assert.deepEqual(store.calcMonthSummary('2029-01'), {
     totalIncome: 0, totalProjected: 0, totalActual: 0,
-    totalAllocated: 0, totalBudgeted: 0, remaining: 0
+    totalAllocated: 0, totalBudgeted: 0, remaining: 0,
+    totalPlannedIncome: 0, totalActualIncome: 0, unresolvedIncomeCount: 0,
+    totalPlannedExpenses: 0, totalActualExpenses: 0, unresolvedExpenseCount: 0
   });
   assert.equal(store.calcPaycheckRemaining('2026-01', 'paycheck-example-1'), 1300);
   assert.equal(storage.operations.some(operation => operation.op !== 'getItem'), false);
@@ -653,21 +691,21 @@ test('ensureMonth and every CRUD family commit detached canonical state', () => 
   const store = createStore({ storage, now: makeClock(), uuid: ids('id') });
   store.load();
   store.ensureMonth('2026-02');
-  const paycheck = store.addPaycheck('2026-02', { earnerId: 'default-earner-0001', amount: 3000, date: '' });
+  const paycheck = store.addPaycheck('2026-02', { earnerId: 'default-earner-0001', plannedAmount: 3000, actualAmount: null, date: '' });
   assert.equal(paycheck.id, 'id-1');
-  store.updatePaycheck('2026-02', paycheck.id, { amount: 3200 });
+  store.updatePaycheck('2026-02', paycheck.id, { plannedAmount: 3200 });
   const expense = store.addExpense('2026-02', {
     categoryId: 'default-category-0001', categoryItemId: null,
-    name: 'Example bill', actual: 0, paymentMethod: 'bank'
+    name: 'Example bill', date: '', paycheckAmounts: {}, plannedAmount: 900, actualAmount: 0, paymentMethod: 'bank'
   });
   store.updateExpensePaycheckAmount('2026-02', expense.id, paycheck.id, 900);
-  store.updateExpense('2026-02', expense.id, { actual: 875 });
+  store.updateExpense('2026-02', expense.id, { actualAmount: 875 });
   store.updateAllocation('2026-02', 'savings', 100);
   store.updateAllocations('2026-02', { savings: 200, credit_card_debt: 0, investments: 0 });
   const current = store.getMonth('2026-02');
-  assert.equal(current.paychecks[0].amount, 3200);
+  assert.equal(current.paychecks[0].plannedAmount, 3200);
   assert.equal(current.expenses[0].paycheckAmounts[paycheck.id], 900);
-  assert.equal(current.expenses[0].actual, 875);
+  assert.equal(current.expenses[0].actualAmount, 875);
   assert.equal(current.allocations.savings, 200);
   store.deleteExpense('2026-02', expense.id);
   store.deletePaycheck('2026-02', paycheck.id);
@@ -687,22 +725,24 @@ test('structural create and reassignment snapshot labels and reject spoofing or 
   budget.settings.earners.push({ id: 'earner-archived', name: 'Archived Earner', archived: true });
   const { store, storage } = readyStore({ budget, uuid: ids('structural') });
 
-  const paycheck = store.addPaycheck('2026-02', { earnerId: 'earner-other', amount: 100, date: '' });
+  const paycheck = store.addPaycheck('2026-02', { earnerId: 'earner-other', plannedAmount: 100, actualAmount: null, date: '' });
   assert.equal(paycheck.earner, 'Other Earner');
   expectStoreCode('FORBIDDEN_FIELD', () => store.addPaycheck('2026-02', {
-    earnerId: 'earner-other', earner: 'Spoofed', amount: 100, date: ''
+    earnerId: 'earner-other', earner: 'Spoofed', plannedAmount: 100, actualAmount: null, date: ''
   }));
   expectStoreCode('EARNER_ARCHIVED', () => store.reassignPaycheckEarner('2026-02', paycheck.id, 'earner-archived'));
   store.reassignPaycheckEarner('2026-02', paycheck.id, 'earner-example-1');
   assert.equal(store.getMonth('2026-02').paychecks[0].earner, 'Example Earner');
 
   const preset = store.addExpense('2026-02', {
-    categoryId: 'category-other', categoryItemId: 'item-other', name: 'Spoofed preset', paymentMethod: 'bank'
+    categoryId: 'category-other', categoryItemId: 'item-other', name: 'Spoofed preset', date: '', paycheckAmounts: {},
+    plannedAmount: 100, actualAmount: null, paymentMethod: 'bank'
   });
   assert.equal(preset.category, 'Other');
   assert.equal(preset.name, 'Other preset');
   expectStoreCode('CATEGORY_ARCHIVED', () => store.addExpense('2026-02', {
-    categoryId: 'category-archived', categoryItemId: null, name: 'Custom', paymentMethod: 'bank'
+    categoryId: 'category-archived', categoryItemId: null, name: 'Custom', date: '', paycheckAmounts: {},
+    plannedAmount: 100, actualAmount: null, paymentMethod: 'bank'
   }));
   expectStoreCode('CATEGORY_ITEM_ARCHIVED', () => store.reassignExpenseStructure('2026-02', preset.id, {
     categoryId: 'category-other', categoryItemId: 'item-other-archived'
@@ -727,7 +767,7 @@ test('narrow scalar APIs reject arbitrary fields and apply exact provenance sema
 
   store.updateExpense('2026-01', 'expense-example-1', { name: 'Rent' });
   assert.equal(store.getMonth('2026-01').expenses[0].categoryItemId, 'item-example-1');
-  store.updateExpense('2026-01', 'expense-example-1', { actual: 1210 });
+  store.updateExpense('2026-01', 'expense-example-1', { actualAmount: 1210 });
   assert.equal(store.getMonth('2026-01').expenses[0].categoryItemId, 'item-example-1');
   store.updateExpense('2026-01', 'expense-example-1', { name: 'Custom rent' });
   assert.equal(store.getMonth('2026-01').expenses[0].categoryItemId, null);
@@ -743,23 +783,24 @@ test('composite record edits commit once and cannot half-save', () => {
   budget.settings.earners.push({ id: 'earner-other', name: 'Other Earner', archived: false });
   const { store, storage } = readyStore({ budget });
   store.editPaycheck('2026-01', 'paycheck-example-1', {
-    earnerId: 'earner-other', amount: 2600, date: '2026-01-20'
+    earnerId: 'earner-other', plannedAmount: 2600, actualAmount: 2500, date: '2026-01-20'
   });
   storage.operations.length = 0;
   store.editExpense('2026-01', 'expense-example-1', {
-    categoryId: 'category-other', categoryItemId: null, name: 'Custom item', actual: 1100, paymentMethod: 'credit_card'
+    categoryId: 'category-other', categoryItemId: null, name: 'Custom item', plannedAmount: 1200,
+    actualAmount: 1100, paymentMethod: 'credit_card'
   });
   const expense = store.getMonth('2026-01').expenses[0];
   assert.deepEqual({ categoryId: expense.categoryId, category: expense.category, categoryItemId: expense.categoryItemId,
-    name: expense.name, actual: expense.actual, paymentMethod: expense.paymentMethod }, {
+    name: expense.name, actualAmount: expense.actualAmount, paymentMethod: expense.paymentMethod }, {
     categoryId: 'category-other', category: 'Other', categoryItemId: null,
-    name: 'Custom item', actual: 1100, paymentMethod: 'credit_card'
+    name: 'Custom item', actualAmount: 1100, paymentMethod: 'credit_card'
   });
   assert.equal(storage.operations.filter(operation => operation.op === 'setItem' && operation.key === STORAGE_KEY).length, 1);
   const beforeRaw = storage.getItem(STORAGE_KEY); const beforeData = store.getData();
   storage.fail({ op: 'setItem', key: STORAGE_KEY, name: 'QuotaExceededError', once: true });
   expectStoreCode('PRIMARY_WRITE_FAILED', () => store.editExpense('2026-01', 'expense-example-1', {
-    categoryId: 'category-example-1', categoryItemId: 'item-example-1', actual: 999
+    categoryId: 'category-example-1', categoryItemId: 'item-example-1', actualAmount: 999
   }));
   assert.equal(storage.getItem(STORAGE_KEY), beforeRaw);
   assert.deepEqual(store.getData(), beforeData);
@@ -771,7 +812,7 @@ test('copy and clear use transactions and remap paycheck references', () => {
   assert.equal(copied.paychecks[0].id, 'copy-1');
   assert.equal(copied.expenses[0].id, 'copy-2');
   assert.deepEqual(copied.expenses[0].paycheckAmounts, { 'copy-1': 1200 });
-  assert.equal(copied.expenses[0].actual, 0);
+  assert.equal(copied.expenses[0].actualAmount, null);
   assert.equal(copied.paychecks[0].earnerId, 'earner-example-1');
   assert.equal(copied.paychecks[0].earner, 'Example Earner');
   assert.equal(copied.expenses[0].categoryId, 'category-example-1');
@@ -780,7 +821,7 @@ test('copy and clear use transactions and remap paycheck references', () => {
   assert.equal(copied.expenses[0].name, 'Rent');
   store.clearMonth('2026-02');
   assert.deepEqual(store.peekMonth('2026-02'), {
-    paychecks: [], expenses: [], allocations: { savings: 0, credit_card_debt: 0, investments: 0 }
+    paychecks: [], expenses: [], allocations: { savings: 0, credit_card_debt: 0, investments: 0 }, suppressedOccurrences: []
   });
 });
 
@@ -900,7 +941,7 @@ test('missing records and invalid allocation keys cause zero writes', () => {
   const { store, storage } = readyStore();
   const before = JSON.stringify(store.getData());
   const cases = [
-    () => store.updatePaycheck('2026-01', 'missing', { amount: 1 }),
+    () => store.updatePaycheck('2026-01', 'missing', { plannedAmount: 1 }),
     () => store.deleteExpense('2026-01', 'missing'),
     () => store.updateExpensePaycheckAmount('2026-01', 'expense-example-1', 'missing', 1),
     () => store.updateAllocation('2026-01', 'constructor', 1)
@@ -914,9 +955,9 @@ test('missing records and invalid allocation keys cause zero writes', () => {
 test('all missing-ID mutators fail before any write', () => {
   const { store, storage } = readyStore();
   const matrix = [
-    ['PAYCHECK_NOT_FOUND', () => store.updatePaycheck('2026-01', 'missing', { amount: 1 })],
+    ['PAYCHECK_NOT_FOUND', () => store.updatePaycheck('2026-01', 'missing', { plannedAmount: 1 })],
     ['PAYCHECK_NOT_FOUND', () => store.deletePaycheck('2026-01', 'missing')],
-    ['EXPENSE_NOT_FOUND', () => store.updateExpense('2026-01', 'missing', { actual: 1 })],
+    ['EXPENSE_NOT_FOUND', () => store.updateExpense('2026-01', 'missing', { actualAmount: 1 })],
     ['EXPENSE_NOT_FOUND', () => store.deleteExpense('2026-01', 'missing')],
     ['EXPENSE_NOT_FOUND', () => store.updateExpensePaycheckAmount('2026-01', 'missing', 'paycheck-example-1', 1)],
     ['PAYCHECK_NOT_FOUND', () => store.updateExpensePaycheckAmount('2026-01', 'expense-example-1', 'missing', 1)]
@@ -931,7 +972,7 @@ test('all missing-ID mutators fail before any write', () => {
 test('schema-rejected over-limit mutations perform zero writes and preserve memory', () => {
   const { store, storage } = readyStore();
   const before = store.getData();
-  assert.throws(() => store.updateExpense('2026-01', 'expense-example-1', { actual: 1_000_000_000_001 }),
+  assert.throws(() => store.updateExpense('2026-01', 'expense-example-1', { actualAmount: 1_000_000_000_001 }),
     error => error instanceof Schema.DataError && error.code === 'AMOUNT_OUT_OF_RANGE');
   assert.deepEqual(store.getData(), before);
   assert.equal(storage.operations.some(entry => entry.op === 'setItem' || entry.op === 'removeItem'), false);
@@ -945,7 +986,7 @@ test('unsafe generated identifiers cannot silently commit or lose an amount', ()
   const beforeRaw = storage.getItem(STORAGE_KEY);
   const beforeData = store.getData();
   storage.operations.length = 0;
-  assert.throws(() => store.addPaycheck('2026-02', { earnerId: 'default-earner-0001', amount: 100, date: '' }),
+  assert.throws(() => store.addPaycheck('2026-02', { earnerId: 'default-earner-0001', plannedAmount: 100, actualAmount: null, date: '' }),
     error => error instanceof Schema.DataError && error.code === 'UNSAFE_IDENTIFIER');
   assert.equal(storage.getItem(STORAGE_KEY), beforeRaw);
   assert.deepEqual(store.getData(), beforeData);
@@ -959,7 +1000,7 @@ test('hostile category key spellings remain safe calculation labels', () => {
   const { store } = readyStore({ budget });
   const totals = store.calcCategoryTotals('2026-01');
   assert.equal(Object.getPrototypeOf(totals), null);
-  assert.deepEqual(totals.__proto__, { projected: 1200, actual: 1200 });
+  assert.deepEqual(totals.__proto__, { planned: 1200, projected: 1200, actual: 1200, unresolvedCount: 0 });
 });
 
 test('failed primary write preserves exact primary bytes and memory', () => {
@@ -968,7 +1009,7 @@ test('failed primary write preserves exact primary bytes and memory', () => {
   const before = store.getData();
   storage.operations.length = 0;
   storage.fail({ op: 'setItem', key: STORAGE_KEY, name: 'QuotaExceededError' });
-  expectStoreCode('PRIMARY_WRITE_FAILED', () => store.updateExpense('2026-01', 'expense-example-1', { actual: 999 }));
+  expectStoreCode('PRIMARY_WRITE_FAILED', () => store.updateExpense('2026-01', 'expense-example-1', { actualAmount: 999 }));
   assert.equal(storage.getItem(STORAGE_KEY), raw);
   assert.deepEqual(store.getData(), before);
   assert.equal(snapshotKeys(storage).length, 1, 'a valid pre-change daily snapshot may remain');
@@ -982,7 +1023,7 @@ test('failed primary is attempted exactly once after daily snapshot set and read
   storage.attempts.length = 0;
   storage.fail({ op: 'setItem', key: STORAGE_KEY, name: 'QuotaExceededError' });
   expectStoreCode('PRIMARY_WRITE_FAILED', () =>
-    store.updateExpense('2026-01', 'expense-example-1', { actual: 101 }));
+    store.updateExpense('2026-01', 'expense-example-1', { actualAmount: 101 }));
   const snapshotKey = snapshotKeys(storage)[0];
   const relevant = storage.attempts.filter(entry => entry.key === snapshotKey || entry.key === STORAGE_KEY);
   assert.deepEqual(relevant, [
@@ -991,14 +1032,14 @@ test('failed primary is attempted exactly once after daily snapshot set and read
     { op: 'setItem', key: STORAGE_KEY }
   ]);
   assert.equal(storage.attempts.filter(entry => entry.op === 'setItem' && entry.key === STORAGE_KEY).length, 1);
-  assert.equal(store.getMonth('2026-01').expenses[0].actual, 1200);
+  assert.equal(store.getMonth('2026-01').expenses[0].actualAmount, 1200);
 });
 
 test('optional daily snapshot identifier failure warns but does not block a normal commit', () => {
   const { store, storage } = readyStore({ uuid: () => { throw new Error('unavailable'); } });
-  store.updateExpense('2026-01', 'expense-example-1', { actual: 111 });
-  assert.equal(store.getMonth('2026-01').expenses[0].actual, 111);
-  assert.equal(JSON.parse(storage.getItem(STORAGE_KEY)).months['2026-01'].expenses[0].actual, 111);
+  store.updateExpense('2026-01', 'expense-example-1', { actualAmount: 111 });
+  assert.equal(store.getMonth('2026-01').expenses[0].actualAmount, 111);
+  assert.equal(JSON.parse(storage.getItem(STORAGE_KEY)).months['2026-01'].expenses[0].actualAmount, 111);
   assert.ok(store.getStatus().warnings.includes('IDENTIFIER_GENERATION_FAILED'));
 });
 
@@ -1009,8 +1050,8 @@ test('optional daily snapshot set and readback faults warn, clean up, and still 
   ]) {
     const { store, storage } = readyStore({ uuid: ids(`optional-${fault.op}`) });
     storage.fail(fault);
-    store.updateExpense('2026-01', 'expense-example-1', { actual: 112 });
-    assert.equal(store.getMonth('2026-01').expenses[0].actual, 112);
+    store.updateExpense('2026-01', 'expense-example-1', { actualAmount: 112 });
+    assert.equal(store.getMonth('2026-01').expenses[0].actualAmount, 112);
     assert.equal(snapshotKeys(storage).length, 0);
     assert.ok(store.getStatus().warnings.some(code => code.startsWith('SNAPSHOT_')));
   }
@@ -1020,8 +1061,8 @@ test('daily snapshots happen once per local date and retention keeps newest seve
   const { store, storage, clock } = readyStore({ uuid: ids('snapshot') });
   for (let day = 15; day <= 23; day += 1) {
     clock.set(`2026-01-${day}T12:00:00.000Z`);
-    store.updateExpense('2026-01', 'expense-example-1', { actual: 1200 + day });
-    store.updateExpense('2026-01', 'expense-example-1', { actual: 1300 + day });
+    store.updateExpense('2026-01', 'expense-example-1', { actualAmount: 1200 + day });
+    store.updateExpense('2026-01', 'expense-example-1', { actualAmount: 1300 + day });
   }
   assert.equal(store.listSnapshots().length, SNAPSHOT_LIMIT);
   assert.equal(snapshotKeys(storage).length, SNAPSHOT_LIMIT);
@@ -1040,9 +1081,9 @@ test('a prune failure is retried by the next commit and returns physical valid k
   }
   clock.set('2026-01-15T12:00:00.000Z');
   storage.fail({ op: 'removeItem', prefix: SNAPSHOT_PREFIX, name: 'SecurityError', once: true });
-  store.updateExpense('2026-01', 'expense-example-1', { actual: 201 });
+  store.updateExpense('2026-01', 'expense-example-1', { actualAmount: 201 });
   assert.equal(snapshotKeys(storage).length, 8);
-  store.updateExpense('2026-01', 'expense-example-1', { actual: 202 });
+  store.updateExpense('2026-01', 'expense-example-1', { actualAmount: 202 });
   assert.equal(snapshotKeys(storage).length, 7);
   snapshotKeys(storage).forEach(key => Schema.parseSnapshot(storage.getItem(key)));
 });
@@ -1075,13 +1116,13 @@ test('invalid snapshots are skipped without exposing their values', () => {
 test('import preview is write-free, stale-safe, and required snapshot failure aborts replacement', () => {
   const { store, storage } = readyStore({ uuid: ids('import') });
   const replacement = makeBudget();
-  replacement.months['2026-01'].expenses[0].actual = 777;
+  replacement.months['2026-01'].expenses[0].actualAmount = 777;
   const backup = JSON.stringify(Schema.buildBackup(replacement, '2026-01-15T12:00:00.000Z'));
   const preview = store.previewImport(backup);
   assert.equal(preview.monthCount, 1);
   assert.equal(storage.operations.some(operation => operation.op === 'setItem'), false);
 
-  store.updateExpense('2026-01', 'expense-example-1', { actual: 600 });
+  store.updateExpense('2026-01', 'expense-example-1', { actualAmount: 600 });
   expectStoreCode('STALE_IMPORT_PREVIEW', () => store.commitImport(preview));
 
   const fresh = store.previewImport(backup);
@@ -1098,7 +1139,7 @@ test('malformed JSON, malformed envelope, and invalid nested schema imports are 
   const before = store.getData();
   const malformedEnvelope = JSON.stringify({ format: 'other', formatVersion: 1, exportedAt: '2026-01-15T12:00:00.000Z', data: makeBudget() });
   const invalid = Schema.buildBackup(makeBudget(), '2026-01-15T12:00:00.000Z');
-  invalid.data.months['2026-01'].expenses[0].actual = -1;
+  invalid.data.months['2026-01'].expenses[0].actualAmount = -1;
   for (const text of ['{bad json', malformedEnvelope, JSON.stringify(invalid)]) {
     storage.operations.length = 0;
     expectStoreCode('INVALID_IMPORT', () => store.previewImport(text));
@@ -1114,7 +1155,7 @@ test('required import snapshot set and readback faults abort before primary with
   ]) {
     const { store, storage } = readyStore({ uuid: ids(`required-${fault.op}`) });
     const replacement = makeBudget();
-    replacement.months['2026-01'].expenses[0].actual = 888;
+    replacement.months['2026-01'].expenses[0].actualAmount = 888;
     const preview = store.previewImport(backupText(replacement));
     const beforeRaw = storage.getItem(STORAGE_KEY);
     const beforeData = store.getData();
@@ -1133,7 +1174,7 @@ test('required snapshot set and readback precede exactly one changed import prim
   const store = createStore({ storage, now: makeClock(), uuid: ids('required-order') });
   store.load();
   const changed = makeBudget();
-  changed.months['2026-01'].expenses[0].actual = 919;
+  changed.months['2026-01'].expenses[0].actualAmount = 919;
   const preview = store.previewImport(backupText(changed));
   storage.attempts.length = 0;
   store.commitImport(preview);
@@ -1158,10 +1199,10 @@ test('no-op import performs no snapshot, cleanup, or primary write', () => {
 test('valid import snapshots prior state, commits once, and round-trips export', () => {
   const { store, storage } = readyStore({ uuid: ids('import') });
   const replacement = makeBudget();
-  replacement.months['2026-01'].expenses[0].actual = 444;
+  replacement.months['2026-01'].expenses[0].actualAmount = 444;
   const text = JSON.stringify(Schema.buildBackup(replacement, '2026-01-15T12:00:00.000Z'));
   store.commitImport(store.previewImport(text));
-  assert.equal(store.getMonth('2026-01').expenses[0].actual, 444);
+  assert.equal(store.getMonth('2026-01').expenses[0].actualAmount, 444);
   assert.equal(store.listSnapshots()[0].reason, 'pre-import');
   assert.equal(storage.operations.filter(operation => operation.op === 'setItem' && operation.key === STORAGE_KEY).length, 1);
   const exported = Schema.parseBackup(store.exportData());
@@ -1194,8 +1235,8 @@ test('recovery-required blocks every ordinary mutation and import commit entry p
     () => store.addPaycheck('2026-01', { earnerId: 'earner-example-1', amount: 1, date: '' }),
     () => store.updatePaycheck('2026-01', 'x', { amount: 1 }),
     () => store.deletePaycheck('2026-01', 'x'),
-    () => store.addExpense('2026-01', { categoryId: 'category-example-1', categoryItemId: null, name: 'x', actual: 0, paymentMethod: 'bank' }),
-    () => store.updateExpense('2026-01', 'x', { actual: 1 }),
+    () => store.addExpense('2026-01', { categoryId: 'category-example-1', categoryItemId: null, name: 'x', date: '', paycheckAmounts: {}, plannedAmount: 0, actualAmount: 0, paymentMethod: 'bank' }),
+    () => store.updateExpense('2026-01', 'x', { actualAmount: 1 }),
     () => store.updateExpensePaycheckAmount('2026-01', 'x', 'y', 1),
     () => store.deleteExpense('2026-01', 'x'),
     () => store.reorderPaychecks('2026-01', ['paycheck-example-1']),
@@ -1242,12 +1283,12 @@ test('start fresh from recovery writes generic canonical data only after explici
 
 test('validated snapshot restore protects the current state and rejects unknown IDs', () => {
   const { store } = readyStore({ uuid: ids('restore') });
-  store.updateExpense('2026-01', 'expense-example-1', { actual: 333 });
+  store.updateExpense('2026-01', 'expense-example-1', { actualAmount: 333 });
   const daily = store.listSnapshots()[0];
-  store.updateExpense('2026-01', 'expense-example-1', { actual: 555 });
+  store.updateExpense('2026-01', 'expense-example-1', { actualAmount: 555 });
   expectStoreCode('SNAPSHOT_NOT_FOUND', () => store.restoreSnapshot('missing'));
   store.restoreSnapshot(daily.id);
-  assert.equal(store.getMonth('2026-01').expenses[0].actual, 1200);
+  assert.equal(store.getMonth('2026-01').expenses[0].actualAmount, 1200);
   assert.ok(store.listSnapshots().some(snapshot => snapshot.reason === 'pre-import'));
 });
 
@@ -1291,7 +1332,7 @@ test('selected valid snapshot restore is not blocked by an unrelated unreadable 
   });
   const selectedKey = `${SNAPSHOT_PREFIX}selected`;
   const unrelatedKey = `${SNAPSHOT_PREFIX}unrelated`;
-  const active = makeBudget(); active.months['2026-01'].expenses[0].actual = 999;
+  const active = makeBudget(); active.months['2026-01'].expenses[0].actualAmount = 999;
   const storage = new AttemptStorage({
     [STORAGE_KEY]: JSON.stringify(active),
     [selectedKey]: JSON.stringify(selected),
@@ -1302,7 +1343,7 @@ test('selected valid snapshot restore is not blocked by an unrelated unreadable 
   storage.attempts.length = 0;
   storage.fail({ op: 'getItem', key: unrelatedKey, name: 'SecurityError' });
   store.restoreSnapshot('selected');
-  assert.equal(store.getMonth('2026-01').expenses[0].actual, 1200);
+  assert.equal(store.getMonth('2026-01').expenses[0].actualAmount, 1200);
   const selectedReads = storage.attempts.filter(entry => entry.op === 'getItem' && entry.key === selectedKey);
   const unrelatedReads = storage.attempts.filter(entry => entry.op === 'getItem' && entry.key === unrelatedKey);
   assert.ok(selectedReads.length >= 1);
@@ -1311,11 +1352,11 @@ test('selected valid snapshot restore is not blocked by an unrelated unreadable 
 });
 
 test('changed restore at the snapshot cap prunes valid physical keys back to seven', () => {
-  const active = makeBudget(); active.months['2026-01'].expenses[0].actual = 999;
+  const active = makeBudget(); active.months['2026-01'].expenses[0].actualAmount = 999;
   const storage = new MemoryStorage({ [STORAGE_KEY]: JSON.stringify(active) });
   for (let day = 1; day <= SNAPSHOT_LIMIT; day += 1) {
     const date = String(day).padStart(2, '0');
-    const data = makeBudget(); data.months['2026-01'].expenses[0].actual = 100 + day;
+    const data = makeBudget(); data.months['2026-01'].expenses[0].actualAmount = 100 + day;
     const envelope = Schema.buildSnapshot(data, {
       createdAt: `2026-01-${date}T00:00:00.000Z`, localDate: `2026-01-${date}`, reason: 'daily'
     });
@@ -1324,7 +1365,7 @@ test('changed restore at the snapshot cap prunes valid physical keys back to sev
   const store = createStore({ storage, now: makeClock(), uuid: ids('restore-cap') });
   store.load();
   store.restoreSnapshot('capped-7');
-  assert.equal(store.getMonth('2026-01').expenses[0].actual, 107);
+  assert.equal(store.getMonth('2026-01').expenses[0].actualAmount, 107);
   assert.equal(snapshotKeys(storage).length, SNAPSHOT_LIMIT);
   snapshotKeys(storage).forEach(key => Schema.parseSnapshot(storage.getItem(key)));
 });
@@ -1343,9 +1384,9 @@ test('cleanup failure after the primary commit is a warning and memory follows c
     storage.setItem(`${SNAPSHOT_PREFIX}old-${index}`, JSON.stringify(snapshot));
   }
   storage.fail({ op: 'removeItem', prefix: SNAPSHOT_PREFIX, name: 'SecurityError' });
-  store.updateExpense('2026-01', 'expense-example-1', { actual: 222 });
-  assert.equal(store.getData().months['2026-01'].expenses[0].actual, 222);
-  assert.equal(JSON.parse(storage.getItem(STORAGE_KEY)).months['2026-01'].expenses[0].actual, 222);
+  store.updateExpense('2026-01', 'expense-example-1', { actualAmount: 222 });
+  assert.equal(store.getData().months['2026-01'].expenses[0].actualAmount, 222);
+  assert.equal(JSON.parse(storage.getItem(STORAGE_KEY)).months['2026-01'].expenses[0].actualAmount, 222);
   assert.ok(store.getStatus().warnings.includes('SNAPSHOT_CLEANUP_FAILED'));
   assert.ok(snapshotKeys(storage).length > SNAPSHOT_LIMIT);
 });
@@ -1362,7 +1403,7 @@ test('store errors remain redacted and never include adapter messages or values'
   const { store, storage } = readyStore();
   storage.fail({ op: 'setItem', key: STORAGE_KEY, name: 'SecurityError' });
   let caught;
-  try { store.updateExpense('2026-01', 'expense-example-1', { actual: 321 }); }
+  try { store.updateExpense('2026-01', 'expense-example-1', { actualAmount: 321 }); }
   catch (error) { caught = error; }
   assert.equal(caught.code, 'PRIMARY_WRITE_FAILED');
   assert.equal(caught.message, 'Budget storage error (PRIMARY_WRITE_FAILED)');

@@ -15,7 +15,6 @@ function loadBudgetView() {
 }
 
 test('budget uses canonical v3 planned and nullable actual fields without serialized aliases', () => {
-  assert.match(source, /schemaVersion >= 3/);
   assert.match(source, /plannedAmount: updates\.plannedAmount, actualAmount: updates\.actualAmount, date/);
   assert.match(source, /plannedAmount: updates\.plannedAmount, actualAmount: updates\.actualAmount, paymentMethod/);
   assert.match(source, /input\.value === '' \? null : Number\(input\.value\)/);
@@ -23,6 +22,7 @@ test('budget uses canonical v3 planned and nullable actual fields without serial
   assert.match(source, /field === 'actualAmount'.*value === '' \? null : Number\(value\)/s);
   assert.doesNotMatch(source, /actualAmount\s*\|\|/);
   assert.doesNotMatch(source, /plannedAmount\s*\|\|/);
+  assert.doesNotMatch(source, /usesV3|schemaVersion|field-amount|\.amount\b|\.actual\b/);
 });
 
 test('v3 rendering exposes provenance, dates, allocation state, and explicit zero values', () => {
@@ -45,11 +45,9 @@ test('allocation inputs are bounded by the remaining planned amount', () => {
 test('v3 planning remains available when actual income is zero or unresolved', () => {
   const view = loadBudgetView();
   const summary = {
-    totalIncome: 0,
     totalActualIncome: 0,
     unresolvedIncomeCount: 1,
     totalPlannedIncome: 3000,
-    totalProjected: 2000,
     totalPlannedExpenses: 2000,
     totalAllocated: 250,
     totalBudgeted: 2250,
@@ -64,25 +62,4 @@ test('v3 planning remains available when actual income is zero or unresolved', (
     remaining: 750
   });
   assert.equal(view.allocationAvailable(summary), true);
-});
-
-test('v2 planning continues to use the existing income and projected fields', () => {
-  const view = loadBudgetView();
-  const summary = { totalIncome: 900, totalProjected: 600, totalAllocated: 100, totalBudgeted: 700, remaining: 200 };
-
-  assert.deepEqual({ ...view.planningTotals(summary) }, {
-    income: 900,
-    expenses: 600,
-    expenseRemaining: 300,
-    budgeted: 700,
-    remaining: 200
-  });
-  assert.equal(view.allocationAvailable(summary), true);
-});
-
-test('temporary v2 browser branch remains explicit and does not add aliases to records', () => {
-  assert.match(source, /Store\.addPaycheck\(this\.currentMonth, \{ earnerId, amount, date \}\)/);
-  assert.match(source, /actual: 0, paymentMethod/);
-  assert.doesNotMatch(source, /\{[^}]*amount:\s*[^,]+,[^}]*plannedAmount:/s);
-  assert.doesNotMatch(source, /\{[^}]*actual:\s*[^,]+,[^}]*actualAmount:/s);
 });

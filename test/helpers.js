@@ -44,7 +44,7 @@ function makeV2Budget(overrides = {}) {
   return Object.assign(budget, overrides);
 }
 
-function makeBudget(overrides = {}) {
+function makeV1Budget(overrides = {}) {
   const budget = {
     schemaVersion: 1,
     categories: [{ name: 'Home', items: ['Rent'] }],
@@ -57,6 +57,40 @@ function makeBudget(overrides = {}) {
           paycheckAmounts: { [SAMPLE_IDS.paycheck]: 1200 }, actual: 1200, paymentMethod: 'bank'
         }],
         allocations: { savings: 400, credit_card_debt: 100, investments: 200 }
+      }
+    }
+  };
+  return Object.assign(budget, overrides);
+}
+
+// Compatibility alias for tests which intentionally exercise the legacy v1 shape.
+const makeBudget = makeV1Budget;
+
+function makeV3Budget(overrides = {}) {
+  const budget = {
+    schemaVersion: 3,
+    categories: [{
+      id: 'category-example-1', name: 'Home', archived: false,
+      items: [{ id: 'item-example-1', name: 'Rent', archived: false }]
+    }],
+    settings: { earners: [{ id: 'earner-example-1', name: 'Example Earner', archived: false }] },
+    templates: { income: [], expenses: [] },
+    months: {
+      '2026-01': {
+        paychecks: [{
+          id: SAMPLE_IDS.paycheck, earnerId: 'earner-example-1', earner: 'Example Earner',
+          plannedAmount: 2500, actualAmount: 2500, date: '2026-01-15',
+          sourceTemplateId: null, occurrenceKey: null
+        }],
+        expenses: [{
+          id: SAMPLE_IDS.expense, categoryId: 'category-example-1', category: 'Home',
+          categoryItemId: 'item-example-1', name: 'Rent', date: '',
+          paycheckAmounts: { [SAMPLE_IDS.paycheck]: 1200 },
+          plannedAmount: 1200, actualAmount: 1200, paymentMethod: 'bank',
+          sourceTemplateId: null, occurrenceKey: null
+        }],
+        allocations: { savings: 400, credit_card_debt: 100, investments: 200 },
+        suppressedOccurrences: []
       }
     }
   };
@@ -143,4 +177,7 @@ function makeUuid(...ids) {
   };
 }
 
-module.exports = { SAMPLE_IDS, makeBudget, makeV1Budget: makeBudget, makeV2Budget, MemoryStorage, makeClock, makeUuid };
+module.exports = {
+  SAMPLE_IDS, makeBudget, makeV1Budget, makeV2Budget, makeV3Budget,
+  MemoryStorage, makeClock, makeUuid
+};

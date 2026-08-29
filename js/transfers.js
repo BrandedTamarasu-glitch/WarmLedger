@@ -14,7 +14,7 @@ const TransfersView = {
   formatMonthLabel(key) { const [y, m] = key.split('-').map(Number); return new Date(y, m - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' }); },
   fmt(value) { return '$' + (value ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); },
   plannedIncome(paycheck) {
-    return Object.hasOwn(paycheck, 'plannedAmount') ? paycheck.plannedAmount : paycheck.amount;
+    return paycheck.plannedAmount;
   },
   element(tag, className, text) {
     const node = document.createElement(tag); if (className) node.className = className; if (text !== undefined) node.textContent = text; return node;
