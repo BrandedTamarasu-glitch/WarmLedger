@@ -11,6 +11,23 @@ function readFixture(name) {
   return JSON.parse(fs.readFileSync(new URL(`fixtures/${name}`, `file://${__dirname}/`), 'utf8'));
 }
 
+function makeV3WithTemplates() {
+  const v3 = readFixture('schema-v3-golden.json');
+  v3.templates.income.push({
+    id: 'income-template-1', name: 'Example income', earnerId: 'migrated-earner-0001',
+    plannedAmount: 2400, enabled: true, archived: false,
+    startDate: '2027-01-01', endDate: null,
+    recurrence: { cadence: 'weekly', anchorDate: '2027-01-01' }
+  });
+  v3.templates.expenses.push({
+    id: 'expense-template-1', name: 'Example expense', categoryId: 'migrated-category-0001',
+    categoryItemId: 'migrated-item-0001-0001', plannedAmount: 975, paymentMethod: 'bank',
+    enabled: false, archived: true, startDate: '2027-01-01', endDate: '2027-12-31',
+    recurrence: { cadence: 'twice-monthly', days: [1, 31] }
+  });
+  return v3;
+}
+
 function expectCode(code, fn) {
   assert.throws(fn, error => error instanceof Schema.DataError && error.code === code);
 }
@@ -430,8 +447,8 @@ test('classic-script and CommonJS expose the exact same public API and behavior'
   const browserApi = context.ZeroBudgetSchema;
   const expectedKeys = [
     'BACKUP_FORMAT', 'BACKUP_FORMAT_VERSION', 'DataError', 'SCHEMA_VERSION', 'SNAPSHOT_FORMAT',
-    'SNAPSHOT_FORMAT_VERSION', 'V2_SCHEMA_VERSION', 'buildBackup', 'buildSnapshot', 'clone', 'migrateActive',
-    'migrateToV2', 'parseActive', 'parseBackup', 'parseSnapshot', 'validateActive', 'validateV2'
+    'SNAPSHOT_FORMAT_VERSION', 'V2_SCHEMA_VERSION', 'V3_SCHEMA_VERSION', 'buildBackup', 'buildSnapshot', 'clone', 'migrateActive',
+    'migrateToV2', 'migrateToV3', 'parseActive', 'parseBackup', 'parseSnapshot', 'validateActive', 'validateV2', 'validateV3'
   ];
   assert.deepEqual(Object.keys(Schema).sort(), expectedKeys);
   assert.deepEqual(Array.from(Object.keys(browserApi).sort()), expectedKeys);
@@ -439,6 +456,7 @@ test('classic-script and CommonJS expose the exact same public API and behavior'
   assert.equal(JSON.stringify(browserApi.parseActive(text)), JSON.stringify(Schema.parseActive(text)));
   assert.equal(browserApi.BACKUP_FORMAT, Schema.BACKUP_FORMAT);
   assert.equal(JSON.stringify(browserApi.migrateToV2(browserApi.parseActive(text))), JSON.stringify(Schema.migrateToV2(JSON.parse(text))));
+  assert.equal(JSON.stringify(browserApi.migrateToV3(browserApi.parseActive(text))), JSON.stringify(Schema.migrateToV3(JSON.parse(text))));
 });
 
 test('dormant v2 migration matches its exact golden deterministically without mutating v1', () => {
@@ -529,6 +547,127 @@ test('v2 retains v1 bounds and rejects unsupported migration versions', () => {
   expectCode('UNSUPPORTED_SCHEMA_VERSION', () => Schema.migrateToV2(future));
   const invalid = makeBudget(); invalid.schemaVersion = '1';
   expectCode('UNSUPPORTED_SCHEMA_VERSION', () => Schema.migrateToV2(invalid));
+});
+
+test('dormant v3 migration matches its golden deterministically without mutating v2', () => {
+  const source = readFixture('schema-v2-golden.json');
+  const golden = readFixture('schema-v3-golden.json');
+  const before = JSON.stringify(source);
+  const first = Schema.migrateToV3(source);
+  const second = Schema.migrateToV3(structuredClone(source));
+  assert.deepEqual(first, golden);
+  assert.equal(JSON.stringify(first), JSON.stringify(second));
+  assert.equal(JSON.stringify(source), before);
+  assert.equal(Schema.validateV3(first), true);
+  assert.equal(Schema.SCHEMA_VERSION, 2);
+  assert.equal(Schema.V3_SCHEMA_VERSION, 3);
+});
+
+test('v0 and v1 migrate through v2 to v3 with exact amount semantics', () => {
+  for (const legacy of [makeBudget(), (() => { const value = makeBudget(); delete value.schemaVersion; return value; })()]) {
+    legacy.months['2026-01'].expenses[0].actual = 0;
+    const migrated = Schema.migrateToV3(legacy);
+    const paycheck = migrated.months['2026-01'].paychecks[0];
+    const expense = migrated.months['2026-01'].expenses[0];
+    assert.equal(paycheck.plannedAmount, 2500);
+    assert.equal(paycheck.actualAmount, 2500);
+    assert.equal(expense.plannedAmount, 1200);
+    assert.equal(expense.actualAmount, null);
+    assert.equal(paycheck.sourceTemplateId, null);
+    assert.equal(expense.occurrenceKey, null);
+    assert.deepEqual(migrated.templates, { income: [], expenses: [] });
+    assert.deepEqual(migrated.months['2026-01'].suppressedOccurrences, []);
+  }
+});
+
+test('native v3 validates templates, archived references, recurrence unions, and detached cloning', () => {
+  const source = makeV3WithTemplates();
+  source.categories[0].archived = true;
+  source.categories[0].items[0].archived = true;
+  source.settings.earners[0].archived = true;
+  assert.equal(Schema.validateV3(source), true);
+  const migrated = Schema.migrateToV3(source);
+  assert.deepEqual(migrated, source);
+  migrated.templates.income[0].name = 'Changed';
+  assert.equal(source.templates.income[0].name, 'Example income');
+
+  for (const recurrence of [
+    { cadence: 'monthly', day: 31 },
+    { cadence: 'twice-monthly', days: [1, 31] },
+    { cadence: 'weekly', anchorDate: '2024-02-29' },
+    { cadence: 'weekly', anchorDate: '0000-02-29' },
+    { cadence: 'biweekly', anchorDate: '2100-02-28' }
+  ]) {
+    const candidate = makeV3WithTemplates(); candidate.templates.income[0].recurrence = recurrence;
+    assert.equal(Schema.validateV3(candidate), true);
+  }
+});
+
+test('v3 enforces exact template keys, types, dates, recurrence ranges, and cross-kind IDs', () => {
+  const cases = [
+    ['UNKNOWN_FIELD', v => { v.templates.income[0].extra = true; }],
+    ['MISSING_FIELD', v => { delete v.templates.expenses[0].enabled; }],
+    ['EXPECTED_BOOLEAN', v => { v.templates.income[0].enabled = 1; }],
+    ['INVALID_DATE_RANGE', v => { v.templates.income[0].endDate = '2026-12-31'; }],
+    ['INVALID_RECURRENCE_DAY', v => { v.templates.income[0].recurrence = { cadence: 'monthly', day: 0 }; }],
+    ['INVALID_RECURRENCE_DAYS', v => { v.templates.income[0].recurrence = { cadence: 'twice-monthly', days: [15, 15] }; }],
+    ['INVALID_RECURRENCE_CADENCE', v => { v.templates.income[0].recurrence = { cadence: 'yearly' }; }],
+    ['DUPLICATE_ID', v => { v.templates.expenses[0].id = v.templates.income[0].id; }],
+    ['DANGLING_EARNER_REFERENCE', v => { v.templates.income[0].earnerId = 'missing'; }],
+    ['DANGLING_CATEGORY_REFERENCE', v => { v.templates.expenses[0].categoryId = 'missing'; }],
+    ['DANGLING_CATEGORY_ITEM_REFERENCE', v => { v.templates.expenses[0].categoryItemId = 'migrated-item-0001-0002'; v.templates.expenses[0].categoryId = 'migrated-category-0002'; }]
+  ];
+  for (const [code, mutate] of cases) {
+    const v3 = makeV3WithTemplates(); mutate(v3);
+    expectCode(code, () => Schema.validateV3(v3));
+  }
+});
+
+test('v3 enforces planned, actual, allocation, provenance, and occurrence uniqueness rules', () => {
+  const valid = makeV3WithTemplates();
+  const paycheck = valid.months['2027-03'].paychecks[0];
+  paycheck.sourceTemplateId = 'income-template-1'; paycheck.occurrenceKey = '2027-03-12#0001';
+  const expense = valid.months['2027-03'].expenses[0];
+  expense.sourceTemplateId = 'expense-template-1'; expense.occurrenceKey = '2027-03-01#0001';
+  valid.months['2027-03'].suppressedOccurrences.push({ sourceTemplateId: 'expense-template-1', occurrenceKey: '2027-03-31#0001' });
+  assert.equal(Schema.validateV3(valid), true);
+
+  const independentDate = makeV3WithTemplates();
+  independentDate.months['2027-03'].paychecks[0].date = '2027-03-25';
+  independentDate.months['2027-03'].paychecks[0].sourceTemplateId = 'income-template-1';
+  independentDate.months['2027-03'].paychecks[0].occurrenceKey = '2027-03-12#0001';
+  assert.equal(Schema.validateV3(independentDate), true);
+
+  const cases = [
+    ['INVALID_PROVENANCE_PAIR', v => { v.months['2027-03'].paychecks[0].sourceTemplateId = 'income-template-1'; }],
+    ['DANGLING_TEMPLATE_REFERENCE', v => { v.months['2027-03'].paychecks[0].sourceTemplateId = 'expense-template-1'; v.months['2027-03'].paychecks[0].occurrenceKey = '2027-03-01#0001'; }],
+    ['INVALID_OCCURRENCE_KEY', v => { v.months['2027-03'].expenses[0].sourceTemplateId = 'expense-template-1'; v.months['2027-03'].expenses[0].occurrenceKey = '2027-03-01#0000'; }],
+    ['OCCURRENCE_MONTH_MISMATCH', v => { v.months['2027-03'].expenses[0].sourceTemplateId = 'expense-template-1'; v.months['2027-03'].expenses[0].occurrenceKey = '2027-04-01#0001'; }],
+    ['OCCURRENCE_MONTH_MISMATCH', v => { v.months['2027-03'].suppressedOccurrences.push({ sourceTemplateId: 'income-template-1', occurrenceKey: '2027-02-28#0001' }); }],
+    ['ALLOCATION_EXCEEDS_PLANNED', v => { v.months['2027-03'].expenses[0].plannedAmount = 974; }],
+    ['AMOUNT_OUT_OF_RANGE', v => { v.months['2027-03'].paychecks[0].actualAmount = -1; }],
+    ['DUPLICATE_OCCURRENCE', v => {
+      v.months['2027-03'].paychecks[0].sourceTemplateId = 'income-template-1';
+      v.months['2027-03'].paychecks[0].occurrenceKey = '2027-03-12#0001';
+      v.months['2027-03'].suppressedOccurrences.push({ sourceTemplateId: 'income-template-1', occurrenceKey: '2027-03-12#0001' });
+    }]
+  ];
+  for (const [code, mutate] of cases) {
+    const v3 = makeV3WithTemplates(); mutate(v3);
+    expectCode(code, () => Schema.validateV3(v3));
+  }
+});
+
+test('active v2 APIs remain isolated from dormant v3', () => {
+  const v2 = readFixture('schema-v2-golden.json'); const v3 = readFixture('schema-v3-golden.json');
+  expectCode('UNKNOWN_FIELD', () => Schema.validateActive(v3));
+  expectCode('UNSUPPORTED_SCHEMA_VERSION', () => Schema.migrateActive(v3));
+  expectCode('UNSUPPORTED_SCHEMA_VERSION', () => Schema.parseActive(JSON.stringify(v3)));
+  assert.equal(Schema.validateActive(v2), true);
+  assert.equal(Schema.buildBackup(v2, '2027-03-01T00:00:00.000Z').data.schemaVersion, 2);
+  expectCode('UNSUPPORTED_SCHEMA_VERSION', () => Schema.buildBackup(v3, '2027-03-01T00:00:00.000Z'));
+  const future = structuredClone(v3); future.schemaVersion = 4;
+  expectCode('UNSUPPORTED_SCHEMA_VERSION', () => Schema.migrateToV3(future));
 });
 
 test('active validation is strict v2 while parsers and v1 envelopes migrate to v2', () => {

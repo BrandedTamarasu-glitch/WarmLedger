@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 3,
+  "categories": [
+    {
+      "id": "migrated-category-0001",
+      "name": "Shelter",
+      "archived": false,
+      "items": [
+        { "id": "migrated-item-0001-0001", "name": "Lease", "archived": false },
+        { "id": "migrated-item-0001-0002", "name": "Shared", "archived": false },
+        { "id": "migrated-item-0001-0003", "name": "Shared", "archived": false }
+      ]
+    },
+    { "id": "migrated-category-0002", "name": "Travel", "archived": false, "items": [] }
+  ],
+  "settings": {
+    "earners": [
+      { "id": "migrated-earner-0001", "name": "Example A", "archived": false },
+      { "id": "migrated-earner-0002", "name": "Example B", "archived": false }
+    ]
+  },
+  "templates": { "income": [], "expenses": [] },
+  "months": {
+    "2027-03": {
+      "paychecks": [
+        {
+          "id": "pay-1",
+          "earnerId": "migrated-earner-0001",
+          "earner": "Example A",
+          "plannedAmount": 2400,
+          "actualAmount": 2400,
+          "date": "2027-03-12",
+          "sourceTemplateId": null,
+          "occurrenceKey": null
+        }
+      ],
+      "expenses": [
+        {
+          "id": "expense-1",
+          "categoryId": "migrated-category-0001",
+          "category": "Shelter",
+          "categoryItemId": null,
+          "name": "Historical label",
+          "paycheckAmounts": { "pay-1": 975 },
+          "plannedAmount": 975,
+          "actualAmount": 980,
+          "paymentMethod": "bank",
+          "sourceTemplateId": null,
+          "occurrenceKey": null
+        }
+      ],
+      "allocations": { "savings": 225, "credit_card_debt": 75, "investments": 125 },
+      "suppressedOccurrences": []
+    }
+  }
+}

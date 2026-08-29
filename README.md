@@ -34,6 +34,12 @@ npm test
 
 The test suite uses Node's built-in test runner and synthetic records only.
 
+## Recurring-template foundation
+
+The repository now includes a dormant schema-version-3 migration and validation layer plus a timezone-independent recurrence engine. This foundation supports monthly, twice-monthly, weekly, and biweekly schedules, including end-of-month clamping and leap-year boundaries.
+
+These APIs are not loaded or called by the running application yet. Template management and preview-based month generation will be activated together in a later phase so the live application, browser storage, backups, and snapshots remain consistently on schema version 2 until the complete workflow is ready.
+
 ## Data format compatibility
 
 The active data model is schema version 2. Existing legacy and schema-version-1 data is migrated deterministically in memory when opened; loading alone does not rewrite browser storage. The first later successful edit persists schema version 2 atomically. If that write fails, the original stored bytes and the last committed in-memory budget remain unchanged.
