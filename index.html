@@ -66,6 +66,8 @@
         </div>
       </div>
 
+      <section id="monthly-review-container" class="budget-section monthly-review-container" aria-labelledby="monthly-review-heading"></section>
+
       <!-- Paychecks Section -->
       <section class="budget-section">
         <div class="section-header">
@@ -233,6 +235,18 @@
       <div class="dialog-actions">
         <button id="recurring-preview-cancel" class="btn" value="cancel" autofocus>Cancel</button>
         <button id="recurring-preview-apply" class="btn btn-primary" value="confirm">Add recurring items</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="unsuppress-dialog" class="restore-dialog unsuppress-dialog" aria-labelledby="unsuppress-title" aria-describedby="unsuppress-warning">
+    <form method="dialog">
+      <h2 id="unsuppress-title">Allow this recurring item again?</h2>
+      <p id="unsuppress-summary" class="break-anywhere"></p>
+      <p id="unsuppress-warning">Allowing again removes this exception. It does not restore or create a record. Current template values may differ. Use Preview recurring items next to review what will be generated.</p>
+      <div class="dialog-actions">
+        <button id="unsuppress-cancel" class="btn" value="cancel" autofocus>Cancel</button>
+        <button id="unsuppress-confirm" class="btn btn-primary" value="confirm">Allow again</button>
       </div>
     </form>
   </dialog>

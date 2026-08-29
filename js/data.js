@@ -867,13 +867,13 @@
       }, { snapshotReason: 'pre-reset', requiredSnapshot: committedRaw !== null, daily: false });
     }
 
-    function recurringModel(monthKey) {
+    function classifyRecurring(canonical, monthKey) {
       if (!Recurrence) throw new StoreError('RECURRENCE_UNAVAILABLE');
       const monthMatch = /^(\d{4})-(\d{2})$/.exec(monthKey);
       if (!monthMatch) throw new StoreError('INVALID_MONTH');
       try { Recurrence.daysInMonth(Number(monthMatch[1]), Number(monthMatch[2])); }
       catch { throw new StoreError('INVALID_MONTH'); }
-      const month = data.months[monthKey] || emptyMonth();
+      const month = canonical.months[monthKey] || emptyMonth();
       const existing = new Set();
       const suppressed = new Set(month.suppressedOccurrences.map(item => `${item.sourceTemplateId}\u0000${item.occurrenceKey}`));
       const conflicts = [];
@@ -885,7 +885,7 @@
       }
       const additions = { income: [], expenses: [] };
       const skips = [];
-      for (const [kind, templates] of [['income', data.templates.income], ['expenses', data.templates.expenses]]) {
+      for (const [kind, templates] of [['income', canonical.templates.income], ['expenses', canonical.templates.expenses]]) {
         for (const source of templates) {
           if (source.archived) { skips.push({ kind, templateId: source.id, name: source.name, reason: 'archived' }); continue; }
           if (!source.enabled) { skips.push({ kind, templateId: source.id, name: source.name, reason: 'disabled' }); continue; }
@@ -901,10 +901,14 @@
           }
         }
       }
-      return freezeDetached({
+      return {
         monthKey, additions, skips, conflicts,
         counts: { additions: additions.income.length + additions.expenses.length, skips: skips.length, conflicts: conflicts.length }
-      });
+      };
+    }
+
+    function recurringModel(monthKey) {
+      return freezeDetached(classifyRecurring(data, monthKey));
     }
 
     function previewRecurringMonth(monthKey) {
@@ -948,6 +952,121 @@
         return { addedIncome: current.additions.income.length, addedExpenses: current.additions.expenses.length };
       });
       return result;
+    }
+
+    function suppressedProjection(canonical, monthKey) {
+      classifyRecurring(canonical, monthKey);
+      const month = canonical.months[monthKey];
+      if (!month) return [];
+      const templates = new Map();
+      canonical.templates.income.forEach(template => templates.set(template.id, { kind: 'income', template }));
+      canonical.templates.expenses.forEach(template => templates.set(template.id, { kind: 'expense', template }));
+      return month.suppressedOccurrences.map(entry => {
+        const source = templates.get(entry.sourceTemplateId);
+        const scheduledDate = entry.occurrenceKey.slice(0, 10);
+        const ordinal = Number(entry.occurrenceKey.slice(11));
+        let templateState;
+        if (source.template.archived) templateState = 'archived';
+        else if (!source.template.enabled) templateState = 'disabled';
+        else if (scheduledDate < source.template.startDate ||
+            (source.template.endDate !== null && scheduledDate > source.template.endDate)) templateState = 'out-of-range';
+        else {
+          const occurrences = Recurrence.occurrencesForMonth(source.template, monthKey);
+          templateState = occurrences.some(item => item.occurrenceKey === entry.occurrenceKey) ? 'active' : 'schedule-changed';
+        }
+        return {
+          kind: source.kind, sourceTemplateId: entry.sourceTemplateId, occurrenceKey: entry.occurrenceKey,
+          scheduledDate, ordinal, templateName: source.template.name, templateState,
+          eligible: templateState === 'active'
+        };
+      });
+    }
+
+    function getSuppressedOccurrences(monthKey) {
+      requireReady();
+      return freezeDetached(suppressedProjection(data, monthKey));
+    }
+
+    function getMonthReview(monthKey) {
+      requireReady();
+      const recurring = classifyRecurring(data, monthKey);
+      const month = data.months[monthKey];
+      const exists = Boolean(month);
+      const current = month || emptyMonth();
+      const allocationsTotal = Object.values(current.allocations).reduce((sum, amount) => sum + amount, 0);
+      const plannedIncome = current.paychecks.reduce((sum, paycheck) => sum + paycheck.plannedAmount, 0);
+      const enteredIncome = current.paychecks.reduce((sum, paycheck) => sum + (paycheck.actualAmount ?? 0), 0);
+      const unresolvedIncome = current.paychecks.filter(paycheck => paycheck.actualAmount === null).map(paycheck => ({
+        id: paycheck.id, earner: paycheck.earner, date: paycheck.date, plannedAmount: paycheck.plannedAmount
+      }));
+      const plannedExpenses = current.expenses.reduce((sum, expense) => sum + expense.plannedAmount, 0);
+      const enteredExpenses = current.expenses.reduce((sum, expense) => sum + (expense.actualAmount ?? 0), 0);
+      const unresolvedExpenses = current.expenses.filter(expense => expense.actualAmount === null).map(expense => ({
+        id: expense.id, name: expense.name, category: expense.category, date: expense.date,
+        plannedAmount: expense.plannedAmount
+      }));
+      const issues = [];
+      for (const expense of current.expenses) {
+        const assignedAmount = Object.values(expense.paycheckAmounts).reduce((sum, amount) => sum + amount, 0);
+        const shortfall = expense.plannedAmount - assignedAmount;
+        if (shortfall > 0.009 || shortfall < -0.009) issues.push({
+          expenseId: expense.id, name: expense.name, category: expense.category,
+          plannedAmount: expense.plannedAmount, assignedAmount, shortfall
+        });
+      }
+      const paycheckAssignments = current.paychecks.map(paycheck => {
+        const assignedAmount = current.expenses.reduce((sum, expense) =>
+          sum + (expense.paycheckAmounts[paycheck.id] || 0), 0);
+        return {
+          paycheckId: paycheck.id, earner: paycheck.earner, plannedAmount: paycheck.plannedAmount,
+          assignedAmount, remainingAmount: paycheck.plannedAmount - assignedAmount
+        };
+      });
+      const pendingCount = recurring.counts.additions;
+      const conflictCount = recurring.counts.conflicts;
+      const suppressedCount = current.suppressedOccurrences.length;
+      const empty = current.paychecks.length === 0 && current.expenses.length === 0 && allocationsTotal === 0;
+      const needsRecurringReview = pendingCount > 0 || conflictCount > 0;
+      const needsActuals = unresolvedIncome.length > 0 || unresolvedExpenses.length > 0;
+      const needsAllocation = issues.length > 0;
+      return freezeDetached({
+        monthKey, exists, empty,
+        states: {
+          needsRecurringReview, needsActuals, needsAllocation,
+          ready: exists && !empty && !needsRecurringReview && !needsActuals && !needsAllocation
+        },
+        income: {
+          plannedTotal: plannedIncome, enteredActualTotal: enteredIncome,
+          completeActualTotal: unresolvedIncome.length ? null : enteredIncome,
+          unresolvedCount: unresolvedIncome.length, unresolved: unresolvedIncome
+        },
+        expenses: {
+          plannedTotal: plannedExpenses, enteredActualTotal: enteredExpenses,
+          completeActualTotal: unresolvedExpenses.length ? null : enteredExpenses,
+          unresolvedCount: unresolvedExpenses.length, unresolved: unresolvedExpenses
+        },
+        funding: { issueCount: issues.length, issues },
+        paycheckAssignments,
+        balance: {
+          allocationsTotal, plannedRemainder: plannedIncome - plannedExpenses - allocationsTotal,
+          actualCashFlow: unresolvedIncome.length || unresolvedExpenses.length ? null : enteredIncome - enteredExpenses
+        },
+        recurring: { pendingCount, conflictCount, suppressedCount }
+      });
+    }
+
+    function unsuppressOccurrence(monthKey, sourceTemplateId, occurrenceKey) {
+      requireReady();
+      return transact(candidate => {
+        const month = candidate.months[monthKey];
+        if (!month) throw new StoreError('MONTH_NOT_FOUND');
+        const index = month.suppressedOccurrences.findIndex(entry =>
+          entry.sourceTemplateId === sourceTemplateId && entry.occurrenceKey === occurrenceKey);
+        if (index < 0) throw new StoreError('SUPPRESSED_OCCURRENCE_NOT_FOUND');
+        const projection = suppressedProjection(candidate, monthKey)[index];
+        if (!projection.eligible) throw new StoreError('SUPPRESSED_OCCURRENCE_INELIGIBLE');
+        return month.suppressedOccurrences.splice(index, 1)[0];
+      });
     }
 
     function expenseProjected(expense) {
@@ -1097,6 +1216,7 @@
       reassignExpenseStructure, editExpense,
       updateExpensePaycheckAmount, deleteExpense, reorderExpenses, updateAllocations, updateAllocation, copyFromMonth,
       clearMonth, previewRecurringMonth, applyRecurringPreview,
+      getMonthReview, getSuppressedOccurrences, unsuppressOccurrence,
       calcMonthSummary, calcPaycheckRemaining, calcCategoryTotals, calcPaymentMethodTotals,
       buildExport, exportData, previewImport, commitImport, importData, listSnapshots,
       listSnapshotMetadata, restoreSnapshot, startFresh, getCorruptEvidence

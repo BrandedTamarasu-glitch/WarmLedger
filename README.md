@@ -10,6 +10,8 @@ ZeroBudget is a local, dependency-free budgeting application. It runs directly i
 - A **Structure** view for adding, renaming, archiving, restoring, and reordering categories, preset expense items, and earners.
 - A **Templates** view for recurring income and expenses with monthly, twice-monthly, weekly, and biweekly schedules.
 - Preview-first recurring generation that shows additions and skips before making one atomic change.
+- A write-free **Monthly Review** showing recurring work, missing actuals, expense funding, planned balance, and paycheck-assignment notes.
+- Reversible recurring exceptions for deliberately removed generated occurrences.
 - Stable structural IDs with historical labels preserved in existing monthly records.
 - Versioned JSON backup and restore with validation and preview.
 - Local safety snapshots and a startup recovery workflow.
@@ -36,11 +38,43 @@ npm test
 
 The test suite uses Node's built-in test runner and synthetic records only.
 
+An optional browser evidence run requires Chromium:
+
+```bash
+npm run test:browser
+```
+
+It uses synthetic data in a disposable browser profile and writes JSON evidence to the operating system's temporary directory by default. To keep the evidence at a specific path, run:
+
+```bash
+npm run test:browser -- --output PATH
+```
+
+## Monthly Review
+
+Monthly Review summarizes the selected month without changing it. Several needs can appear at the same time: recurring items may need review, actual amounts may be missing, and planned expenses may need paycheck funding. An empty month is never described as ready.
+
+An actual amount of **Not entered** means no value has been recorded (`null`). An entered `$0.00` is a real, complete value and is not treated as missing. While any actual is missing, the displayed entered-actual total is explicitly partial and the complete total and actual cash flow remain **Incomplete**. Planned totals and planned remainder remain available independently of actual entry.
+
+“Complete” means the required actual amounts have been entered. It does not mean the month was matched to a bank statement, cleared, closed, or otherwise reconciled with a financial institution. Actual cash flow is entered income minus entered expenses only after both are complete; it is not a bank balance.
+
 ## Recurring templates
 
 Use **Templates** to add recurring income and expense plans, pause or archive them, and control their order. From the Budget view, choose **Preview recurring items** to review a month's additions and skips before confirming. Previewing and cancelling write nothing; confirmation adds the complete preview atomically.
 
-Generation is idempotent: rerunning a month does not duplicate existing occurrences or overwrite edited generated records. Deleting a generated record suppresses that occurrence so it does not unexpectedly return. Dates use timezone-independent calendar arithmetic, including short-month clamping and two distinct occurrences when twice-monthly dates clamp to the same final day.
+Generation is idempotent: rerunning a month does not duplicate existing occurrences or overwrite edited generated records. Dates use timezone-independent calendar arithmetic, including short-month clamping and two distinct occurrences when twice-monthly dates clamp to the same final day.
+
+Deleting a generated record creates a recurring exception (a tombstone) so that exact template occurrence does not unexpectedly return. Clearing a month and replacing a target month with **Copy from Previous Month** also preserve existing exceptions and add exceptions for generated records they remove. Copied records become manual records; Copy remains separate from recurring Preview.
+
+Monthly Review lists these exceptions. **Allow again** removes only the exact selected exception, including its occurrence ordinal when two occurrences share a date. It does not restore the deleted record, create a new record, or silently copy current template values. Cancelling the Allow confirmation leaves the exception unchanged. After allowing an occurrence again, use the normal **Preview recurring items** dialog to inspect current values and then choose **Add recurring items** to generate it. Cancelling that preview creates no record; the occurrence remains eligible for a later preview.
+
+An exception can be allowed again only while its template occurrence is currently eligible. Enable a disabled template, restore an archived template, adjust an out-of-range date range, or restore a changed schedule before retrying when Monthly Review identifies one of those states.
+
+## Local and manual behavior
+
+ZeroBudget does not automatically generate recurring records, close months, reconcile accounts, or contact a bank or other service. Template generation and recurring-exception recovery always require explicit confirmation through the visible Preview and Apply flow. Passive navigation and Monthly Review do not write budget data.
+
+The application has no server component and makes no account or financial-data network connection. Active data, templates, exceptions, and safety snapshots remain in this browser's site-specific storage. Downloads occur only when you request a JSON backup or preserved recovery data.
 
 ## Data format compatibility
 

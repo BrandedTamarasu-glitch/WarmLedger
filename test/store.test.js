@@ -482,6 +482,263 @@ test('generated deletion, clearing, and target copy preserve suppression and pre
   assert.equal(store.previewRecurringMonth('2026-02').counts.additions, 0);
 });
 
+test('month review is pure, frozen, detached, capability-neutral, and preserves null versus zero totals', () => {
+  const budget = makeBudget(); budget.months = {};
+  budget.templates.income.push({ id: 'review-income-template', ...incomeTemplate(), archived: false });
+  let uuidCount = 0;
+  const { store, storage } = readyStore({ budget, uuid: () => `review-${++uuidCount}` });
+  store.ensureMonth('2026-03');
+  const paycheckA = store.addPaycheck('2026-03', {
+    earnerId: 'earner-example-1', plannedAmount: 1000, actualAmount: null, date: '2026-03-01'
+  });
+  const paycheckB = store.addPaycheck('2026-03', {
+    earnerId: 'earner-example-1', plannedAmount: 500, actualAmount: 0, date: '2026-03-15'
+  });
+  store.addExpense('2026-03', {
+    categoryId: 'category-example-1', categoryItemId: 'item-example-1', name: 'ignored', date: '2026-03-02',
+    paycheckAmounts: { [paycheckA.id]: 99.991 }, plannedAmount: 100, actualAmount: null, paymentMethod: 'bank'
+  });
+  store.addExpense('2026-03', {
+    categoryId: 'category-example-1', categoryItemId: 'item-example-1', name: 'ignored', date: '2026-03-03',
+    paycheckAmounts: { [paycheckB.id]: 49.99 }, plannedAmount: 50, actualAmount: 0, paymentMethod: 'bank'
+  });
+  const preview = store.previewRecurringMonth('2026-03');
+  const beforeRaw = storage.getItem(STORAGE_KEY); const beforeData = store.getData(); const beforeStatus = store.getStatus();
+  const beforeUuidCount = uuidCount;
+  storage.operations.length = 0;
+  const review = store.getMonthReview('2026-03');
+  assert.equal(review.exists, true); assert.equal(review.empty, false);
+  assert.deepEqual(review.income, {
+    plannedTotal: 1500, enteredActualTotal: 0, completeActualTotal: null, unresolvedCount: 1,
+    unresolved: [{ id: paycheckA.id, earner: 'Example Earner', date: '2026-03-01', plannedAmount: 1000 }]
+  });
+  assert.equal(review.expenses.enteredActualTotal, 0);
+  assert.equal(review.expenses.completeActualTotal, null);
+  assert.equal(review.expenses.unresolvedCount, 1);
+  assert.equal(review.funding.issueCount, 2, 'the unrounded 100 - 99.991 result is greater than 0.009');
+  assert.equal(review.balance.plannedRemainder, 1350);
+  assert.equal(review.balance.actualCashFlow, null);
+  assert.equal(review.recurring.pendingCount, 1);
+  assert.equal(review.states.needsRecurringReview, true);
+  assert.equal(review.states.needsActuals, true);
+  assert.equal(review.states.needsAllocation, true);
+  assert.equal(review.states.ready, false);
+  assert.equal(Object.isFrozen(review), true); assert.equal(Object.isFrozen(review.income.unresolved), true);
+  assert.deepEqual(store.getData(), beforeData); assert.deepEqual(store.getStatus(), beforeStatus);
+  assert.equal(uuidCount, beforeUuidCount);
+  assert.equal(storage.getItem(STORAGE_KEY), beforeRaw);
+  assert.equal(storage.operations.some(entry => entry.op === 'setItem' || entry.op === 'removeItem'), false);
+  assert.throws(() => store.applyRecurringPreview(review), error => error instanceof StoreError && error.code === 'INVALID_RECURRING_PREVIEW');
+  assert.deepEqual(store.applyRecurringPreview(preview), { addedIncome: 1, addedExpenses: 0 });
+});
+
+test('funding tolerance uses exact unrounded signed 0.009 boundaries', () => {
+  const cases = [
+    { plannedAmount: 0.008999999999999998, issues: 0 },
+    { plannedAmount: 0.009, issues: 0 },
+    { plannedAmount: 0.009000000000000001, issues: 1 }
+  ];
+  for (const [index, entry] of cases.entries()) {
+    const budget = makeBudget(); budget.months = {};
+    budget.months['2026-05'] = {
+      paychecks: [], expenses: [{
+        id: `boundary-${index}`, categoryId: 'category-example-1', category: 'Home',
+        categoryItemId: 'item-example-1', name: 'Boundary', date: '', paycheckAmounts: {},
+        plannedAmount: entry.plannedAmount, actualAmount: 0, paymentMethod: 'bank',
+        sourceTemplateId: null, occurrenceKey: null
+      }], allocations: { savings: 0, credit_card_debt: 0, investments: 0 }, suppressedOccurrences: []
+    };
+    const { store } = readyStore({ budget });
+    const review = store.getMonthReview('2026-05');
+    assert.equal(review.funding.issueCount, entry.issues);
+    if (entry.issues) assert.equal(review.funding.issues[0].shortfall, entry.plannedAmount);
+  }
+
+  // V3 validation excludes persisted over-allocation, so assert the production signed predicate itself
+  // retains the exact symmetric boundary without introducing a rounded or widened tolerance.
+  const source = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'js', 'data.js'), 'utf8');
+  assert.match(source, /if \(shortfall > 0\.009 \|\| shortfall < -0\.009\)/);
+  assert.equal(-0.008999999999999998 < -0.009, false);
+  assert.equal(-0.009 < -0.009, false);
+  assert.equal(-0.009000000000000001 < -0.009, true);
+});
+
+test('missing and empty month reviews remain write-free and never report ready', () => {
+  const budget = makeBudget(); budget.months = {};
+  const { store, storage } = readyStore({ budget });
+  const before = storage.getItem(STORAGE_KEY); storage.operations.length = 0;
+  const missing = store.getMonthReview('2028-02');
+  assert.equal(missing.exists, false); assert.equal(missing.empty, true); assert.equal(missing.states.ready, false);
+  assert.equal(store.getAllMonthKeys().includes('2028-02'), false);
+  assert.equal(storage.getItem(STORAGE_KEY), before);
+  assert.equal(storage.operations.some(entry => entry.op === 'setItem' || entry.op === 'removeItem'), false);
+  store.ensureMonth('2028-02'); storage.operations.length = 0;
+  const empty = store.getMonthReview('2028-02');
+  assert.equal(empty.exists, true); assert.equal(empty.empty, true); assert.equal(empty.states.ready, false);
+  assert.equal(storage.operations.some(entry => entry.op === 'setItem' || entry.op === 'removeItem'), false);
+});
+
+test('suppressed occurrence projections preserve canonical twin order and classify every template state', () => {
+  const budget = makeBudget(); budget.months = {};
+  const { store, storage } = readyStore({ budget, uuid: ids('exception') });
+  const inputs = [
+    incomeTemplate({ name: 'Active twins', recurrence: { cadence: 'twice-monthly', days: [30, 31] } }),
+    incomeTemplate({ name: 'Disabled' }), incomeTemplate({ name: 'Archived' }),
+    incomeTemplate({ name: 'Out of range' }), incomeTemplate({ name: 'Changed' })
+  ];
+  const templates = inputs.map(input => store.addIncomeTemplate(input));
+  store.applyRecurringPreview(store.previewRecurringMonth('2026-02'));
+  for (const paycheck of [...store.getMonth('2026-02').paychecks]) store.deletePaycheck('2026-02', paycheck.id);
+  store.updateIncomeTemplate(templates[1].id, { enabled: false });
+  store.setIncomeTemplateArchived(templates[2].id, true);
+  store.updateIncomeTemplate(templates[3].id, { startDate: '2026-03-01' });
+  store.updateIncomeTemplate(templates[4].id, { recurrence: { cadence: 'monthly', day: 10 } });
+  storage.operations.length = 0;
+  const rows = store.getSuppressedOccurrences('2026-02');
+  assert.deepEqual(rows.map(row => [row.templateName, row.ordinal, row.templateState, row.eligible]), [
+    ['Active twins', 1, 'active', true], ['Active twins', 2, 'active', true],
+    ['Disabled', 1, 'disabled', false], ['Archived', 1, 'archived', false],
+    ['Out of range', 1, 'out-of-range', false], ['Changed', 1, 'schedule-changed', false]
+  ]);
+  assert.equal(Object.isFrozen(rows), true); assert.equal(Object.isFrozen(rows[0]), true);
+  assert.throws(() => { rows[0].templateName = 'mutated'; }, TypeError);
+  assert.equal(store.getSuppressedOccurrences('2026-02')[0].templateName, 'Active twins');
+  assert.equal(storage.operations.some(entry => entry.op === 'setItem' || entry.op === 'removeItem'), false);
+});
+
+test('unsuppress removes one eligible exact pair, invalidates previews, and never creates a record', () => {
+  const budget = makeBudget(); budget.months = {};
+  const { store, storage } = readyStore({ budget, uuid: ids('allow') });
+  const source = store.addIncomeTemplate(incomeTemplate({ recurrence: { cadence: 'twice-monthly', days: [30, 31] } }));
+  store.applyRecurringPreview(store.previewRecurringMonth('2026-02'));
+  for (const paycheck of [...store.getMonth('2026-02').paychecks]) store.deletePaycheck('2026-02', paycheck.id);
+  const [first, second] = store.getSuppressedOccurrences('2026-02');
+  const stale = store.previewRecurringMonth('2026-02');
+  const beforeRecords = store.getMonth('2026-02').paychecks.length;
+  assert.deepEqual(store.unsuppressOccurrence('2026-02', source.id, second.occurrenceKey), {
+    sourceTemplateId: source.id, occurrenceKey: second.occurrenceKey
+  });
+  assert.equal(store.getMonth('2026-02').paychecks.length, beforeRecords);
+  assert.deepEqual(store.getSuppressedOccurrences('2026-02').map(row => row.occurrenceKey), [first.occurrenceKey]);
+  assert.throws(() => store.applyRecurringPreview(stale), error => error instanceof StoreError && error.code === 'STALE_RECURRING_PREVIEW');
+  for (const args of [
+    ['2026-01', source.id, first.occurrenceKey], ['2026-02', 'wrong-template', first.occurrenceKey],
+    ['2026-02', source.id, '2026-02-28#0003']
+  ]) {
+    const raw = storage.getItem(STORAGE_KEY); storage.operations.length = 0;
+    assert.throws(() => store.unsuppressOccurrence(...args), error => error instanceof StoreError &&
+      ['MONTH_NOT_FOUND', 'SUPPRESSED_OCCURRENCE_NOT_FOUND'].includes(error.code));
+    assert.equal(storage.getItem(STORAGE_KEY), raw);
+    assert.equal(storage.operations.some(entry => entry.op === 'setItem' || entry.op === 'removeItem'), false);
+  }
+  const fresh = store.previewRecurringMonth('2026-02');
+  assert.equal(fresh.counts.additions, 1);
+  assert.deepEqual(store.applyRecurringPreview(fresh), { addedIncome: 1, addedExpenses: 0 });
+  assert.equal(store.previewRecurringMonth('2026-02').counts.additions, 0);
+});
+
+test('unsuppress rejects ineligible exceptions and rolls back on primary failure', () => {
+  const budget = makeBudget(); budget.months = {};
+  const { store, storage } = readyStore({ budget, uuid: ids('fault-exception') });
+  const source = store.addIncomeTemplate(incomeTemplate());
+  store.applyRecurringPreview(store.previewRecurringMonth('2026-02'));
+  store.deletePaycheck('2026-02', store.getMonth('2026-02').paychecks[0].id);
+  const row = store.getSuppressedOccurrences('2026-02')[0];
+  store.updateIncomeTemplate(source.id, { enabled: false });
+  const ineligibleRaw = storage.getItem(STORAGE_KEY); storage.operations.length = 0;
+  assert.throws(() => store.unsuppressOccurrence('2026-02', source.id, row.occurrenceKey),
+    error => error instanceof StoreError && error.code === 'SUPPRESSED_OCCURRENCE_INELIGIBLE');
+  assert.equal(storage.getItem(STORAGE_KEY), ineligibleRaw);
+  assert.equal(storage.operations.some(entry => entry.op === 'setItem' || entry.op === 'removeItem'), false);
+  store.updateIncomeTemplate(source.id, { enabled: true });
+  const before = store.getData(); const raw = storage.getItem(STORAGE_KEY);
+  storage.fail({ op: 'setItem', key: STORAGE_KEY, once: true, name: 'QuotaExceededError' });
+  assert.throws(() => store.unsuppressOccurrence('2026-02', source.id, row.occurrenceKey),
+    error => error instanceof StoreError && error.code === 'PRIMARY_WRITE_FAILED');
+  assert.deepEqual(store.getData(), before); assert.equal(storage.getItem(STORAGE_KEY), raw);
+});
+
+test('optional snapshot failure warns but does not partially block an eligible unsuppress', () => {
+  const budget = makeBudget(); budget.months = {};
+  const { store, storage, clock } = readyStore({ budget, uuid: ids('exception-snapshot') });
+  const source = store.addIncomeTemplate(incomeTemplate());
+  store.applyRecurringPreview(store.previewRecurringMonth('2026-02'));
+  store.deletePaycheck('2026-02', store.getMonth('2026-02').paychecks[0].id);
+  const row = store.getSuppressedOccurrences('2026-02')[0];
+  clock.set('2026-01-16T12:00:00.000Z');
+  storage.fail({ op: 'setItem', prefix: SNAPSHOT_PREFIX, once: true, name: 'QuotaExceededError' });
+  store.unsuppressOccurrence('2026-02', source.id, row.occurrenceKey);
+  assert.deepEqual(store.getSuppressedOccurrences('2026-02'), []);
+  assert.equal(store.getMonth('2026-02').paychecks.length, 0);
+  assert.equal(store.getStatus().warnings.includes('SNAPSHOT_WRITE_FAILED'), true);
+});
+
+test('suppressed exceptions survive reload, export/import, snapshot mutation, and restore', () => {
+  const budget = makeBudget(); budget.months = {};
+  const originStorage = new MemoryStorage({ [STORAGE_KEY]: JSON.stringify(budget) });
+  let origin = createStore({ storage: originStorage, now: makeClock(), uuid: ids('persist-origin') }); origin.load();
+  const source = origin.addIncomeTemplate(incomeTemplate());
+  origin.applyRecurringPreview(origin.previewRecurringMonth('2026-02'));
+  origin.deletePaycheck('2026-02', origin.getMonth('2026-02').paychecks[0].id);
+  const occurrenceKey = origin.getSuppressedOccurrences('2026-02')[0].occurrenceKey;
+  origin = createStore({ storage: originStorage, now: makeClock(), uuid: ids('persist-reload') }); origin.load();
+  assert.equal(origin.getSuppressedOccurrences('2026-02')[0].occurrenceKey, occurrenceKey);
+
+  const targetStorage = new MemoryStorage({ [STORAGE_KEY]: JSON.stringify(makeBudget()) });
+  const target = createStore({ storage: targetStorage, now: makeClock(), uuid: ids('persist-target') }); target.load();
+  target.importData(origin.exportData());
+  assert.equal(target.getSuppressedOccurrences('2026-02')[0].occurrenceKey, occurrenceKey);
+  target.unsuppressOccurrence('2026-02', source.id, occurrenceKey);
+  assert.deepEqual(target.getSuppressedOccurrences('2026-02'), []);
+  const snapshot = target.listSnapshots().find(record =>
+    record.data.months['2026-02']?.suppressedOccurrences.some(entry => entry.occurrenceKey === occurrenceKey));
+  assert.ok(snapshot);
+  target.restoreSnapshot(snapshot.id);
+  assert.equal(target.getSuppressedOccurrences('2026-02')[0].occurrenceKey, occurrenceKey);
+});
+
+test('review reports complete cash flow and acknowledged suppression can remain ready', () => {
+  const budget = makeBudget(); budget.months = {};
+  budget.templates.income.push({ id: 'ready-template', ...incomeTemplate(), archived: false });
+  budget.months['2026-04'] = {
+    paychecks: [{
+      id: 'ready-paycheck', earnerId: 'earner-example-1', earner: 'Example Earner',
+      plannedAmount: 500, actualAmount: 450, date: '2026-04-01', sourceTemplateId: null, occurrenceKey: null
+    }],
+    expenses: [{
+      id: 'ready-expense', categoryId: 'category-example-1', category: 'Home', categoryItemId: 'item-example-1',
+      name: 'Rent', date: '2026-04-02', paycheckAmounts: { 'ready-paycheck': 200 }, plannedAmount: 200,
+      actualAmount: 175, paymentMethod: 'bank', sourceTemplateId: null, occurrenceKey: null
+    }],
+    allocations: { savings: 50, credit_card_debt: 0, investments: 0 },
+    suppressedOccurrences: [{ sourceTemplateId: 'ready-template', occurrenceKey: '2026-04-15#0001' }]
+  };
+  const { store } = readyStore({ budget });
+  const review = store.getMonthReview('2026-04');
+  assert.equal(review.income.completeActualTotal, 450);
+  assert.equal(review.expenses.completeActualTotal, 175);
+  assert.equal(review.balance.actualCashFlow, 275);
+  assert.equal(review.balance.plannedRemainder, 250);
+  assert.equal(review.recurring.suppressedCount, 1);
+  assert.equal(review.recurring.pendingCount, 0);
+  assert.deepEqual(review.states, {
+    needsRecurringReview: false, needsActuals: false, needsAllocation: false, ready: true
+  });
+});
+
+test('exception APIs remain blocked and write-free during recovery-required state', () => {
+  const storage = new MemoryStorage({ [STORAGE_KEY]: '{not-json' });
+  const store = createStore({ storage, now: makeClock(), uuid: ids('recovery-exception') });
+  assert.equal(store.load().state, 'recovery-required');
+  const raw = storage.getItem(STORAGE_KEY); storage.operations.length = 0;
+  for (const operation of [
+    () => store.getMonthReview('2026-01'), () => store.getSuppressedOccurrences('2026-01'),
+    () => store.unsuppressOccurrence('2026-01', 'template', '2026-01-01#0001')
+  ]) expectStoreCode('RECOVERY_REQUIRED', operation);
+  assert.equal(storage.getItem(STORAGE_KEY), raw);
+  assert.equal(storage.operations.some(entry => entry.op === 'setItem' || entry.op === 'removeItem'), false);
+});
+
 test('catalog projections are filtered, deeply frozen, detached, and write-free', () => {
   const budget = makeBudget();
   budget.categories.push({ id: 'category-archived', name: 'Former', archived: true, items: [

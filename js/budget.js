@@ -47,6 +47,7 @@ const BudgetView = {
     this.renderExpenses();
     this.renderAllocation();
     this.updateSummary();
+    this.renderMonthlyReview();
   },
 
   updateSummary() {
@@ -103,6 +104,180 @@ const BudgetView = {
     if (className) node.className = className;
     if (text !== undefined) node.textContent = text;
     return node;
+  },
+
+  reviewActualLabel(group) {
+    if (group.completeActualTotal === null) {
+      return `${this.fmt(group.enteredActualTotal)} entered (partial; ${group.unresolvedCount} not entered)`;
+    }
+    return this.fmt(group.completeActualTotal);
+  },
+
+  reviewCashFlowLabel(value) {
+    return value === null ? 'Incomplete' : this.fmt(value);
+  },
+
+  reviewAction(label, targetId) {
+    const button = this.element('button', 'btn btn-sm monthly-review-action', label); button.type = 'button';
+    button.addEventListener('click', () => document.getElementById(targetId)?.click());
+    return button;
+  },
+
+  reviewPreviewAction() {
+    const button = this.element('button', 'btn btn-sm monthly-review-action', 'Preview recurring items'); button.type = 'button';
+    button.addEventListener('click', () => App.openRecurringPreview(button));
+    return button;
+  },
+
+  reviewGroup(wrapper, id, title) {
+    const section = this.element('section', 'monthly-review-group');
+    const heading = this.element('h4', '', title); heading.id = id; heading.tabIndex = -1;
+    section.setAttribute('aria-labelledby', id); section.append(heading); wrapper.append(section); return section;
+  },
+
+  renderMonthlyReview() {
+    const container = document.getElementById('monthly-review-container');
+    if (!container) return;
+    const review = Store.getMonthReview(this.currentMonth);
+    const exceptions = Store.getSuppressedOccurrences(this.currentMonth);
+    const wrapper = this.element('div', 'monthly-review');
+    const heading = this.element('h3', '', 'Monthly Review'); heading.id = 'monthly-review-heading'; heading.tabIndex = -1;
+    wrapper.append(heading);
+
+    const states = this.element('ul', 'monthly-review-states');
+    const stateText = [];
+    if (review.states.needsRecurringReview) stateText.push('Recurring items need review.');
+    if (review.states.needsActuals) stateText.push('Actual amounts are not entered for every item.');
+    if (review.states.needsAllocation) stateText.push('Some planned expenses need paycheck funding.');
+    if (review.states.ready) stateText.push('Monthly review is ready.');
+    if (review.empty) stateText.push('This month is empty and is not ready.');
+    stateText.forEach(text => states.append(this.element('li', '', text))); wrapper.append(states);
+
+    const recurring = this.reviewGroup(wrapper, 'monthly-review-recurring-heading', 'Recurring items');
+    recurring.append(this.element('p', '', `${review.recurring.pendingCount} pending, ${review.recurring.conflictCount} conflicts, ${review.recurring.suppressedCount} suppressed.`));
+    if (review.recurring.pendingCount || review.recurring.conflictCount) recurring.append(this.reviewPreviewAction());
+    this.renderRecurringExceptions(recurring, exceptions);
+
+    if (review.empty) {
+      const empty = this.reviewGroup(wrapper, 'monthly-review-empty-heading', 'Start this month');
+      empty.append(this.element('p', '', 'Add records or bring forward a prior plan before reviewing this month.'));
+      const actions = this.element('div', 'monthly-review-actions');
+      actions.append(
+        this.reviewAction('Add paycheck', 'btn-add-paycheck'),
+        this.reviewAction('Add expense', 'btn-add-expense'),
+        this.reviewPreviewAction(),
+        this.reviewAction('Copy previous month', 'btn-copy-prev')
+      );
+      empty.append(actions); container.replaceChildren(wrapper); return;
+    }
+
+    this.renderReviewActualGroup(wrapper, 'income', review.income);
+    this.renderReviewActualGroup(wrapper, 'expense', review.expenses);
+
+    const funding = this.reviewGroup(wrapper, 'monthly-review-funding-heading', 'Expense funding');
+    if (!review.funding.issueCount) funding.append(this.element('p', '', 'Every planned expense is fully assigned to paychecks.'));
+    else {
+      const list = this.element('ul', 'monthly-review-list');
+      review.funding.issues.forEach(issue => {
+        const item = this.element('li', 'monthly-review-item');
+        const difference = issue.shortfall > 0 ? `Needs ${this.fmt(issue.shortfall)}` : `Over-assigned by ${this.fmt(Math.abs(issue.shortfall))}`;
+        item.append(this.element('span', '', `${issue.name} — ${issue.category}: ${difference}.`));
+        const button = this.element('button', 'btn btn-sm monthly-review-action', `Edit funding for ${issue.name}`); button.type = 'button';
+        button.dataset.reviewKind = 'funding'; button.dataset.recordId = issue.expenseId;
+        button.addEventListener('click', () => this.openReviewEditor('expense', issue.expenseId, button, { kind: 'funding', id: issue.expenseId }));
+        item.append(button); list.append(item);
+      });
+      funding.append(list);
+    }
+
+    const balance = this.reviewGroup(wrapper, 'monthly-review-balance-heading', 'Balance');
+    const balanceList = this.element('dl', 'monthly-review-details');
+    this.reviewDetail(balanceList, 'Allocations', this.fmt(review.balance.allocationsTotal));
+    this.reviewDetail(balanceList, 'Planned remainder', this.fmt(review.balance.plannedRemainder));
+    this.reviewDetail(balanceList, 'Actual cash flow', this.reviewCashFlowLabel(review.balance.actualCashFlow));
+    balance.append(balanceList);
+
+    const assignments = this.reviewGroup(wrapper, 'monthly-review-paychecks-heading', 'Paycheck assignment notes');
+    if (!review.paycheckAssignments.length) assignments.append(this.element('p', '', 'No paychecks to summarize.'));
+    else {
+      const list = this.element('ul', 'monthly-review-list');
+      review.paycheckAssignments.forEach(note => list.append(this.element('li', '',
+        `${note.earner}: ${this.fmt(note.assignedAmount)} assigned of ${this.fmt(note.plannedAmount)}; ${this.fmt(note.remainingAmount)} remaining.`)));
+      assignments.append(list);
+    }
+    container.replaceChildren(wrapper);
+  },
+
+  renderRecurringExceptions(recurringGroup, exceptions) {
+    if (!exceptions.length) return;
+    const section = this.element('section', 'monthly-review-exceptions');
+    const heading = this.element('h5', '', 'Recurring exceptions'); heading.id = 'monthly-review-exceptions-heading'; heading.tabIndex = -1;
+    section.setAttribute('aria-labelledby', heading.id); section.append(heading);
+    const list = this.element('ul', 'monthly-review-list');
+    const explanations = {
+      disabled: 'Enable the template before allowing this occurrence again.',
+      archived: 'Restore the template before allowing this occurrence again.',
+      'out-of-range': 'Adjust the template date range before allowing this occurrence again.',
+      'schedule-changed': 'Restore the matching template schedule before allowing this occurrence again.'
+    };
+    exceptions.forEach(entry => {
+      const item = this.element('li', 'monthly-review-item');
+      item.dataset.sourceTemplateId = entry.sourceTemplateId; item.dataset.occurrenceKey = entry.occurrenceKey;
+      item.append(this.element('span', '',
+        `${entry.templateName} — ${entry.scheduledDate}, occurrence ${entry.ordinal}. Current state: ${entry.templateState}.`));
+      if (entry.eligible) {
+        const label = `Allow ${entry.templateName} on ${entry.scheduledDate}, occurrence ${entry.ordinal} again`;
+        const button = this.element('button', 'btn btn-sm monthly-review-action', 'Allow again'); button.type = 'button';
+        button.dataset.exceptionAction = 'allow-again';
+        button.dataset.sourceTemplateId = entry.sourceTemplateId; button.dataset.occurrenceKey = entry.occurrenceKey;
+        button.setAttribute('aria-label', label);
+        button.addEventListener('click', () => App.openUnsuppressDialog(entry, button)); item.append(button);
+      } else item.append(this.element('p', 'muted-text', explanations[entry.templateState] || 'Update the template before allowing this occurrence again.'));
+      list.append(item);
+    });
+    section.append(list); recurringGroup.append(section);
+  },
+
+  renderReviewActualGroup(wrapper, kind, group) {
+    const isIncome = kind === 'income';
+    const title = isIncome ? 'Actual income' : 'Actual expenses';
+    const section = this.reviewGroup(wrapper, `monthly-review-${kind}-heading`, title);
+    const details = this.element('dl', 'monthly-review-details');
+    this.reviewDetail(details, 'Planned', this.fmt(group.plannedTotal));
+    this.reviewDetail(details, 'Actual', this.reviewActualLabel(group)); section.append(details);
+    if (!group.unresolvedCount) { section.append(this.element('p', '', 'All actual amounts are entered.')); return; }
+    const list = this.element('ul', 'monthly-review-list');
+    group.unresolved.forEach(record => {
+      const item = this.element('li', 'monthly-review-item');
+      const label = isIncome ? record.earner : `${record.name} — ${record.category}`;
+      item.append(this.element('span', '', `${label}, ${record.date || 'no date'}: Not entered (planned ${this.fmt(record.plannedAmount)}).`));
+      const buttonLabel = `Enter actual ${isIncome ? 'income' : 'expense'} for ${label}, ${record.date || 'no date'}`;
+      const button = this.element('button', 'btn btn-sm monthly-review-action', buttonLabel); button.type = 'button';
+      button.dataset.reviewKind = kind; button.dataset.recordId = record.id;
+      button.addEventListener('click', () => this.openReviewEditor(kind, record.id, button)); item.append(button); list.append(item);
+    });
+    section.append(list);
+  },
+
+  reviewDetail(list, term, value) {
+    list.append(this.element('dt', '', term), this.element('dd', '', value));
+  },
+
+  openReviewEditor(kind, id, trigger, reviewFocus = { kind, id }) {
+    const month = Store.getMonth(this.currentMonth);
+    const records = kind === 'income' ? month.paychecks : month.expenses;
+    const record = records.find(item => item.id === id);
+    if (!record) { this.renderMonthlyReview(); this.restoreReviewFocus(reviewFocus.kind, reviewFocus.id); return; }
+    if (kind === 'income') this.showPaycheckModal(record, reviewFocus);
+    else this.showExpenseModal(record, reviewFocus);
+  },
+
+  restoreReviewFocus(kind, id) {
+    requestAnimationFrame(() => {
+      const controls = [...document.querySelectorAll('[data-review-kind][data-record-id]')];
+      const target = controls.find(control => control.dataset.reviewKind === kind && control.dataset.recordId === id);
+      (target || document.getElementById(`monthly-review-${kind}-heading`))?.focus({ preventScroll: true });
+    });
   },
 
   focusEditControl(type, id) {
@@ -173,7 +348,7 @@ const BudgetView = {
     });
   },
 
-  showPaycheckModal(existing) {
+  showPaycheckModal(existing, reviewFocus = null) {
     const earners = Store.getEarners();
     const title = existing ? 'Edit Paycheck' : 'Add Paycheck';
     const amountFields = `
@@ -212,7 +387,8 @@ const BudgetView = {
       },
       { onSuccess: () => {
         this.render();
-        if (existing) this.focusEditControl('paycheck', existing.id);
+        if (reviewFocus) this.restoreReviewFocus(reviewFocus.kind, reviewFocus.id);
+        else if (existing) this.focusEditControl('paycheck', existing.id);
       } });
     });
     document.getElementById('modal-save').disabled = false;
@@ -420,7 +596,7 @@ const BudgetView = {
     this.renderExpenses();
   },
 
-  showExpenseModal(existing) {
+  showExpenseModal(existing, reviewFocus = null) {
     const categories = Store.getCategories();
     const title = existing ? 'Edit Expense' : 'Add Expense';
     const amountAndDateFields = `
@@ -491,7 +667,8 @@ const BudgetView = {
         });
       }, { onSuccess: () => {
           this.render();
-          if (existing) this.focusEditControl('expense', existing.id);
+          if (reviewFocus) this.restoreReviewFocus(reviewFocus.kind, reviewFocus.id);
+          else if (existing) this.focusEditControl('expense', existing.id);
       } });
     });
     document.getElementById('modal-save').disabled = false;
