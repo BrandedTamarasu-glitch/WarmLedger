@@ -549,6 +549,7 @@
         if (!matchingTemplates.has(record.sourceTemplateId)) fail('DANGLING_TEMPLATE_REFERENCE', `${recordPath}.sourceTemplateId`);
         expectOccurrenceKey(record.occurrenceKey, `${recordPath}.occurrenceKey`);
         if (record.occurrenceKey.slice(0, 7) !== monthKey) fail('OCCURRENCE_MONTH_MISMATCH', `${recordPath}.occurrenceKey`);
+        if (record.date !== record.occurrenceKey.slice(0, 10)) fail('GENERATED_DATE_MISMATCH', `${recordPath}.date`);
         const pair = `${record.sourceTemplateId}\u0000${record.occurrenceKey}`;
         if (occurrencePairs.has(pair)) fail('DUPLICATE_OCCURRENCE', `${recordPath}.occurrenceKey`);
         occurrencePairs.add(pair);
@@ -563,6 +564,7 @@
         if (paycheck.actualAmount !== null) expectMoney(paycheck.actualAmount, `${itemPath}.actualAmount`);
         if (typeof paycheck.date !== 'string') fail('INVALID_DATE', `${itemPath}.date`);
         expectDate(paycheck.date, `${itemPath}.date`, true);
+        if (paycheck.date !== '' && paycheck.date.slice(0, 7) !== monthKey) fail('RECORD_MONTH_MISMATCH', `${itemPath}.date`);
         if (monthlyIds.has(paycheck.id)) fail('DUPLICATE_ID', `${itemPath}.id`);
         monthlyIds.add(paycheck.id); paycheckIds.add(paycheck.id);
         incomePlanned += paycheck.plannedAmount; incomeActual += paycheck.actualAmount || 0;
@@ -572,7 +574,7 @@
       let expensePlanned = 0; let expenseActual = 0;
       month.expenses.forEach((expense, index) => {
         const itemPath = `${path}.expenses[${index}]`;
-        expectExactKeys(expense, ['id', 'categoryId', 'category', 'categoryItemId', 'name', 'paycheckAmounts', 'plannedAmount', 'actualAmount', 'paymentMethod', 'sourceTemplateId', 'occurrenceKey'], itemPath);
+        expectExactKeys(expense, ['id', 'categoryId', 'category', 'categoryItemId', 'name', 'date', 'paycheckAmounts', 'plannedAmount', 'actualAmount', 'paymentMethod', 'sourceTemplateId', 'occurrenceKey'], itemPath);
         expectIdentifier(expense.id, `${itemPath}.id`); expectIdentifier(expense.categoryId, `${itemPath}.categoryId`);
         const itemIds = categories.get(expense.categoryId);
         if (!itemIds) fail('DANGLING_CATEGORY_REFERENCE', `${itemPath}.categoryId`);
@@ -582,6 +584,9 @@
           if (!itemIds.has(expense.categoryItemId)) fail('DANGLING_CATEGORY_ITEM_REFERENCE', `${itemPath}.categoryItemId`);
         }
         expectString(expense.name, `${itemPath}.name`, 120);
+        if (typeof expense.date !== 'string') fail('INVALID_DATE', `${itemPath}.date`);
+        expectDate(expense.date, `${itemPath}.date`, true);
+        if (expense.date !== '' && expense.date.slice(0, 7) !== monthKey) fail('RECORD_MONTH_MISMATCH', `${itemPath}.date`);
         if (monthlyIds.has(expense.id)) fail('DUPLICATE_ID', `${itemPath}.id`);
         monthlyIds.add(expense.id); expectObject(expense.paycheckAmounts, `${itemPath}.paycheckAmounts`);
         let allocated = 0;
@@ -745,7 +750,7 @@
           earner: paycheck.earner,
           plannedAmount: paycheck.amount,
           actualAmount: paycheck.amount,
-          date: paycheck.date,
+          date: paycheck.date === '' || paycheck.date.slice(0, 7) === monthKey ? paycheck.date : '',
           sourceTemplateId: null,
           occurrenceKey: null
         })),
@@ -755,6 +760,7 @@
           category: expense.category,
           categoryItemId: expense.categoryItemId,
           name: expense.name,
+          date: '',
           paycheckAmounts: clone(expense.paycheckAmounts),
           plannedAmount: Object.values(expense.paycheckAmounts).reduce((sum, amount) => sum + amount, 0),
           actualAmount: expense.actual === 0 ? null : expense.actual,
@@ -794,12 +800,12 @@
     }
   }
 
-  function parseActive(text) {
-    return migrateActive(parseJson(text, '$'));
+  function parseCanonical(text, migrate) {
+    return migrate(parseJson(text, '$'));
   }
 
-  function buildBackup(data, exportedAt) {
-    const canonical = migrateActive(data);
+  function buildCanonicalBackup(data, exportedAt, migrate) {
+    const canonical = migrate(data);
     expectTimestamp(exportedAt, '$.exportedAt');
     return {
       format: BACKUP_FORMAT,
@@ -809,18 +815,18 @@
     };
   }
 
-  function parseBackup(text) {
+  function parseCanonicalBackup(text, migrate) {
     const envelope = parseJson(text, '$');
     clone(envelope);
     expectExactKeys(envelope, ['format', 'formatVersion', 'exportedAt', 'data'], '$');
     if (envelope.format !== BACKUP_FORMAT) fail('INVALID_BACKUP_FORMAT', '$.format');
     if (envelope.formatVersion !== BACKUP_FORMAT_VERSION) fail('UNSUPPORTED_BACKUP_VERSION', '$.formatVersion');
     expectTimestamp(envelope.exportedAt, '$.exportedAt');
-    const data = migrateActive(envelope.data);
+    const data = migrate(envelope.data);
     return { format: envelope.format, formatVersion: envelope.formatVersion, exportedAt: envelope.exportedAt, data };
   }
 
-  function buildSnapshot(data, metadata) {
+  function buildCanonicalSnapshot(data, metadata, migrate) {
     if (!isPlainObject(metadata)) fail('EXPECTED_OBJECT', '$.metadata');
     expectExactKeys(metadata, ['createdAt', 'localDate', 'reason'], '$.metadata');
     const { createdAt, localDate, reason } = metadata;
@@ -834,11 +840,11 @@
       createdAt,
       localDate,
       reason,
-      data: migrateActive(data)
+      data: migrate(data)
     };
   }
 
-  function parseSnapshot(text) {
+  function parseCanonicalSnapshot(text, migrate) {
     const envelope = parseJson(text, '$');
     clone(envelope);
     expectExactKeys(envelope, ['format', 'formatVersion', 'createdAt', 'localDate', 'reason', 'data'], '$');
@@ -848,7 +854,7 @@
     if (typeof envelope.localDate !== 'string') fail('INVALID_DATE', '$.localDate');
     expectDate(envelope.localDate, '$.localDate');
     if (!SNAPSHOT_REASONS.has(envelope.reason)) fail('INVALID_SNAPSHOT_REASON', '$.reason');
-    const data = migrateActive(envelope.data);
+    const data = migrate(envelope.data);
     return {
       format: envelope.format,
       formatVersion: envelope.formatVersion,
@@ -859,6 +865,43 @@
     };
   }
 
+  function parseActive(text) { return parseCanonical(text, migrateActive); }
+  function buildBackup(data, exportedAt) { return buildCanonicalBackup(data, exportedAt, migrateActive); }
+  function parseBackup(text) { return parseCanonicalBackup(text, migrateActive); }
+  function buildSnapshot(data, metadata) { return buildCanonicalSnapshot(data, metadata, migrateActive); }
+  function parseSnapshot(text) { return parseCanonicalSnapshot(text, migrateActive); }
+
+  function parseV3Active(text) { return parseCanonical(text, migrateToV3); }
+  function buildV3Backup(data, exportedAt) { return buildCanonicalBackup(data, exportedAt, migrateToV3); }
+  function parseV3Backup(text) { return parseCanonicalBackup(text, migrateToV3); }
+  function buildV3Snapshot(data, metadata) { return buildCanonicalSnapshot(data, metadata, migrateToV3); }
+  function parseV3Snapshot(text) { return parseCanonicalSnapshot(text, migrateToV3); }
+
+  const ACTIVE_SCHEMA_POLICY = Object.freeze({
+    SCHEMA_VERSION,
+    clone,
+    DataError,
+    migrateActive,
+    validateActive,
+    parseActive,
+    buildBackup,
+    parseBackup,
+    buildSnapshot,
+    parseSnapshot
+  });
+  const V3_SCHEMA_POLICY = Object.freeze({
+    SCHEMA_VERSION: V3_SCHEMA_VERSION,
+    clone,
+    DataError,
+    migrateActive: migrateToV3,
+    validateActive: validateV3,
+    parseActive: parseV3Active,
+    buildBackup: buildV3Backup,
+    parseBackup: parseV3Backup,
+    buildSnapshot: buildV3Snapshot,
+    parseSnapshot: parseV3Snapshot
+  });
+
   return Object.freeze({
     SCHEMA_VERSION,
     V2_SCHEMA_VERSION,
@@ -867,6 +910,8 @@
     BACKUP_FORMAT_VERSION,
     SNAPSHOT_FORMAT,
     SNAPSHOT_FORMAT_VERSION,
+    ACTIVE_SCHEMA_POLICY,
+    V3_SCHEMA_POLICY,
     DataError,
     clone,
     migrateActive,

@@ -41,6 +41,7 @@
           "category": "Shelter",
           "categoryItemId": null,
           "name": "Historical label",
+          "date": "",
           "paycheckAmounts": { "pay-1": 975 },
           "plannedAmount": 975,
           "actualAmount": 980,

@@ -2,7 +2,9 @@
   'use strict';
   const Schema = root && root.ZeroBudgetSchema ? root.ZeroBudgetSchema
     : (typeof require === 'function' ? require('./data-schema.js') : null);
-  const api = factory(Schema);
+  const Recurrence = root && root.ZeroBudgetRecurrence ? root.ZeroBudgetRecurrence
+    : (typeof require === 'function' ? require('./recurrence.js') : null);
+  const api = factory(Schema, Recurrence);
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (root && root.localStorage) {
     root.ZeroBudgetStore = api;
@@ -13,7 +15,7 @@
     });
     root.ALLOCATION_TYPES = api.ALLOCATION_TYPES;
   }
-})(typeof globalThis !== 'undefined' ? globalThis : this, function(Schema) {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function(Schema, Recurrence) {
   'use strict';
   if (!Schema) throw new Error('ZeroBudgetSchema is required');
 
@@ -45,13 +47,15 @@
     return new StoreError(code);
   }
 
-  function emptyMonth() {
-    return { paychecks: [], expenses: [], allocations: { ...EMPTY_ALLOCATIONS } };
+  function emptyMonth(version) {
+    const month = { paychecks: [], expenses: [], allocations: { ...EMPTY_ALLOCATIONS } };
+    if (version === 3) month.suppressedOccurrences = [];
+    return month;
   }
 
-  function defaultData() {
-    return {
-      schemaVersion: Schema.SCHEMA_VERSION,
+  function defaultData(version) {
+    const result = {
+      schemaVersion: version,
       categories: GENERIC_CATEGORY_NAMES.map((name, index) => ({
         id: `default-category-${String(index + 1).padStart(4, '0')}`,
         name,
@@ -65,6 +69,8 @@
       })) },
       months: {}
     };
+    if (version === 3) result.templates = { income: [], expenses: [] };
+    return result;
   }
 
   function freezeDetached(value) {
@@ -86,11 +92,16 @@
     return `${year}-${month}-${day}`;
   }
 
-  function createStore({ storage, now = () => new Date(), uuid = () => crypto.randomUUID() } = {}) {
+  function createStore({ storage, now = () => new Date(), uuid = () => crypto.randomUUID(), schemaPolicy = Schema.ACTIVE_SCHEMA_POLICY } = {}) {
+    if (schemaPolicy !== Schema.ACTIVE_SCHEMA_POLICY && schemaPolicy !== Schema.V3_SCHEMA_POLICY) {
+      throw new StoreError('INVALID_SCHEMA_POLICY');
+    }
     if (!storage || typeof storage.getItem !== 'function' || typeof storage.setItem !== 'function') {
       throw new StoreError('STORAGE_UNAVAILABLE');
     }
     if (typeof now !== 'function' || typeof uuid !== 'function') throw new StoreError('INVALID_ADAPTER');
+    const isV3 = schemaPolicy.SCHEMA_VERSION === 3;
+    const previewCapabilities = new WeakMap();
 
     let data = null;
     let committedRaw = null;
@@ -169,7 +180,7 @@
         try {
           const raw = read(key, 'SNAPSHOT_READ_FAILED');
           if (raw === null) continue;
-          const envelope = Schema.parseSnapshot(raw);
+          const envelope = schemaPolicy.parseSnapshot(raw);
           records.push({
             id: key.slice(SNAPSHOT_PREFIX.length), key,
             createdAt: envelope.createdAt, localDate: envelope.localDate,
@@ -193,7 +204,7 @@
       const instant = instantNow();
       let envelope;
       try {
-        envelope = Schema.buildSnapshot(priorData, {
+        envelope = schemaPolicy.buildSnapshot(priorData, {
           createdAt: instant.toISOString(), localDate: localDate(instant), reason
         });
       } catch (error) {
@@ -203,7 +214,7 @@
       const key = SNAPSHOT_PREFIX + safeSnapshotId();
       try {
         write(key, JSON.stringify(envelope), 'SNAPSHOT_WRITE_FAILED');
-        Schema.parseSnapshot(read(key, 'SNAPSHOT_READ_FAILED'));
+        schemaPolicy.parseSnapshot(read(key, 'SNAPSHOT_READ_FAILED'));
       } catch (error) {
         try { remove(key, 'SNAPSHOT_CLEANUP_FAILED'); } catch { warn('SNAPSHOT_CLEANUP_FAILED'); }
         if (required) throw error;
@@ -232,10 +243,10 @@
 
     function commitCandidate(candidate, { snapshotReason = null, requiredSnapshot = false, daily = true, prune = true } = {}) {
       requireReady();
-      const canonical = Schema.migrateActive(candidate);
+      const canonical = schemaPolicy.migrateActive(candidate);
       const nextRaw = JSON.stringify(canonical);
-      const priorData = Schema.clone(data);
-      if (nextRaw === JSON.stringify(data)) return Schema.clone(data);
+      const priorData = schemaPolicy.clone(data);
+      if (nextRaw === JSON.stringify(data)) return schemaPolicy.clone(data);
       if (snapshotReason && committedRaw !== null) {
         createSnapshot(priorData, snapshotReason, { required: requiredSnapshot });
       } else if (daily) {
@@ -248,15 +259,15 @@
       corruptEvidence = null;
       generation += 1;
       if (prune) pruneSnapshots();
-      return Schema.clone(data);
+      return schemaPolicy.clone(data);
     }
 
     function transact(mutator, options) {
       requireReady();
-      const candidate = Schema.clone(data);
+      const candidate = schemaPolicy.clone(data);
       const result = mutator(candidate);
       commitCandidate(candidate, options);
-      return result === undefined ? undefined : Schema.clone(result);
+      return result === undefined ? undefined : schemaPolicy.clone(result);
     }
 
     function preserveEvidence(raw) {
@@ -275,12 +286,12 @@
         return { state: loadState, warnings: [error.code], hasEvidence: false, snapshots: listSnapshotMetadata() };
       }
       if (raw === null) {
-        data = defaultData(); committedRaw = null; corruptEvidence = null;
+        data = defaultData(schemaPolicy.SCHEMA_VERSION); committedRaw = null; corruptEvidence = null;
         loadState = 'empty'; generation += 1;
         return { state: loadState, warnings: [], migrated: false };
       }
       try {
-        const parsed = Schema.parseActive(raw);
+        const parsed = schemaPolicy.parseActive(raw);
         data = parsed; committedRaw = raw; corruptEvidence = null;
         loadState = 'ready'; generation += 1;
         return { state: loadState, warnings: [], migrated: raw !== JSON.stringify(parsed) };
@@ -294,7 +305,7 @@
       }
     }
 
-    function getData() { requireReady(); return Schema.clone(data); }
+    function getData() { requireReady(); return schemaPolicy.clone(data); }
     function getCategories({ includeArchived = false } = {}) {
       requireReady();
       return freezeDetached(data.categories.filter(category => includeArchived || !category.archived));
@@ -344,15 +355,15 @@
       }
       return freezeDetached({ categoryExpenses, itemExpenses, earnerPaychecks });
     }
-    function peekMonth(monthKey) { requireReady(); return Schema.clone(data.months[monthKey] || emptyMonth()); }
+    function peekMonth(monthKey) { requireReady(); return schemaPolicy.clone(data.months[monthKey] || emptyMonth(schemaPolicy.SCHEMA_VERSION)); }
     function ensureMonth(monthKey) {
       return transact(candidate => {
-        if (!Object.hasOwn(candidate.months, monthKey)) candidate.months[monthKey] = emptyMonth();
+        if (!Object.hasOwn(candidate.months, monthKey)) candidate.months[monthKey] = emptyMonth(schemaPolicy.SCHEMA_VERSION);
         return candidate.months[monthKey];
       });
     }
     function requireMonth(candidate, monthKey) {
-      if (!Object.hasOwn(candidate.months, monthKey)) candidate.months[monthKey] = emptyMonth();
+      if (!Object.hasOwn(candidate.months, monthKey)) candidate.months[monthKey] = emptyMonth(schemaPolicy.SCHEMA_VERSION);
       return candidate.months[monthKey];
     }
     function findOrThrow(items, id, code) {
@@ -367,7 +378,7 @@
 
     function patchOf(value, allowed) {
       requireReady();
-      const patch = Schema.clone(value);
+      const patch = schemaPolicy.clone(value);
       if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new StoreError('INVALID_PATCH');
       const keys = Object.keys(patch);
       if (keys.length === 0) throw new StoreError('EMPTY_PATCH');
@@ -414,7 +425,7 @@
 
     function orderedPermutation(input, items) {
       requireReady();
-      const orderedIds = Schema.clone(input);
+      const orderedIds = schemaPolicy.clone(input);
       if (!Array.isArray(orderedIds) || orderedIds.length !== items.length) throw new StoreError('INVALID_PERMUTATION');
       const expected = new Set(items.map(item => item.id));
       const received = new Set(orderedIds);
@@ -422,6 +433,23 @@
           orderedIds.some(id => !expected.has(id))) throw new StoreError('INVALID_PERMUTATION');
       const byId = new Map(items.map(item => [item.id, item]));
       return orderedIds.map(id => byId.get(id));
+    }
+
+    function addTombstone(month, record) {
+      if (!record || record.sourceTemplateId === null || record.occurrenceKey === null) return;
+      const exists = month.suppressedOccurrences.some(entry =>
+        entry.sourceTemplateId === record.sourceTemplateId && entry.occurrenceKey === record.occurrenceKey);
+      if (!exists) month.suppressedOccurrences.push({
+        sourceTemplateId: record.sourceTemplateId, occurrenceKey: record.occurrenceKey
+      });
+    }
+
+    function tombstoneGenerated(month) {
+      if (!isV3) return [];
+      const tombstones = schemaPolicy.clone(month.suppressedOccurrences);
+      const holder = { suppressedOccurrences: tombstones };
+      for (const record of [...month.paychecks, ...month.expenses]) addTombstone(holder, record);
+      return tombstones;
     }
 
     function addCategory(input) {
@@ -437,7 +465,7 @@
 
     function renameCategory(categoryId, name) {
       requireReady();
-      const nextName = Schema.clone(name);
+      const nextName = schemaPolicy.clone(name);
       return transact(candidate => {
         const category = findOrThrow(candidate.categories, categoryId, 'CATEGORY_NOT_FOUND');
         uniqueName(candidate.categories, nextName, 'DUPLICATE_CATEGORY_NAME', categoryId);
@@ -480,7 +508,7 @@
 
     function renameCategoryItem(categoryId, itemId, name) {
       requireReady();
-      const nextName = Schema.clone(name);
+      const nextName = schemaPolicy.clone(name);
       return transact(candidate => {
         const category = findOrThrow(candidate.categories, categoryId, 'CATEGORY_NOT_FOUND');
         const item = findOrThrow(category.items, itemId, 'CATEGORY_ITEM_NOT_FOUND');
@@ -522,7 +550,7 @@
 
     function renameEarner(earnerId, name) {
       requireReady();
-      const nextName = Schema.clone(name);
+      const nextName = schemaPolicy.clone(name);
       return transact(candidate => {
         const earner = findOrThrow(candidate.settings.earners, earnerId, 'EARNER_NOT_FOUND');
         uniqueName(candidate.settings.earners, nextName, 'DUPLICATE_EARNER_NAME', earnerId);
@@ -552,20 +580,109 @@
       });
     }
 
+    function requireV3() {
+      if (!isV3) throw new StoreError('SCHEMA_V3_REQUIRED');
+    }
+
+    function templateList(kind) {
+      requireReady(); requireV3();
+      return data.templates[kind];
+    }
+    function getIncomeTemplates() { return freezeDetached(templateList('income')); }
+    function getExpenseTemplates() { return freezeDetached(templateList('expenses')); }
+    function getIncomeTemplate(id) {
+      const value = templateList('income').find(item => item.id === id);
+      return value ? freezeDetached(value) : null;
+    }
+    function getExpenseTemplate(id) {
+      const value = templateList('expenses').find(item => item.id === id);
+      return value ? freezeDetached(value) : null;
+    }
+
+    const TEMPLATE_COMMON = ['name', 'plannedAmount', 'enabled', 'startDate', 'endDate', 'recurrence'];
+    function addTemplate(kind, input) {
+      requireV3();
+      const structural = kind === 'income' ? ['earnerId'] : ['categoryId', 'categoryItemId', 'paymentMethod'];
+      const patch = patchOf(input, [...TEMPLATE_COMMON, ...structural]);
+      if ([...TEMPLATE_COMMON, ...structural].some(key => !Object.hasOwn(patch, key))) throw new StoreError('MISSING_FIELD');
+      return transact(candidate => {
+        if (kind === 'income') activeEarner(candidate, patch.earnerId);
+        else {
+          const category = activeCategory(candidate, patch.categoryId);
+          if (patch.categoryItemId !== null) activeCategoryItem(category, patch.categoryItemId);
+        }
+        const created = { id: newId(), ...patch, archived: false };
+        candidate.templates[kind].push(created);
+        return created;
+      });
+    }
+    function updateTemplate(kind, id, updates) {
+      requireV3();
+      const structural = kind === 'income' ? ['earnerId'] : ['categoryId', 'categoryItemId', 'paymentMethod'];
+      const patch = patchOf(updates, [...TEMPLATE_COMMON, ...structural]);
+      return transact(candidate => {
+        const current = findOrThrow(candidate.templates[kind], id, kind === 'income' ? 'INCOME_TEMPLATE_NOT_FOUND' : 'EXPENSE_TEMPLATE_NOT_FOUND');
+        if (kind === 'income' && Object.hasOwn(patch, 'earnerId') && patch.earnerId !== current.earnerId) {
+          activeEarner(candidate, patch.earnerId);
+        }
+        if (kind === 'expenses') {
+          const nextCategoryId = Object.hasOwn(patch, 'categoryId') ? patch.categoryId : current.categoryId;
+          const nextItemId = Object.hasOwn(patch, 'categoryItemId') ? patch.categoryItemId : current.categoryItemId;
+          const changed = nextCategoryId !== current.categoryId || nextItemId !== current.categoryItemId;
+          if (changed) {
+            const category = activeCategory(candidate, nextCategoryId);
+            if (nextItemId !== null) activeCategoryItem(category, nextItemId);
+          }
+        }
+        Object.assign(current, patch);
+        return current;
+      });
+    }
+    function setTemplateArchived(kind, id, archived) {
+      requireV3();
+      if (typeof archived !== 'boolean') throw new StoreError('INVALID_ARCHIVE_STATE');
+      return transact(candidate => {
+        const current = findOrThrow(candidate.templates[kind], id, kind === 'income' ? 'INCOME_TEMPLATE_NOT_FOUND' : 'EXPENSE_TEMPLATE_NOT_FOUND');
+        current.archived = archived;
+        return current;
+      });
+    }
+    function reorderTemplates(kind, orderedIds) {
+      requireV3();
+      return transact(candidate => {
+        candidate.templates[kind] = orderedPermutation(orderedIds, candidate.templates[kind]);
+        return candidate.templates[kind];
+      });
+    }
+    const addIncomeTemplate = input => addTemplate('income', input);
+    const addExpenseTemplate = input => addTemplate('expenses', input);
+    const updateIncomeTemplate = (id, updates) => updateTemplate('income', id, updates);
+    const updateExpenseTemplate = (id, updates) => updateTemplate('expenses', id, updates);
+    const archiveIncomeTemplate = (id, archived) => setTemplateArchived('income', id, archived);
+    const archiveExpenseTemplate = (id, archived) => setTemplateArchived('expenses', id, archived);
+    const reorderIncomeTemplates = ids => reorderTemplates('income', ids);
+    const reorderExpenseTemplates = ids => reorderTemplates('expenses', ids);
+
     function addPaycheck(monthKey, input) {
-      const paycheck = patchOf(input, ['earnerId', 'amount', 'date']);
-      if (!Object.hasOwn(paycheck, 'earnerId') || !Object.hasOwn(paycheck, 'amount') || !Object.hasOwn(paycheck, 'date')) {
+      const paycheck = patchOf(input, isV3 ? ['earnerId', 'plannedAmount', 'actualAmount', 'date'] : ['earnerId', 'amount', 'date']);
+      const amountFieldsPresent = isV3
+        ? Object.hasOwn(paycheck, 'plannedAmount') && Object.hasOwn(paycheck, 'actualAmount')
+        : Object.hasOwn(paycheck, 'amount');
+      if (!Object.hasOwn(paycheck, 'earnerId') || !amountFieldsPresent || !Object.hasOwn(paycheck, 'date')) {
         throw new StoreError('MISSING_FIELD');
       }
       return transact(candidate => {
         const earner = activeEarner(candidate, paycheck.earnerId);
-        const created = { id: newId(), earnerId: earner.id, earner: earner.name, amount: paycheck.amount, date: paycheck.date };
+        const created = isV3
+          ? { id: newId(), earnerId: earner.id, earner: earner.name, plannedAmount: paycheck.plannedAmount,
+              actualAmount: paycheck.actualAmount, date: paycheck.date, sourceTemplateId: null, occurrenceKey: null }
+          : { id: newId(), earnerId: earner.id, earner: earner.name, amount: paycheck.amount, date: paycheck.date };
         requireMonth(candidate, monthKey).paychecks.push(created);
         return created;
       });
     }
     function updatePaycheck(monthKey, id, updates) {
-      const patch = patchOf(updates, ['amount', 'date']);
+      const patch = patchOf(updates, isV3 ? ['plannedAmount', 'actualAmount', 'date'] : ['amount', 'date']);
       return transact(candidate => {
         const month = candidate.months[monthKey];
         if (!month) throw new StoreError('MONTH_NOT_FOUND');
@@ -585,7 +702,7 @@
       });
     }
     function editPaycheck(monthKey, id, updates) {
-      const patch = patchOf(updates, ['earnerId', 'amount', 'date']);
+      const patch = patchOf(updates, isV3 ? ['earnerId', 'plannedAmount', 'actualAmount', 'date'] : ['earnerId', 'amount', 'date']);
       return transact(candidate => {
         const month = candidate.months[monthKey];
         if (!month) throw new StoreError('MONTH_NOT_FOUND');
@@ -595,6 +712,8 @@
           paycheck.earnerId = earner.id; paycheck.earner = earner.name;
         }
         if (Object.hasOwn(patch, 'amount')) paycheck.amount = patch.amount;
+        if (Object.hasOwn(patch, 'plannedAmount')) paycheck.plannedAmount = patch.plannedAmount;
+        if (Object.hasOwn(patch, 'actualAmount')) paycheck.actualAmount = patch.actualAmount;
         if (Object.hasOwn(patch, 'date')) paycheck.date = patch.date;
         return paycheck;
       });
@@ -605,6 +724,8 @@
         if (!month) throw new StoreError('MONTH_NOT_FOUND');
         const index = month.paychecks.findIndex(paycheck => paycheck.id === id);
         if (index < 0) throw new StoreError('PAYCHECK_NOT_FOUND');
+        const removed = month.paychecks[index];
+        if (isV3 && removed.sourceTemplateId !== null) addTombstone(month, removed);
         month.paychecks.splice(index, 1);
         for (const expense of month.expenses) delete expense.paycheckAmounts[id];
       });
@@ -618,22 +739,30 @@
       });
     }
     function addExpense(monthKey, input) {
-      const expense = patchOf(input, ['categoryId', 'categoryItemId', 'name', 'paycheckAmounts', 'actual', 'paymentMethod']);
+      const expense = patchOf(input, isV3
+        ? ['categoryId', 'categoryItemId', 'name', 'date', 'paycheckAmounts', 'plannedAmount', 'actualAmount', 'paymentMethod']
+        : ['categoryId', 'categoryItemId', 'name', 'paycheckAmounts', 'actual', 'paymentMethod']);
       if (!Object.hasOwn(expense, 'categoryId') || !Object.hasOwn(expense, 'categoryItemId') ||
-          !Object.hasOwn(expense, 'paymentMethod')) throw new StoreError('MISSING_FIELD');
+          !Object.hasOwn(expense, 'paymentMethod') || (isV3 && (!Object.hasOwn(expense, 'date') ||
+          !Object.hasOwn(expense, 'plannedAmount') || !Object.hasOwn(expense, 'actualAmount')))) throw new StoreError('MISSING_FIELD');
       return transact(candidate => {
         const category = activeCategory(candidate, expense.categoryId);
         const created = { id: newId() };
         applyExpenseStructure(created, category, expense.categoryItemId, expense.name);
+        if (isV3) created.date = expense.date;
         created.paycheckAmounts = expense.paycheckAmounts || {};
-        created.actual = Object.hasOwn(expense, 'actual') ? expense.actual : 0;
+        if (isV3) {
+          created.plannedAmount = expense.plannedAmount;
+          created.actualAmount = expense.actualAmount;
+        } else created.actual = Object.hasOwn(expense, 'actual') ? expense.actual : 0;
         created.paymentMethod = expense.paymentMethod;
+        if (isV3) { created.sourceTemplateId = null; created.occurrenceKey = null; }
         requireMonth(candidate, monthKey).expenses.push(created);
         return created;
       });
     }
     function updateExpense(monthKey, id, updates) {
-      const patch = patchOf(updates, ['name', 'actual', 'paymentMethod']);
+      const patch = patchOf(updates, isV3 ? ['name', 'date', 'plannedAmount', 'actualAmount', 'paymentMethod'] : ['name', 'actual', 'paymentMethod']);
       return transact(candidate => {
         const month = candidate.months[monthKey];
         if (!month) throw new StoreError('MONTH_NOT_FOUND');
@@ -643,6 +772,9 @@
           expense.categoryItemId = null;
         }
         if (Object.hasOwn(patch, 'actual')) expense.actual = patch.actual;
+        if (Object.hasOwn(patch, 'date')) expense.date = patch.date;
+        if (Object.hasOwn(patch, 'plannedAmount')) expense.plannedAmount = patch.plannedAmount;
+        if (Object.hasOwn(patch, 'actualAmount')) expense.actualAmount = patch.actualAmount;
         if (Object.hasOwn(patch, 'paymentMethod')) expense.paymentMethod = patch.paymentMethod;
         return expense;
       });
@@ -659,7 +791,9 @@
       });
     }
     function editExpense(monthKey, id, updates) {
-      const patch = patchOf(updates, ['categoryId', 'categoryItemId', 'name', 'actual', 'paymentMethod']);
+      const patch = patchOf(updates, isV3
+        ? ['categoryId', 'categoryItemId', 'name', 'date', 'plannedAmount', 'actualAmount', 'paymentMethod']
+        : ['categoryId', 'categoryItemId', 'name', 'actual', 'paymentMethod']);
       const structural = Object.hasOwn(patch, 'categoryId') || Object.hasOwn(patch, 'categoryItemId');
       if (structural && (!Object.hasOwn(patch, 'categoryId') || !Object.hasOwn(patch, 'categoryItemId'))) {
         throw new StoreError('MISSING_FIELD');
@@ -673,6 +807,9 @@
           expense.name = patch.name; expense.categoryItemId = null;
         }
         if (Object.hasOwn(patch, 'actual')) expense.actual = patch.actual;
+        if (Object.hasOwn(patch, 'date')) expense.date = patch.date;
+        if (Object.hasOwn(patch, 'plannedAmount')) expense.plannedAmount = patch.plannedAmount;
+        if (Object.hasOwn(patch, 'actualAmount')) expense.actualAmount = patch.actualAmount;
         if (Object.hasOwn(patch, 'paymentMethod')) expense.paymentMethod = patch.paymentMethod;
         return expense;
       });
@@ -693,6 +830,8 @@
         if (!month) throw new StoreError('MONTH_NOT_FOUND');
         const index = month.expenses.findIndex(expense => expense.id === id);
         if (index < 0) throw new StoreError('EXPENSE_NOT_FOUND');
+        const removed = month.expenses[index];
+        if (isV3 && removed.sourceTemplateId !== null) addTombstone(month, removed);
         month.expenses.splice(index, 1);
       });
     }
@@ -707,7 +846,7 @@
     function updateAllocations(monthKey, allocations) {
       return transact(candidate => {
         const month = requireMonth(candidate, monthKey);
-        month.allocations = Schema.clone(allocations);
+        month.allocations = schemaPolicy.clone(allocations);
         return month.allocations;
       });
     }
@@ -723,37 +862,131 @@
       return transact(candidate => {
         const source = candidate.months[sourceKey];
         if (!source) throw new StoreError('MONTH_NOT_FOUND');
+        const priorTarget = candidate.months[targetKey];
+        const suppressedOccurrences = isV3 && priorTarget ? tombstoneGenerated(priorTarget) : [];
         const idMap = Object.create(null);
         const paychecks = source.paychecks.map(paycheck => {
           const id = newId(); idMap[paycheck.id] = id;
-          return { ...paycheck, id };
+          if (!isV3) return { ...paycheck, id };
+          return { ...paycheck, id, date: paycheck.date.startsWith(`${targetKey}-`) ? paycheck.date : '',
+            sourceTemplateId: null, occurrenceKey: null };
         });
         const expenses = source.expenses.map(expense => {
           const paycheckAmounts = {};
           for (const [paycheckId, amount] of Object.entries(expense.paycheckAmounts)) {
             if (idMap[paycheckId]) paycheckAmounts[idMap[paycheckId]] = amount;
           }
-          return { ...expense, id: newId(), actual: 0, paycheckAmounts };
+          if (!isV3) return { ...expense, id: newId(), actual: 0, paycheckAmounts };
+          return { ...expense, id: newId(), date: expense.date.startsWith(`${targetKey}-`) ? expense.date : '',
+            actualAmount: null, sourceTemplateId: null, occurrenceKey: null, paycheckAmounts };
         });
         candidate.months[targetKey] = { paychecks, expenses, allocations: { ...EMPTY_ALLOCATIONS } };
+        if (isV3) candidate.months[targetKey].suppressedOccurrences = suppressedOccurrences;
         return candidate.months[targetKey];
       }, { snapshotReason: 'pre-reset', requiredSnapshot: committedRaw !== null, daily: false });
     }
     function clearMonth(monthKey) {
       return transact(candidate => {
-        candidate.months[monthKey] = emptyMonth();
+        const replacement = emptyMonth(schemaPolicy.SCHEMA_VERSION);
+        if (isV3 && candidate.months[monthKey]) replacement.suppressedOccurrences = tombstoneGenerated(candidate.months[monthKey]);
+        candidate.months[monthKey] = replacement;
         return candidate.months[monthKey];
       }, { snapshotReason: 'pre-reset', requiredSnapshot: committedRaw !== null, daily: false });
     }
 
+    function recurringModel(monthKey) {
+      requireV3();
+      if (!Recurrence) throw new StoreError('RECURRENCE_UNAVAILABLE');
+      const monthMatch = /^(\d{4})-(\d{2})$/.exec(monthKey);
+      if (!monthMatch) throw new StoreError('INVALID_MONTH');
+      try { Recurrence.daysInMonth(Number(monthMatch[1]), Number(monthMatch[2])); }
+      catch { throw new StoreError('INVALID_MONTH'); }
+      const month = data.months[monthKey] || emptyMonth(3);
+      const existing = new Set();
+      const suppressed = new Set(month.suppressedOccurrences.map(item => `${item.sourceTemplateId}\u0000${item.occurrenceKey}`));
+      const conflicts = [];
+      for (const record of [...month.paychecks, ...month.expenses]) {
+        if (record.sourceTemplateId === null) continue;
+        const pair = `${record.sourceTemplateId}\u0000${record.occurrenceKey}`;
+        if (existing.has(pair)) conflicts.push({ templateId: record.sourceTemplateId, occurrenceKey: record.occurrenceKey, reason: 'duplicate' });
+        existing.add(pair);
+      }
+      const additions = { income: [], expenses: [] };
+      const skips = [];
+      for (const [kind, templates] of [['income', data.templates.income], ['expenses', data.templates.expenses]]) {
+        for (const source of templates) {
+          if (source.archived) { skips.push({ kind, templateId: source.id, name: source.name, reason: 'archived' }); continue; }
+          if (!source.enabled) { skips.push({ kind, templateId: source.id, name: source.name, reason: 'disabled' }); continue; }
+          const occurrences = Recurrence.occurrencesForMonth(source, monthKey);
+          if (occurrences.length === 0) { skips.push({ kind, templateId: source.id, name: source.name, reason: 'out-of-range' }); continue; }
+          for (const occurrence of occurrences) {
+            const pair = `${source.id}\u0000${occurrence.occurrenceKey}`;
+            const display = { kind, templateId: source.id, name: source.name, plannedAmount: source.plannedAmount,
+              scheduledDate: occurrence.scheduledDate, occurrenceKey: occurrence.occurrenceKey };
+            if (existing.has(pair)) skips.push({ ...display, reason: 'existing' });
+            else if (suppressed.has(pair)) skips.push({ ...display, reason: 'suppressed' });
+            else additions[kind].push(display);
+          }
+        }
+      }
+      return freezeDetached({
+        monthKey, additions, skips, conflicts,
+        counts: { additions: additions.income.length + additions.expenses.length, skips: skips.length, conflicts: conflicts.length }
+      });
+    }
+
+    function previewRecurringMonth(monthKey) {
+      requireReady();
+      const preview = recurringModel(monthKey);
+      previewCapabilities.set(preview, { generation, monthKey, fingerprint: JSON.stringify(preview) });
+      return preview;
+    }
+
+    function applyRecurringPreview(preview) {
+      requireReady(); requireV3();
+      const capability = preview && typeof preview === 'object' ? previewCapabilities.get(preview) : null;
+      if (preview && typeof preview === 'object') previewCapabilities.delete(preview);
+      if (!capability) throw new StoreError('INVALID_RECURRING_PREVIEW');
+      if (capability.generation !== generation) throw new StoreError('STALE_RECURRING_PREVIEW');
+      const current = recurringModel(capability.monthKey);
+      if (JSON.stringify(current) !== capability.fingerprint) throw new StoreError('STALE_RECURRING_PREVIEW');
+      if (current.conflicts.length > 0) throw new StoreError('RECURRING_CONFLICT');
+      if (current.counts.additions === 0) return { addedIncome: 0, addedExpenses: 0 };
+      const result = transact(candidate => {
+        const month = requireMonth(candidate, capability.monthKey);
+        for (const item of current.additions.income) {
+          const source = findOrThrow(candidate.templates.income, item.templateId, 'INCOME_TEMPLATE_NOT_FOUND');
+          const earner = candidate.settings.earners.find(entry => entry.id === source.earnerId);
+          month.paychecks.push({
+            id: newId(), earnerId: earner.id, earner: earner.name,
+            plannedAmount: source.plannedAmount, actualAmount: null, date: item.scheduledDate,
+            sourceTemplateId: source.id, occurrenceKey: item.occurrenceKey
+          });
+        }
+        for (const item of current.additions.expenses) {
+          const source = findOrThrow(candidate.templates.expenses, item.templateId, 'EXPENSE_TEMPLATE_NOT_FOUND');
+          const category = candidate.categories.find(entry => entry.id === source.categoryId);
+          month.expenses.push({
+            id: newId(), categoryId: category.id, category: category.name,
+            categoryItemId: source.categoryItemId, name: source.name, date: item.scheduledDate,
+            paycheckAmounts: {}, plannedAmount: source.plannedAmount, actualAmount: null,
+            paymentMethod: source.paymentMethod, sourceTemplateId: source.id, occurrenceKey: item.occurrenceKey
+          });
+        }
+        return { addedIncome: current.additions.income.length, addedExpenses: current.additions.expenses.length };
+      });
+      return result;
+    }
+
     function expenseProjected(expense) {
+      if (isV3) return expense.plannedAmount;
       return Object.values(expense.paycheckAmounts || {}).reduce((sum, value) => sum + value, 0);
     }
     function calcMonthSummary(monthKey) {
       const month = peekMonth(monthKey);
-      const totalIncome = month.paychecks.reduce((sum, paycheck) => sum + paycheck.amount, 0);
-      const totalProjected = month.expenses.reduce((sum, expense) => sum + expenseProjected(expense), 0);
-      const totalActual = month.expenses.reduce((sum, expense) => sum + expense.actual, 0);
+      const totalIncome = month.paychecks.reduce((sum, paycheck) => sum + (isV3 ? (paycheck.actualAmount ?? 0) : paycheck.amount), 0);
+      const totalProjected = month.expenses.reduce((sum, expense) => sum + (isV3 ? expense.plannedAmount : expenseProjected(expense)), 0);
+      const totalActual = month.expenses.reduce((sum, expense) => sum + (isV3 ? (expense.actualAmount ?? 0) : expense.actual), 0);
       const totalAllocated = Object.values(month.allocations).reduce((sum, value) => sum + value, 0);
       const totalBudgeted = totalProjected + totalAllocated;
       return { totalIncome, totalProjected, totalActual, totalAllocated, totalBudgeted, remaining: totalIncome - totalBudgeted };
@@ -763,45 +996,47 @@
       const paycheck = month.paychecks.find(item => item.id === paycheckId);
       if (!paycheck) return 0;
       const assigned = month.expenses.reduce((sum, expense) => sum + (expense.paycheckAmounts[paycheckId] || 0), 0);
-      return paycheck.amount - assigned;
+      return (isV3 ? paycheck.plannedAmount : paycheck.amount) - assigned;
     }
     function calcCategoryTotals(monthKey) {
       const totals = Object.create(null);
       for (const expense of peekMonth(monthKey).expenses) {
         if (!Object.hasOwn(totals, expense.category)) totals[expense.category] = { projected: 0, actual: 0 };
-        totals[expense.category].projected += expenseProjected(expense);
-        totals[expense.category].actual += expense.actual;
+        totals[expense.category].projected += isV3 ? expense.plannedAmount : expenseProjected(expense);
+        totals[expense.category].actual += isV3 ? (expense.actualAmount ?? 0) : expense.actual;
       }
       return totals;
     }
     function calcPaymentMethodTotals(monthKey) {
       const totals = { bank: 0, credit_card: 0, savings: 0, investments: 0 };
       for (const expense of peekMonth(monthKey).expenses) {
-        totals[expense.paymentMethod] += expense.actual || expenseProjected(expense);
+        totals[expense.paymentMethod] += isV3
+          ? (expense.actualAmount ?? expense.plannedAmount)
+          : (expense.actual || expenseProjected(expense));
       }
       return totals;
     }
     function getAllMonthKeys() { requireReady(); return Object.keys(data.months).sort(); }
 
-    function buildExport() { requireReady(); return Schema.buildBackup(data, instantNow().toISOString()); }
+    function buildExport() { requireReady(); return schemaPolicy.buildBackup(data, instantNow().toISOString()); }
     function exportData() { return JSON.stringify(buildExport(), null, 2); }
     function previewImport(text) {
       requireReady();
       let envelope;
-      try { envelope = Schema.parseBackup(text); }
+      try { envelope = schemaPolicy.parseBackup(text); }
       catch { throw new StoreError('INVALID_IMPORT'); }
       const monthKeys = Object.keys(envelope.data.months).sort();
       return {
         generation, exportedAt: envelope.exportedAt, formatVersion: envelope.formatVersion,
         monthCount: monthKeys.length, firstMonth: monthKeys[0] || null,
-        lastMonth: monthKeys.at(-1) || null, data: Schema.clone(envelope.data)
+        lastMonth: monthKeys.at(-1) || null, data: schemaPolicy.clone(envelope.data)
       };
     }
     function commitImport(preview) {
       requireReady();
       if (!preview || preview.generation !== generation) throw new StoreError('STALE_IMPORT_PREVIEW');
       let candidate;
-      try { candidate = Schema.migrateActive(preview.data); }
+      try { candidate = schemaPolicy.migrateActive(preview.data); }
       catch { throw new StoreError('INVALID_IMPORT'); }
       return commitCandidate(candidate, {
         snapshotReason: 'pre-import', requiredSnapshot: committedRaw !== null, daily: false
@@ -811,7 +1046,7 @@
     function listSnapshots() {
       return snapshotRecords().slice(0, SNAPSHOT_LIMIT).map(record => ({
         id: record.id, createdAt: record.createdAt, localDate: record.localDate,
-        reason: record.reason, data: Schema.clone(record.data)
+        reason: record.reason, data: schemaPolicy.clone(record.data)
       }));
     }
     function listSnapshotMetadata() {
@@ -825,19 +1060,19 @@
       try {
         const raw = read(key, 'SNAPSHOT_READ_FAILED');
         if (raw === null) throw new StoreError('SNAPSHOT_NOT_FOUND');
-        const envelope = Schema.parseSnapshot(raw);
+        const envelope = schemaPolicy.parseSnapshot(raw);
         record = { data: envelope.data };
       } catch (error) {
         if (error instanceof StoreError) throw error;
         throw new StoreError('SNAPSHOT_NOT_FOUND');
       }
       if (loadState === 'recovery-required') {
-        const canonical = Schema.migrateActive(record.data);
+        const canonical = schemaPolicy.migrateActive(record.data);
         const nextRaw = JSON.stringify(canonical);
         write(STORAGE_KEY, nextRaw, 'PRIMARY_WRITE_FAILED');
         data = canonical; committedRaw = nextRaw; corruptEvidence = null;
         loadState = 'ready'; generation += 1;
-        return Schema.clone(data);
+        return schemaPolicy.clone(data);
       }
       requireReady();
       return commitCandidate(record.data, {
@@ -845,13 +1080,13 @@
       });
     }
     function startFresh() {
-      const candidate = defaultData();
+      const candidate = defaultData(schemaPolicy.SCHEMA_VERSION);
       if (loadState === 'recovery-required') {
         const nextRaw = JSON.stringify(candidate);
         write(STORAGE_KEY, nextRaw, 'PRIMARY_WRITE_FAILED');
         data = candidate; committedRaw = nextRaw; corruptEvidence = null;
         loadState = 'ready'; generation += 1; pruneSnapshots();
-        return Schema.clone(data);
+        return schemaPolicy.clone(data);
       }
       requireReady();
       return commitCandidate(candidate, {
@@ -866,14 +1101,20 @@
     return Object.freeze({
       load, getStatus, getData, getMonth: peekMonth, peekMonth, ensureMonth, getAllMonthKeys,
       getCategories, getCategory, getCategoryItems, getCategoryItem, getEarners, getEarner,
+      getIncomeTemplates, getExpenseTemplates, getIncomeTemplate, getExpenseTemplate,
       getStructureUsage, addCategory, renameCategory, setCategoryArchived, reorderCategories,
       addCategoryItem, renameCategoryItem, setCategoryItemArchived, reorderCategoryItems,
       addEarner, renameEarner, setEarnerArchived, reorderEarners,
+      addIncomeTemplate, updateIncomeTemplate, archiveIncomeTemplate,
+      setIncomeTemplateArchived: archiveIncomeTemplate, reorderIncomeTemplates,
+      addExpenseTemplate, updateExpenseTemplate, archiveExpenseTemplate,
+      setExpenseTemplateArchived: archiveExpenseTemplate, reorderExpenseTemplates,
       expenseProjected, addPaycheck, updatePaycheck, reassignPaycheckEarner, editPaycheck, deletePaycheck, reorderPaychecks,
       addExpense, updateExpense,
       reassignExpenseStructure, editExpense,
       updateExpensePaycheckAmount, deleteExpense, reorderExpenses, updateAllocations, updateAllocation, copyFromMonth,
-      clearMonth, calcMonthSummary, calcPaycheckRemaining, calcCategoryTotals, calcPaymentMethodTotals,
+      clearMonth, previewRecurringMonth, applyRecurringPreview,
+      calcMonthSummary, calcPaycheckRemaining, calcCategoryTotals, calcPaymentMethodTotals,
       buildExport, exportData, previewImport, commitImport, importData, listSnapshots,
       listSnapshotMetadata, restoreSnapshot, startFresh, getCorruptEvidence
     });

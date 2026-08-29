@@ -21,6 +21,30 @@ function readyStore({ budget = makeBudget(), storage, clock = makeClock(), uuid 
   return { store, storage, clock };
 }
 
+function readyV3Store({ budget = Schema.migrateToV3(makeBudget()), storage, clock = makeClock(), uuid = ids('v3') } = {}) {
+  storage ||= new MemoryStorage({ [STORAGE_KEY]: JSON.stringify(budget) });
+  const store = createStore({ storage, now: clock, uuid, schemaPolicy: Schema.V3_SCHEMA_POLICY });
+  assert.equal(store.load().state, 'ready');
+  storage.operations.length = 0;
+  return { store, storage, clock };
+}
+
+function incomeTemplate(overrides = {}) {
+  return {
+    name: 'Primary payday', earnerId: 'earner-example-1', plannedAmount: 1200,
+    enabled: true, startDate: '2026-01-01', endDate: null,
+    recurrence: { cadence: 'monthly', day: 15 }, ...overrides
+  };
+}
+
+function expenseTemplate(overrides = {}) {
+  return {
+    name: 'Rent', categoryId: 'category-example-1', categoryItemId: 'item-example-1',
+    plannedAmount: 700, paymentMethod: 'bank', enabled: true,
+    startDate: '2026-01-01', endDate: null, recurrence: { cadence: 'monthly', day: 31 }, ...overrides
+  };
+}
+
 function expectStoreCode(code, fn) {
   assert.throws(fn, error => error instanceof StoreError && error.code === code);
 }
@@ -140,6 +164,252 @@ test('failed first persistence after v1 load preserves exact v1 bytes and canoni
   expectStoreCode('PRIMARY_WRITE_FAILED', () => store.updateExpense('2026-01', 'expense-example-1', { actual: 999 }));
   assert.equal(storage.getItem(STORAGE_KEY), v1Raw);
   assert.deepEqual(store.getData(), before);
+});
+
+test('v3 policy owns canonical defaults while active-v2 template APIs fail without side effects', () => {
+  const active = readyStore();
+  const before = active.storage.getItem(STORAGE_KEY);
+  active.storage.operations.length = 0;
+  expectStoreCode('SCHEMA_V3_REQUIRED', () => active.store.getIncomeTemplates());
+  expectStoreCode('SCHEMA_V3_REQUIRED', () => active.store.addIncomeTemplate(incomeTemplate()));
+  assert.equal(active.storage.getItem(STORAGE_KEY), before);
+  assert.equal(active.storage.operations.some(entry => entry.op === 'setItem' || entry.op === 'removeItem'), false);
+
+  const storage = new MemoryStorage();
+  const store = createStore({ storage, now: makeClock(), uuid: ids(), schemaPolicy: Schema.V3_SCHEMA_POLICY });
+  assert.equal(store.load().state, 'empty');
+  assert.deepEqual(store.getData().templates, { income: [], expenses: [] });
+  assert.deepEqual(store.getMonth('2026-04').suppressedOccurrences, []);
+});
+
+test('schema policy validation rejects missing and non-callable members before storage access', () => {
+  const required = ['clone', 'migrateActive', 'validateActive', 'parseActive', 'buildBackup', 'parseBackup', 'buildSnapshot', 'parseSnapshot', 'DataError'];
+  for (const name of required) {
+    for (const replacement of [undefined, 42]) {
+      let storageAccessed = false;
+      const storage = new Proxy({}, { get() { storageAccessed = true; throw new Error('storage accessed'); } });
+      const policy = { ...Schema.V3_SCHEMA_POLICY, [name]: replacement };
+      expectStoreCode('INVALID_SCHEMA_POLICY', () => createStore({ storage, schemaPolicy: policy }));
+      assert.equal(storageAccessed, false, name);
+    }
+  }
+  for (const version of [1, 4, '3']) {
+    expectStoreCode('INVALID_SCHEMA_POLICY', () => createStore({ storage: {}, schemaPolicy: { ...Schema.V3_SCHEMA_POLICY, SCHEMA_VERSION: version } }));
+  }
+});
+
+test('schema policy validation accepts only official frozen identities and rejects clones and mixed policies before storage access', () => {
+  const rejected = [
+    { ...Schema.ACTIVE_SCHEMA_POLICY },
+    { ...Schema.V3_SCHEMA_POLICY },
+    { ...Schema.ACTIVE_SCHEMA_POLICY, SCHEMA_VERSION: 3 },
+    { ...Schema.V3_SCHEMA_POLICY, SCHEMA_VERSION: 2 },
+    { ...Schema.ACTIVE_SCHEMA_POLICY, parseActive: Schema.V3_SCHEMA_POLICY.parseActive },
+    { ...Schema.V3_SCHEMA_POLICY, buildBackup: Schema.ACTIVE_SCHEMA_POLICY.buildBackup }
+  ];
+  for (const schemaPolicy of rejected) {
+    let storageAccessed = false;
+    const storage = new Proxy({}, { get() { storageAccessed = true; throw new Error('storage accessed'); } });
+    expectStoreCode('INVALID_SCHEMA_POLICY', () => createStore({ storage, schemaPolicy }));
+    assert.equal(storageAccessed, false);
+  }
+  assert.equal(Object.isFrozen(Schema.ACTIVE_SCHEMA_POLICY), true);
+  assert.equal(Object.isFrozen(Schema.V3_SCHEMA_POLICY), true);
+  assert.doesNotThrow(() => createStore({ storage: new MemoryStorage(), schemaPolicy: Schema.ACTIVE_SCHEMA_POLICY }));
+  assert.doesNotThrow(() => createStore({ storage: new MemoryStorage(), schemaPolicy: Schema.V3_SCHEMA_POLICY }));
+});
+
+test('v3 template CRUD is detached, strict, ordered, and preserves history', () => {
+  const { store, storage } = readyV3Store();
+  const monthsBefore = store.getData().months;
+  const first = store.addIncomeTemplate(incomeTemplate());
+  const second = store.addIncomeTemplate(incomeTemplate({ name: 'Second payday', recurrence: { cadence: 'weekly', anchorDate: '2026-01-02' } }));
+  const expense = store.addExpenseTemplate(expenseTemplate());
+  assert.deepEqual(Object.keys(first), ['id', 'name', 'earnerId', 'plannedAmount', 'enabled', 'startDate', 'endDate', 'recurrence', 'archived']);
+  store.updateIncomeTemplate(first.id, { plannedAmount: 1300, enabled: false });
+  store.setIncomeTemplateArchived(first.id, true);
+  store.reorderIncomeTemplates([second.id, first.id]);
+  store.updateExpenseTemplate(expense.id, { paymentMethod: 'credit_card' });
+  store.setExpenseTemplateArchived(expense.id, true);
+  const read = store.getIncomeTemplate(first.id);
+  assert.equal(Object.isFrozen(read), true);
+  assert.equal(read.plannedAmount, 1300);
+  assert.deepEqual(store.getIncomeTemplates().map(item => item.id), [second.id, first.id]);
+  assert.deepEqual(store.getData().months, monthsBefore);
+  const raw = JSON.parse(storage.getItem(STORAGE_KEY));
+  Schema.validateV3(raw);
+  assert.equal(JSON.stringify(raw).includes('"amount"'), false);
+  expectStoreCode('FORBIDDEN_FIELD', () => store.updateIncomeTemplate(first.id, { id: 'forged' }));
+  expectStoreCode('INVALID_PERMUTATION', () => store.reorderExpenseTemplates([]));
+});
+
+test('same-value template updates, archive state, and exact reorder are zero-write no-ops', () => {
+  const { store, storage } = readyV3Store();
+  const first = store.addIncomeTemplate(incomeTemplate());
+  const second = store.addIncomeTemplate(incomeTemplate({ name: 'Other income' }));
+  storage.operations.length = 0;
+  store.updateIncomeTemplate(first.id, { plannedAmount: first.plannedAmount });
+  store.setIncomeTemplateArchived(first.id, false);
+  store.reorderIncomeTemplates([first.id, second.id]);
+  assert.equal(storage.operations.some(entry => entry.op === 'setItem' || entry.op === 'removeItem'), false);
+});
+
+test('v3 records preserve explicit planned amounts and nullable actual calculations', () => {
+  const budget = Schema.migrateToV3(makeBudget());
+  budget.months = {};
+  const { store } = readyV3Store({ budget });
+  const paycheck = store.addPaycheck('2026-02', {
+    earnerId: 'earner-example-1', plannedAmount: 1000, actualAmount: 0, date: '2026-02-01'
+  });
+  const expense = store.addExpense('2026-02', {
+    categoryId: 'category-example-1', categoryItemId: 'item-example-1', name: 'ignored', date: '',
+    paycheckAmounts: { [paycheck.id]: 200 }, plannedAmount: 500, actualAmount: null, paymentMethod: 'bank'
+  });
+  assert.equal(expense.plannedAmount, 500);
+  assert.equal(expense.actualAmount, null);
+  assert.deepEqual(store.calcMonthSummary('2026-02'), {
+    totalIncome: 0, totalProjected: 500, totalActual: 0, totalAllocated: 0,
+    totalBudgeted: 500, remaining: -500
+  });
+  store.updateExpensePaycheckAmount('2026-02', expense.id, paycheck.id, 300);
+  assert.equal(store.getMonth('2026-02').expenses[0].plannedAmount, 500);
+  store.updateExpense('2026-02', expense.id, { actualAmount: 0 });
+  assert.equal(store.getMonth('2026-02').expenses[0].actualAmount, 0);
+});
+
+test('recurring preview is frozen, zero-write, identity-bound, stale-safe, atomic, and idempotent', () => {
+  const budget = Schema.migrateToV3(makeBudget());
+  budget.months = {};
+  const { store, storage } = readyV3Store({ budget });
+  store.addIncomeTemplate(incomeTemplate({ recurrence: { cadence: 'twice-monthly', days: [30, 31] } }));
+  store.addExpenseTemplate(expenseTemplate());
+  storage.operations.length = 0;
+  const preview = store.previewRecurringMonth('2026-02');
+  assert.equal(Object.isFrozen(preview), true);
+  assert.equal(Object.isFrozen(preview.additions.income), true);
+  assert.equal(preview.counts.additions, 3);
+  assert.deepEqual(preview.additions.income.map(item => item.occurrenceKey), ['2026-02-28#0001', '2026-02-28#0002']);
+  assert.equal(storage.operations.some(entry => entry.op === 'setItem'), false);
+  expectStoreCode('INVALID_RECURRING_PREVIEW', () => store.applyRecurringPreview(structuredClone(preview)));
+  const result = store.applyRecurringPreview(preview);
+  assert.deepEqual(result, { addedIncome: 2, addedExpenses: 1 });
+  expectStoreCode('INVALID_RECURRING_PREVIEW', () => store.applyRecurringPreview(preview));
+  const rerun = store.previewRecurringMonth('2026-02');
+  assert.equal(rerun.counts.additions, 0);
+  storage.operations.length = 0;
+  assert.deepEqual(store.applyRecurringPreview(rerun), { addedIncome: 0, addedExpenses: 0 });
+  assert.equal(storage.operations.some(entry => entry.op === 'setItem'), false);
+
+  const stale = store.previewRecurringMonth('2026-03');
+  store.updateIncomeTemplate(store.getIncomeTemplates()[0].id, { plannedAmount: 1400 });
+  expectStoreCode('STALE_RECURRING_PREVIEW', () => store.applyRecurringPreview(stale));
+  expectStoreCode('INVALID_RECURRING_PREVIEW', () => store.applyRecurringPreview(stale));
+});
+
+test('recurring previews reject forged and foreign-store capabilities', () => {
+  const budget = Schema.migrateToV3(makeBudget()); budget.months = {};
+  const first = readyV3Store({ budget: structuredClone(budget) }).store;
+  const second = readyV3Store({ budget: structuredClone(budget) }).store;
+  first.addIncomeTemplate(incomeTemplate());
+  second.addIncomeTemplate(incomeTemplate());
+  const preview = first.previewRecurringMonth('2026-02');
+  expectStoreCode('INVALID_RECURRING_PREVIEW', () => first.applyRecurringPreview({ ...preview }));
+  expectStoreCode('INVALID_RECURRING_PREVIEW', () => second.applyRecurringPreview(preview));
+  assert.deepEqual(first.applyRecurringPreview(preview), { addedIncome: 1, addedExpenses: 0 });
+});
+
+test('recurring classification follows archived, disabled, and out-of-range precedence', () => {
+  const budget = Schema.migrateToV3(makeBudget()); budget.months = {};
+  const { store } = readyV3Store({ budget });
+  const archived = store.addIncomeTemplate(incomeTemplate({ name: 'Archived', enabled: false, startDate: '2027-01-01' }));
+  store.setIncomeTemplateArchived(archived.id, true);
+  store.addIncomeTemplate(incomeTemplate({ name: 'Disabled', enabled: false, startDate: '2027-01-01' }));
+  store.addIncomeTemplate(incomeTemplate({ name: 'Future', startDate: '2027-01-01' }));
+  const preview = store.previewRecurringMonth('2026-02');
+  assert.deepEqual(preview.skips.map(item => [item.name, item.reason]), [
+    ['Archived', 'archived'], ['Disabled', 'disabled'], ['Future', 'out-of-range']
+  ]);
+});
+
+test('recurring apply rolls back fully on UUID and primary-write failures', () => {
+  const budget = Schema.migrateToV3(makeBudget()); budget.months = {};
+  let sequence = 0;
+  let failIds = false;
+  const uuid = () => {
+    sequence += 1;
+    if (failIds && sequence === 3) throw new Error('identifier unavailable');
+    return `rollback-${sequence}`;
+  };
+  const first = readyV3Store({ budget: structuredClone(budget), uuid });
+  first.store.addIncomeTemplate(incomeTemplate({ recurrence: { cadence: 'twice-monthly', days: [1, 15] } }));
+  failIds = true;
+  const preview = first.store.previewRecurringMonth('2026-02');
+  const beforeData = first.store.getData();
+  const beforeRaw = first.storage.getItem(STORAGE_KEY);
+  expectStoreCode('IDENTIFIER_GENERATION_FAILED', () => first.store.applyRecurringPreview(preview));
+  assert.deepEqual(first.store.getData(), beforeData);
+  assert.equal(first.storage.getItem(STORAGE_KEY), beforeRaw);
+  expectStoreCode('INVALID_RECURRING_PREVIEW', () => first.store.applyRecurringPreview(preview));
+
+  const second = readyV3Store({ budget: structuredClone(budget) });
+  second.store.addIncomeTemplate(incomeTemplate());
+  const secondPreview = second.store.previewRecurringMonth('2026-02');
+  const secondBefore = second.store.getData();
+  const secondRaw = second.storage.getItem(STORAGE_KEY);
+  second.storage.fail({ op: 'setItem', key: STORAGE_KEY, name: 'QuotaExceededError', once: true });
+  expectStoreCode('PRIMARY_WRITE_FAILED', () => second.store.applyRecurringPreview(secondPreview));
+  assert.deepEqual(second.store.getData(), secondBefore);
+  assert.equal(second.storage.getItem(STORAGE_KEY), secondRaw);
+  expectStoreCode('INVALID_RECURRING_PREVIEW', () => second.store.applyRecurringPreview(secondPreview));
+});
+
+test('recurring apply is atomic when the canonical month cap rejects the candidate', () => {
+  const budget = Schema.migrateToV3(makeBudget());
+  budget.templates.income.push({
+    id: 'cap-template', ...incomeTemplate(), archived: false
+  });
+  budget.months = {
+    '2026-02': {
+      paychecks: Array.from({ length: 500 }, (_, index) => ({
+        id: `cap-paycheck-${index}`, earnerId: 'earner-example-1', earner: 'Example Earner',
+        plannedAmount: 1, actualAmount: null, date: '', sourceTemplateId: null, occurrenceKey: null
+      })),
+      expenses: [], allocations: { savings: 0, credit_card_debt: 0, investments: 0 },
+      suppressedOccurrences: []
+    }
+  };
+  Schema.validateV3(budget);
+  const { store, storage } = readyV3Store({ budget });
+  const preview = store.previewRecurringMonth('2026-02');
+  const beforeData = store.getData();
+  const beforeRaw = storage.getItem(STORAGE_KEY);
+  assert.throws(() => store.applyRecurringPreview(preview), error => error instanceof Schema.DataError);
+  assert.deepEqual(store.getData(), beforeData);
+  assert.equal(storage.getItem(STORAGE_KEY), beforeRaw);
+  expectStoreCode('INVALID_RECURRING_PREVIEW', () => store.applyRecurringPreview(preview));
+});
+
+test('generated deletion, clearing, and target copy preserve suppression and prevent resurrection', () => {
+  const budget = Schema.migrateToV3(makeBudget());
+  budget.months = {};
+  const { store } = readyV3Store({ budget });
+  store.addIncomeTemplate(incomeTemplate());
+  store.addExpenseTemplate(expenseTemplate());
+  store.applyRecurringPreview(store.previewRecurringMonth('2026-01'));
+  const generated = store.getMonth('2026-01');
+  store.deletePaycheck('2026-01', generated.paychecks[0].id);
+  assert.equal(store.previewRecurringMonth('2026-01').skips.some(item => item.reason === 'suppressed'), true);
+  store.clearMonth('2026-01');
+  assert.equal(store.getMonth('2026-01').suppressedOccurrences.length, 2);
+  assert.equal(store.previewRecurringMonth('2026-01').counts.additions, 0);
+
+  store.applyRecurringPreview(store.previewRecurringMonth('2026-02'));
+  store.copyFromMonth('2026-02', '2026-01');
+  const copied = store.getMonth('2026-02');
+  assert.equal(copied.suppressedOccurrences.length, 2);
+  assert.equal(copied.paychecks.every(item => item.sourceTemplateId === null), true);
+  assert.equal(copied.expenses.every(item => item.sourceTemplateId === null), true);
+  assert.equal(store.previewRecurringMonth('2026-02').counts.additions, 0);
 });
 
 test('catalog projections are filtered, deeply frozen, detached, and write-free', () => {
