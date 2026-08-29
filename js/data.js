@@ -325,6 +325,25 @@
       const earner = data.settings.earners.find(item => item.id === earnerId);
       return earner ? freezeDetached(earner) : null;
     }
+    function getStructureUsage() {
+      requireReady();
+      const categoryExpenses = Object.create(null);
+      const itemExpenses = Object.create(null);
+      const earnerPaychecks = Object.create(null);
+      for (const category of data.categories) {
+        categoryExpenses[category.id] = 0;
+        for (const item of category.items) itemExpenses[item.id] = 0;
+      }
+      for (const earner of data.settings.earners) earnerPaychecks[earner.id] = 0;
+      for (const month of Object.values(data.months)) {
+        for (const paycheck of month.paychecks) earnerPaychecks[paycheck.earnerId] += 1;
+        for (const expense of month.expenses) {
+          categoryExpenses[expense.categoryId] += 1;
+          if (expense.categoryItemId !== null) itemExpenses[expense.categoryItemId] += 1;
+        }
+      }
+      return freezeDetached({ categoryExpenses, itemExpenses, earnerPaychecks });
+    }
     function peekMonth(monthKey) { requireReady(); return Schema.clone(data.months[monthKey] || emptyMonth()); }
     function ensureMonth(monthKey) {
       return transact(candidate => {
@@ -387,6 +406,150 @@
       } else {
         expense.name = activeCategoryItem(category, categoryItemId).name;
       }
+    }
+
+    function uniqueName(items, name, duplicateCode, exceptId = null) {
+      if (items.some(item => item.id !== exceptId && item.name === name)) throw new StoreError(duplicateCode);
+    }
+
+    function orderedPermutation(input, items) {
+      requireReady();
+      const orderedIds = Schema.clone(input);
+      if (!Array.isArray(orderedIds) || orderedIds.length !== items.length) throw new StoreError('INVALID_PERMUTATION');
+      const expected = new Set(items.map(item => item.id));
+      const received = new Set(orderedIds);
+      if (received.size !== orderedIds.length || received.size !== expected.size ||
+          orderedIds.some(id => !expected.has(id))) throw new StoreError('INVALID_PERMUTATION');
+      const byId = new Map(items.map(item => [item.id, item]));
+      return orderedIds.map(id => byId.get(id));
+    }
+
+    function addCategory(input) {
+      const patch = patchOf(input, ['name']);
+      if (!Object.hasOwn(patch, 'name')) throw new StoreError('MISSING_FIELD');
+      return transact(candidate => {
+        uniqueName(candidate.categories, patch.name, 'DUPLICATE_CATEGORY_NAME');
+        const category = { id: newId(), name: patch.name, archived: false, items: [] };
+        candidate.categories.push(category);
+        return category;
+      });
+    }
+
+    function renameCategory(categoryId, name) {
+      requireReady();
+      const nextName = Schema.clone(name);
+      return transact(candidate => {
+        const category = findOrThrow(candidate.categories, categoryId, 'CATEGORY_NOT_FOUND');
+        uniqueName(candidate.categories, nextName, 'DUPLICATE_CATEGORY_NAME', categoryId);
+        category.name = nextName;
+        return category;
+      });
+    }
+
+    function setCategoryArchived(categoryId, archived) {
+      requireReady();
+      if (typeof archived !== 'boolean') throw new StoreError('INVALID_ARCHIVE_STATE');
+      return transact(candidate => {
+        const category = findOrThrow(candidate.categories, categoryId, 'CATEGORY_NOT_FOUND');
+        if (archived && !category.archived && candidate.categories.filter(item => !item.archived).length === 1) {
+          throw new StoreError('LAST_ACTIVE_CATEGORY');
+        }
+        category.archived = archived;
+        return category;
+      });
+    }
+
+    function reorderCategories(orderedIds) {
+      requireReady();
+      return transact(candidate => {
+        candidate.categories = orderedPermutation(orderedIds, candidate.categories);
+        return candidate.categories;
+      });
+    }
+
+    function addCategoryItem(categoryId, input) {
+      const patch = patchOf(input, ['name']);
+      if (!Object.hasOwn(patch, 'name')) throw new StoreError('MISSING_FIELD');
+      return transact(candidate => {
+        const category = findOrThrow(candidate.categories, categoryId, 'CATEGORY_NOT_FOUND');
+        const item = { id: newId(), name: patch.name, archived: false };
+        category.items.push(item);
+        return item;
+      });
+    }
+
+    function renameCategoryItem(categoryId, itemId, name) {
+      requireReady();
+      const nextName = Schema.clone(name);
+      return transact(candidate => {
+        const category = findOrThrow(candidate.categories, categoryId, 'CATEGORY_NOT_FOUND');
+        const item = findOrThrow(category.items, itemId, 'CATEGORY_ITEM_NOT_FOUND');
+        item.name = nextName;
+        return item;
+      });
+    }
+
+    function setCategoryItemArchived(categoryId, itemId, archived) {
+      requireReady();
+      if (typeof archived !== 'boolean') throw new StoreError('INVALID_ARCHIVE_STATE');
+      return transact(candidate => {
+        const category = findOrThrow(candidate.categories, categoryId, 'CATEGORY_NOT_FOUND');
+        const item = findOrThrow(category.items, itemId, 'CATEGORY_ITEM_NOT_FOUND');
+        item.archived = archived;
+        return item;
+      });
+    }
+
+    function reorderCategoryItems(categoryId, orderedIds) {
+      requireReady();
+      return transact(candidate => {
+        const category = findOrThrow(candidate.categories, categoryId, 'CATEGORY_NOT_FOUND');
+        category.items = orderedPermutation(orderedIds, category.items);
+        return category.items;
+      });
+    }
+
+    function addEarner(input) {
+      const patch = patchOf(input, ['name']);
+      if (!Object.hasOwn(patch, 'name')) throw new StoreError('MISSING_FIELD');
+      return transact(candidate => {
+        uniqueName(candidate.settings.earners, patch.name, 'DUPLICATE_EARNER_NAME');
+        const earner = { id: newId(), name: patch.name, archived: false };
+        candidate.settings.earners.push(earner);
+        return earner;
+      });
+    }
+
+    function renameEarner(earnerId, name) {
+      requireReady();
+      const nextName = Schema.clone(name);
+      return transact(candidate => {
+        const earner = findOrThrow(candidate.settings.earners, earnerId, 'EARNER_NOT_FOUND');
+        uniqueName(candidate.settings.earners, nextName, 'DUPLICATE_EARNER_NAME', earnerId);
+        earner.name = nextName;
+        return earner;
+      });
+    }
+
+    function setEarnerArchived(earnerId, archived) {
+      requireReady();
+      if (typeof archived !== 'boolean') throw new StoreError('INVALID_ARCHIVE_STATE');
+      return transact(candidate => {
+        const earner = findOrThrow(candidate.settings.earners, earnerId, 'EARNER_NOT_FOUND');
+        if (archived && !earner.archived && candidate.settings.earners.filter(item => !item.archived).length === 1) {
+          throw new StoreError('LAST_ACTIVE_EARNER');
+        }
+        earner.archived = archived;
+        return earner;
+      });
+    }
+
+    function reorderEarners(orderedIds) {
+      requireReady();
+      return transact(candidate => {
+        candidate.settings.earners = orderedPermutation(orderedIds, candidate.settings.earners);
+        return candidate.settings.earners;
+      });
     }
 
     function addPaycheck(monthKey, input) {
@@ -687,6 +850,9 @@
     return Object.freeze({
       load, getStatus, getData, getMonth: peekMonth, peekMonth, ensureMonth, getAllMonthKeys,
       getCategories, getCategory, getCategoryItems, getCategoryItem, getEarners, getEarner,
+      getStructureUsage, addCategory, renameCategory, setCategoryArchived, reorderCategories,
+      addCategoryItem, renameCategoryItem, setCategoryItemArchived, reorderCategoryItems,
+      addEarner, renameEarner, setEarnerArchived, reorderEarners,
       expenseProjected, addPaycheck, updatePaycheck, reassignPaycheckEarner, editPaycheck, deletePaycheck, addExpense, updateExpense,
       reassignExpenseStructure, editExpense,
       updateExpensePaycheckAmount, deleteExpense, updateAllocations, updateAllocation, copyFromMonth,

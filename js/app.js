@@ -39,7 +39,7 @@ const App = {
 
   initializeViews() {
     if (this.viewsInitialized) return;
-    BudgetView.init(); TransfersView.init(); DashboardView.init(); this.viewsInitialized = true;
+    BudgetView.init(); TransfersView.init(); DashboardView.init(); StructureView.init(); this.viewsInitialized = true;
   },
 
   enterApplication(message, state = 'ready') {
@@ -108,10 +108,11 @@ const App = {
     document.querySelectorAll('.view').forEach(panel => panel.classList.toggle('active', panel.id === `view-${view}`));
     if (view === 'transfers') { TransfersView.syncMonth(); TransfersView.render(); }
     else if (view === 'dashboard') requestAnimationFrame(() => DashboardView.render());
+    else if (view === 'structure') StructureView.render();
   },
 
   refreshAllViews() {
-    BudgetView.render(); TransfersView.syncMonth(); TransfersView.render(); DashboardView.destroyAllCharts();
+    BudgetView.render(); TransfersView.syncMonth(); TransfersView.render(); DashboardView.destroyAllCharts(); StructureView.render();
     if (this.currentView === 'dashboard') requestAnimationFrame(() => DashboardView.render());
   },
 
@@ -123,6 +124,7 @@ const App = {
     overlay.setAttribute('role', 'dialog'); overlay.setAttribute('aria-modal', 'true'); overlay.setAttribute('aria-labelledby', 'modal-title');
     document.getElementById('application-shell').inert = true;
     const save = document.getElementById('modal-save'); const replacement = save.cloneNode(true); save.replaceWith(replacement);
+    replacement.textContent = 'Save'; replacement.className = 'btn btn-primary'; replacement.disabled = false;
     replacement.addEventListener('click', () => { if (onSave() !== false) this.hideModal(); });
     requestAnimationFrame(() => (document.querySelector('#modal-body input, #modal-body select') || document.getElementById('modal-cancel')).focus());
   },
@@ -250,6 +252,14 @@ const App = {
       MONTH_NOT_FOUND: 'That month is no longer available. The last saved budget is shown.',
       PAYCHECK_NOT_FOUND: 'That paycheck is no longer available. The last saved budget is shown.',
       EXPENSE_NOT_FOUND: 'That expense is no longer available. The last saved budget is shown.',
+      CATEGORY_NOT_FOUND: 'That category is no longer available. Refresh the Structure view and try again.',
+      CATEGORY_ITEM_NOT_FOUND: 'That preset item is no longer available. Refresh the Structure view and try again.',
+      EARNER_NOT_FOUND: 'That earner is no longer available. Refresh the Structure view and try again.',
+      DUPLICATE_CATEGORY_NAME: 'Category names must be unique. Choose another name.',
+      DUPLICATE_EARNER_NAME: 'Earner names must be unique. Choose another name.',
+      LAST_ACTIVE_CATEGORY: 'Keep at least one active category so new expenses can be created.',
+      LAST_ACTIVE_EARNER: 'Keep at least one active earner so new paychecks can be created.',
+      INVALID_PERMUTATION: 'The structure changed before it could be reordered. Refresh and try again.',
       UNKNOWN: 'ZeroBudget could not complete that action. Your last saved budget remains available.'
     };
     const alert = document.getElementById('app-error'); document.getElementById('app-status').textContent = '';

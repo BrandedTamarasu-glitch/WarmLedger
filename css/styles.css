@@ -745,6 +745,24 @@ body {
 
 .table-scroll tr:hover td { background: var(--surface-2); }
 
+/* Structure */
+.structure-heading { margin-bottom: 20px; }
+.structure-heading p { color: var(--text-muted); margin-top: 6px; max-width: 70ch; }
+.structure-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.structure-card, .structure-subcard { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); }
+.structure-card { padding: 14px; }
+.structure-subcard { padding: 10px; background: var(--surface); }
+.structure-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.structure-identity { min-width: 0; display: flex; align-items: center; gap: 10px; }
+.structure-name { overflow-wrap: anywhere; }
+.structure-status { color: var(--green); font-size: 12px; font-weight: 600; }
+.structure-status.is-archived { color: var(--text-muted); }
+.structure-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.structure-subheader { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 16px 0 8px; }
+.structure-subheader h4 { font-size: 13px; color: var(--text-muted); }
+.structure-empty { margin: 8px 0 0; }
+.structure-actions .btn:disabled { opacity: .45; cursor: not-allowed; }
+
 /* Responsive */
 @media (max-width: 768px) {
   .topnav { flex-wrap: wrap; gap: 12px; }
@@ -768,4 +786,7 @@ body {
   .month-selector .btn-icon, .btn-delete { min-width: 44px; min-height: 44px; }
   .month-selector { gap: 4px; }
   .month-selector h2 { min-width: 0; flex: 1; font-size: 22px; }
+  .structure-row, .structure-subheader { align-items: stretch; flex-direction: column; }
+  .structure-actions { justify-content: flex-start; }
+  .structure-actions .btn { min-height: 44px; }
 }

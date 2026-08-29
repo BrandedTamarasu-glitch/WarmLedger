@@ -2,6 +2,17 @@
 
 ZeroBudget is a local, dependency-free budgeting application. It runs directly in a browser and stores budget records in that browser's site-specific storage.
 
+## Current features
+
+- Monthly paychecks, expenses, allocations, transfers, and dashboard summaries.
+- Add and edit paycheck and expense records.
+- A **Structure** view for adding, renaming, archiving, restoring, and reordering categories, preset expense items, and earners.
+- Stable structural IDs with historical labels preserved in existing monthly records.
+- Versioned JSON backup and restore with validation and preview.
+- Local safety snapshots and a startup recovery workflow.
+
+Archived Structure choices remain visible in historical records and totals but are hidden when creating new records. Archiving does not delete or rewrite prior months. ZeroBudget prevents archiving the last active category or earner so new expenses and paychecks can still be created.
+
 ## Run locally
 
 Open `index.html` in a modern browser. From this directory on Linux, for example:
@@ -19,6 +30,12 @@ npm test
 ```
 
 The test suite uses Node's built-in test runner and synthetic records only.
+
+## Data format compatibility
+
+The active data model is schema version 2. Existing legacy and schema-version-1 data is migrated deterministically in memory when opened; loading alone does not rewrite browser storage. The first later successful edit persists schema version 2 atomically. If that write fails, the original stored bytes and the last committed in-memory budget remain unchanged.
+
+Backup and snapshot envelopes remain format version 1 and can contain older ZeroBudget data that the current application migrates during validation. Backups created by the current application contain schema-version-2 data and may be rejected by older application versions, so download and retain a backup before intentionally downgrading.
 
 ## Back up and restore
 

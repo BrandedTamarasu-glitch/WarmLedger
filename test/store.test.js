@@ -33,6 +33,16 @@ function backupText(data = makeBudget()) {
   return JSON.stringify(Schema.buildBackup(data, '2026-01-15T12:00:00.000Z'));
 }
 
+function makeStructureBudget() {
+  const budget = makeBudget();
+  budget.categories.push({
+    id: 'category-example-2', name: 'Travel', archived: false,
+    items: [{ id: 'item-example-2', name: 'Fare', archived: false }]
+  });
+  budget.settings.earners.push({ id: 'earner-example-2', name: 'Example Two', archived: false });
+  return budget;
+}
+
 class AttemptStorage extends MemoryStorage {
   constructor(initial) {
     super(initial);
@@ -136,6 +146,160 @@ test('catalog projections are filtered, deeply frozen, detached, and write-free'
   assert.equal(store.getCategoryItem('missing', 'missing'), null);
   assert.equal(store.getEarner('missing'), null);
   assert.equal(storage.operations.some(operation => operation.op !== 'getItem'), false);
+});
+
+test('structure usage counts every month by structural ID and is frozen, detached, and write-free', () => {
+  const budget = makeStructureBudget();
+  budget.months['2026-02'] = structuredClone(budget.months['2026-01']);
+  budget.months['2026-02'].paychecks[0].id = 'paycheck-example-2';
+  budget.months['2026-02'].paychecks[0].earnerId = 'earner-example-2';
+  budget.months['2026-02'].paychecks[0].earner = 'Historical Earner Two';
+  budget.months['2026-02'].expenses[0].id = 'expense-example-2';
+  budget.months['2026-02'].expenses[0].categoryId = 'category-example-2';
+  budget.months['2026-02'].expenses[0].category = 'Historical Travel';
+  budget.months['2026-02'].expenses[0].categoryItemId = null;
+  budget.months['2026-02'].expenses[0].paycheckAmounts = { 'paycheck-example-2': 1200 };
+  budget.categories[0].archived = true;
+  budget.categories[0].items[0].archived = true;
+  budget.settings.earners[0].archived = true;
+  const { store, storage } = readyStore({ budget });
+  const usage = store.getStructureUsage();
+  assert.deepEqual(usage, {
+    categoryExpenses: { 'category-example-1': 1, 'category-example-2': 1 },
+    itemExpenses: { 'item-example-1': 1, 'item-example-2': 0 },
+    earnerPaychecks: { 'earner-example-1': 1, 'earner-example-2': 1 }
+  });
+  assert.equal(Object.isFrozen(usage), true);
+  assert.equal(Object.isFrozen(usage.categoryExpenses), true);
+  assert.equal(storage.operations.some(operation => operation.op !== 'getItem'), false);
+});
+
+test('catalog lifecycle and reorder operations commit once without rewriting history or totals', () => {
+  const { store, storage } = readyStore({ budget: makeStructureBudget(), uuid: ids('structure') });
+  const monthsBefore = store.getData().months;
+  const summaryBefore = store.calcMonthSummary('2026-01');
+
+  let beforeWrites = storage.operations.filter(operation => operation.op === 'setItem' && operation.key === STORAGE_KEY).length;
+  const category = store.addCategory({ name: 'Utilities' });
+  assert.equal(category.id, 'structure-1');
+  assert.equal(storage.operations.filter(operation => operation.op === 'setItem' && operation.key === STORAGE_KEY).length, beforeWrites + 1);
+  store.renameCategory(category.id, 'Services');
+  store.setCategoryArchived(category.id, true);
+  store.setCategoryArchived(category.id, false);
+  const itemA = store.addCategoryItem(category.id, { name: 'Power' });
+  const itemB = store.addCategoryItem(category.id, { name: 'Power' });
+  store.renameCategoryItem(category.id, itemA.id, 'Electricity');
+  store.setCategoryItemArchived(category.id, itemA.id, true);
+  store.setCategoryItemArchived(category.id, itemA.id, false);
+  store.reorderCategoryItems(category.id, [itemB.id, itemA.id]);
+  const earner = store.addEarner({ name: 'Example Three' });
+  store.renameEarner(earner.id, 'Example Updated');
+  store.setEarnerArchived(earner.id, true);
+  store.setEarnerArchived(earner.id, false);
+  store.reorderCategories(['category-example-2', category.id, 'category-example-1']);
+  store.reorderEarners([earner.id, 'earner-example-2', 'earner-example-1']);
+
+  const current = store.getData();
+  assert.deepEqual(current.months, monthsBefore);
+  assert.deepEqual(store.calcMonthSummary('2026-01'), summaryBefore);
+  assert.deepEqual(current.categories.map(entry => entry.id), ['category-example-2', category.id, 'category-example-1']);
+  assert.deepEqual(store.getCategoryItems(category.id, { includeArchived: true }).map(entry => entry.id), [itemB.id, itemA.id]);
+  assert.deepEqual(current.settings.earners.map(entry => entry.id), [earner.id, 'earner-example-2', 'earner-example-1']);
+  Schema.validateActive(JSON.parse(storage.getItem(STORAGE_KEY)));
+});
+
+test('duplicate, last-active, stale, invalid-name, and invalid-permutation failures are zero-write', () => {
+  const { store, storage } = readyStore({ budget: makeStructureBudget() });
+  const assertUnchanged = (code, operation) => {
+    const beforeRaw = storage.getItem(STORAGE_KEY); const beforeData = store.getData();
+    storage.operations.length = 0;
+    if (code instanceof RegExp) assert.throws(operation, error => error instanceof Schema.DataError && code.test(error.code));
+    else expectStoreCode(code, operation);
+    assert.equal(storage.getItem(STORAGE_KEY), beforeRaw);
+    assert.deepEqual(store.getData(), beforeData);
+    assert.equal(storage.operations.some(entry => entry.op === 'setItem' || entry.op === 'removeItem'), false);
+  };
+  assertUnchanged('DUPLICATE_CATEGORY_NAME', () => store.addCategory({ name: 'Home' }));
+  assertUnchanged('DUPLICATE_CATEGORY_NAME', () => store.renameCategory('category-example-2', 'Home'));
+  assertUnchanged('DUPLICATE_EARNER_NAME', () => store.addEarner({ name: 'Example Earner' }));
+  assertUnchanged('DUPLICATE_EARNER_NAME', () => store.renameEarner('earner-example-2', 'Example Earner'));
+  assertUnchanged('CATEGORY_NOT_FOUND', () => store.renameCategory('missing', 'Missing'));
+  assertUnchanged('CATEGORY_ITEM_NOT_FOUND', () => store.renameCategoryItem('category-example-1', 'missing', 'Missing'));
+  assertUnchanged('EARNER_NOT_FOUND', () => store.renameEarner('missing', 'Missing'));
+  assertUnchanged(/INVALID_STRING|EXPECTED_STRING/, () => store.addCategory({ name: '' }));
+  assertUnchanged('INVALID_PERMUTATION', () => store.reorderCategories(['category-example-1']));
+  assertUnchanged('INVALID_PERMUTATION', () => store.reorderCategories(['category-example-1', 'category-example-1']));
+  assertUnchanged('INVALID_PERMUTATION', () => store.reorderCategories(['category-example-1', 'foreign']));
+  assertUnchanged('INVALID_PERMUTATION', () => store.reorderCategoryItems('category-example-1', []));
+  assertUnchanged('INVALID_PERMUTATION', () => store.reorderEarners(['earner-example-1']));
+  store.setCategoryArchived('category-example-2', true);
+  assertUnchanged('LAST_ACTIVE_CATEGORY', () => store.setCategoryArchived('category-example-1', true));
+  store.setEarnerArchived('earner-example-2', true);
+  assertUnchanged('LAST_ACTIVE_EARNER', () => store.setEarnerArchived('earner-example-1', true));
+});
+
+test('every structure mutation rolls back memory and bytes on primary-write failure', () => {
+  const operations = [
+    store => store.addCategory({ name: 'Added' }),
+    store => store.renameCategory('category-example-1', 'Renamed'),
+    store => store.setCategoryArchived('category-example-1', true),
+    store => store.reorderCategories(['category-example-2', 'category-example-1']),
+    store => store.addCategoryItem('category-example-1', { name: 'Added item' }),
+    store => store.renameCategoryItem('category-example-1', 'item-example-1', 'Renamed item'),
+    store => store.setCategoryItemArchived('category-example-1', 'item-example-1', true),
+    store => store.reorderCategoryItems('category-example-1', ['item-example-extra', 'item-example-1']),
+    store => store.addEarner({ name: 'Added Earner' }),
+    store => store.renameEarner('earner-example-1', 'Renamed Earner'),
+    store => store.setEarnerArchived('earner-example-1', true),
+    store => store.reorderEarners(['earner-example-2', 'earner-example-1'])
+  ];
+  for (const operation of operations) {
+    const budget = makeStructureBudget();
+    budget.categories[0].items.push({ id: 'item-example-extra', name: 'Extra', archived: false });
+    const { store, storage } = readyStore({ budget, uuid: ids('fault') });
+    const beforeRaw = storage.getItem(STORAGE_KEY); const beforeData = store.getData();
+    storage.fail({ op: 'setItem', key: STORAGE_KEY, name: 'QuotaExceededError', once: true });
+    expectStoreCode('PRIMARY_WRITE_FAILED', () => operation(store));
+    assert.equal(storage.getItem(STORAGE_KEY), beforeRaw);
+    assert.deepEqual(store.getData(), beforeData);
+  }
+});
+
+test('structure additions redact UUID failures and preserve state', () => {
+  for (const operation of [
+    store => store.addCategory({ name: 'Added' }),
+    store => store.addCategoryItem('category-example-1', { name: 'Added item' }),
+    store => store.addEarner({ name: 'Added Earner' })
+  ]) {
+    const storage = new MemoryStorage({ [STORAGE_KEY]: JSON.stringify(makeStructureBudget()) });
+    const store = createStore({ storage, now: makeClock(), uuid: () => { throw new Error('private UUID detail'); } });
+    store.load();
+    const beforeRaw = storage.getItem(STORAGE_KEY); const beforeData = store.getData();
+    storage.operations.length = 0;
+    expectStoreCode('IDENTIFIER_GENERATION_FAILED', () => operation(store));
+    assert.equal(storage.getItem(STORAGE_KEY), beforeRaw);
+    assert.deepEqual(store.getData(), beforeData);
+    assert.equal(storage.operations.some(entry => entry.op === 'setItem' || entry.op === 'removeItem'), false);
+  }
+});
+
+test('catalog reorder round-trips exactly through backup import and reload', () => {
+  const { store } = readyStore({ budget: makeStructureBudget() });
+  store.reorderCategories(['category-example-2', 'category-example-1']);
+  store.reorderEarners(['earner-example-2', 'earner-example-1']);
+  const exported = store.exportData();
+  const storage = new MemoryStorage();
+  const restored = createStore({ storage, now: makeClock(), uuid: ids() });
+  restored.load();
+  restored.importData(exported);
+  const raw = storage.getItem(STORAGE_KEY);
+  const reloaded = createStore({ storage, now: makeClock(), uuid: ids() });
+  reloaded.load();
+  assert.deepEqual(reloaded.getCategories({ includeArchived: true }).map(entry => entry.id),
+    ['category-example-2', 'category-example-1']);
+  assert.deepEqual(reloaded.getEarners({ includeArchived: true }).map(entry => entry.id),
+    ['earner-example-2', 'earner-example-1']);
+  assert.equal(storage.getItem(STORAGE_KEY), raw);
 });
 
 test('getters, calculations, and missing-month reads are detached and write-free', () => {
@@ -606,6 +770,18 @@ test('recovery-required blocks every ordinary mutation and import commit entry p
     () => store.deleteExpense('2026-01', 'x'),
     () => store.updateAllocations('2026-01', { savings: 0, credit_card_debt: 0, investments: 0 }),
     () => store.updateAllocation('2026-01', 'savings', 1),
+    () => store.addCategory({ name: 'New' }),
+    () => store.renameCategory('category-example-1', 'New'),
+    () => store.setCategoryArchived('category-example-1', true),
+    () => store.reorderCategories(['category-example-1']),
+    () => store.addCategoryItem('category-example-1', { name: 'New' }),
+    () => store.renameCategoryItem('category-example-1', 'item-example-1', 'New'),
+    () => store.setCategoryItemArchived('category-example-1', 'item-example-1', true),
+    () => store.reorderCategoryItems('category-example-1', ['item-example-1']),
+    () => store.addEarner({ name: 'New' }),
+    () => store.renameEarner('earner-example-1', 'New'),
+    () => store.setEarnerArchived('earner-example-1', true),
+    () => store.reorderEarners(['earner-example-1']),
     () => store.copyFromMonth('2026-02', '2026-01'),
     () => store.clearMonth('2026-01'),
     () => store.previewImport(backupText()),

@@ -31,6 +31,7 @@
       <button class="nav-tab active" data-view="budget">Budget</button>
       <button class="nav-tab" data-view="transfers">Transfers</button>
       <button class="nav-tab" data-view="dashboard">Dashboard</button>
+      <button class="nav-tab" data-view="structure">Structure</button>
     </div>
     <div class="nav-actions">
       <button id="btn-export" class="btn btn-sm">Download backup</button>
@@ -154,6 +155,27 @@
         </div>
       </div>
     </div>
+
+    <div id="view-structure" class="view">
+      <header class="structure-heading">
+        <h2>Budget Structure</h2>
+        <p>Manage the choices used when adding paychecks and expenses. Renaming or archiving a choice does not rewrite historical records.</p>
+      </header>
+      <section class="budget-section" aria-labelledby="structure-categories-heading">
+        <div class="section-header">
+          <h3 id="structure-categories-heading" tabindex="-1">Categories and preset items</h3>
+          <button id="btn-add-category" class="btn btn-primary btn-sm">+ Add category</button>
+        </div>
+        <div id="structure-categories"></div>
+      </section>
+      <section class="budget-section" aria-labelledby="structure-earners-heading">
+        <div class="section-header">
+          <h3 id="structure-earners-heading" tabindex="-1">Earners</h3>
+          <button id="btn-add-earner" class="btn btn-primary btn-sm">+ Add earner</button>
+        </div>
+        <div id="structure-earners"></div>
+      </section>
+    </div>
   </main>
   <div class="storage-strip">Records are stored only in this browser. Local safety snapshots are site-specific and not durable. <span id="last-saved">Not saved yet</span></div>
   </div>
@@ -201,6 +223,7 @@
   <script src="js/budget.js"></script>
   <script src="js/transfers.js"></script>
   <script src="js/dashboard.js"></script>
+  <script src="js/structure.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>
