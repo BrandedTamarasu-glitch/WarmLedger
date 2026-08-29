@@ -12,7 +12,10 @@ const TransfersView = {
   },
   syncMonth() { if (BudgetView.currentMonth) this.currentMonth = BudgetView.currentMonth; },
   formatMonthLabel(key) { const [y, m] = key.split('-').map(Number); return new Date(y, m - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' }); },
-  fmt(value) { return '$' + (value || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); },
+  fmt(value) { return '$' + (value ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); },
+  plannedIncome(paycheck) {
+    return Object.hasOwn(paycheck, 'plannedAmount') ? paycheck.plannedAmount : paycheck.amount;
+  },
   element(tag, className, text) {
     const node = document.createElement(tag); if (className) node.className = className; if (text !== undefined) node.textContent = text; return node;
   },
@@ -44,16 +47,17 @@ const TransfersView = {
     const totals = { credit_card: 0, bank: 0, savings: 0, investments: 0, income: 0 };
     const grid = this.element('div', 'transfers-grid');
     month.paychecks.forEach(paycheck => {
-      const expenses = month.expenses.filter(expense => (expense.paycheckAmounts[paycheck.id] || 0) > 0);
+      const expenses = month.expenses.filter(expense => (expense.paycheckAmounts[paycheck.id] ?? 0) > 0);
       const groups = {};
       ['credit_card', 'bank', 'savings', 'investments'].forEach(method => {
         groups[method] = expenses.filter(expense => expense.paymentMethod === method);
         totals[method] += groups[method].reduce((sum, expense) => sum + expense.paycheckAmounts[paycheck.id], 0);
       });
-      totals.income += paycheck.amount;
+      const plannedIncome = this.plannedIncome(paycheck);
+      totals.income += plannedIncome;
       const card = this.element('div', 'transfer-card'); const header = this.element('div', 'transfer-card-header'); const identity = this.element('div');
       identity.append(this.element('div', 'transfer-earner', paycheck.earner), this.element('div', 'transfer-date', paycheck.date ? new Date(`${paycheck.date}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''));
-      header.append(identity, this.element('div', 'transfer-amount', this.fmt(paycheck.amount))); card.append(header);
+      header.append(identity, this.element('div', 'transfer-amount', this.fmt(plannedIncome))); card.append(header);
       const definitions = [
         ['credit_card', 'send-cc', 'Send to Credit Card', 'No credit card expenses'], ['bank', 'keep-bank', 'Keep in Bank', 'No bank expenses'],
         ['savings', 'send-savings', 'Transfer to Savings', 'No savings transfers'], ['investments', 'send-invest', 'Transfer to Investments', 'No investment transfers']
@@ -63,7 +67,7 @@ const TransfersView = {
         const amount = groups[method].reduce((sum, expense) => sum + expense.paycheckAmounts[paycheck.id], 0); assigned += amount;
         card.append(this.detailSection(className, label, amount, groups[method], paycheck.id, empty));
       });
-      if (paycheck.amount - assigned > 0.01) card.append(this.detailSection('unassigned', 'Unassigned', paycheck.amount - assigned, [], paycheck.id, ''));
+      if (plannedIncome - assigned > 0.01) card.append(this.detailSection('unassigned', 'Unassigned', plannedIncome - assigned, [], paycheck.id, ''));
       grid.append(card);
     });
     container.append(grid);

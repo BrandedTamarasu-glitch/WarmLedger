@@ -989,7 +989,17 @@
       const totalActual = month.expenses.reduce((sum, expense) => sum + (isV3 ? (expense.actualAmount ?? 0) : expense.actual), 0);
       const totalAllocated = Object.values(month.allocations).reduce((sum, value) => sum + value, 0);
       const totalBudgeted = totalProjected + totalAllocated;
-      return { totalIncome, totalProjected, totalActual, totalAllocated, totalBudgeted, remaining: totalIncome - totalBudgeted };
+      const summary = { totalIncome, totalProjected, totalActual, totalAllocated, totalBudgeted, remaining: totalIncome - totalBudgeted };
+      if (!isV3) return summary;
+      return {
+        ...summary,
+        totalPlannedIncome: month.paychecks.reduce((sum, paycheck) => sum + paycheck.plannedAmount, 0),
+        totalActualIncome: totalIncome,
+        unresolvedIncomeCount: month.paychecks.filter(paycheck => paycheck.actualAmount === null).length,
+        totalPlannedExpenses: totalProjected,
+        totalActualExpenses: totalActual,
+        unresolvedExpenseCount: month.expenses.filter(expense => expense.actualAmount === null).length
+      };
     }
     function calcPaycheckRemaining(monthKey, paycheckId) {
       const month = peekMonth(monthKey);
@@ -1001,18 +1011,25 @@
     function calcCategoryTotals(monthKey) {
       const totals = Object.create(null);
       for (const expense of peekMonth(monthKey).expenses) {
-        if (!Object.hasOwn(totals, expense.category)) totals[expense.category] = { projected: 0, actual: 0 };
-        totals[expense.category].projected += isV3 ? expense.plannedAmount : expenseProjected(expense);
-        totals[expense.category].actual += isV3 ? (expense.actualAmount ?? 0) : expense.actual;
+        if (!Object.hasOwn(totals, expense.category)) totals[expense.category] = isV3
+          ? { planned: 0, actual: 0, unresolvedCount: 0, projected: 0 }
+          : { projected: 0, actual: 0 };
+        const planned = isV3 ? expense.plannedAmount : expenseProjected(expense);
+        totals[expense.category].projected += planned;
+        if (isV3) {
+          totals[expense.category].planned += planned;
+          if (expense.actualAmount === null) totals[expense.category].unresolvedCount += 1;
+          else totals[expense.category].actual += expense.actualAmount;
+        } else totals[expense.category].actual += expense.actual;
       }
       return totals;
     }
-    function calcPaymentMethodTotals(monthKey) {
+    function calcPaymentMethodTotals(monthKey, mode) {
       const totals = { bank: 0, credit_card: 0, savings: 0, investments: 0 };
+      if (isV3 && mode !== 'planned' && mode !== 'actual') throw new StoreError('INVALID_TOTAL_MODE');
       for (const expense of peekMonth(monthKey).expenses) {
-        totals[expense.paymentMethod] += isV3
-          ? (expense.actualAmount ?? expense.plannedAmount)
-          : (expense.actual || expenseProjected(expense));
+        if (isV3) totals[expense.paymentMethod] += mode === 'planned' ? expense.plannedAmount : (expense.actualAmount ?? 0);
+        else totals[expense.paymentMethod] += expense.actual || expenseProjected(expense);
       }
       return totals;
     }

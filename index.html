@@ -32,6 +32,7 @@
       <button class="nav-tab" data-view="transfers">Transfers</button>
       <button class="nav-tab" data-view="dashboard">Dashboard</button>
       <button class="nav-tab" data-view="structure">Structure</button>
+      <button id="nav-templates" class="nav-tab" data-view="templates" hidden>Templates</button>
     </div>
     <div class="nav-actions">
       <button id="btn-export" class="btn btn-sm">Download backup</button>
@@ -99,6 +100,7 @@
 
       <!-- Copy from previous month -->
       <div class="budget-actions">
+        <button id="btn-preview-recurring" class="btn btn-primary" hidden>Preview recurring items</button>
         <button id="btn-copy-prev" class="btn">Copy from Previous Month</button>
         <button id="btn-clear-month" class="btn btn-danger">Clear Month</button>
       </div>
@@ -176,6 +178,27 @@
         <div id="structure-earners"></div>
       </section>
     </div>
+
+    <div id="view-templates" class="view" hidden>
+      <header class="structure-heading">
+        <h2>Recurring templates</h2>
+        <p>Create planned income and expenses, then preview each month before adding anything to your budget.</p>
+      </header>
+      <section class="budget-section" aria-labelledby="templates-income-heading">
+        <div class="section-header">
+          <h3 id="templates-income-heading" tabindex="-1">Income templates</h3>
+          <button id="btn-add-income-template" class="btn btn-primary btn-sm">+ Add income template</button>
+        </div>
+        <div id="templates-income"></div>
+      </section>
+      <section class="budget-section" aria-labelledby="templates-expenses-heading">
+        <div class="section-header">
+          <h3 id="templates-expenses-heading" tabindex="-1">Expense templates</h3>
+          <button id="btn-add-expense-template" class="btn btn-primary btn-sm">+ Add expense template</button>
+        </div>
+        <div id="templates-expenses"></div>
+      </section>
+    </div>
   </main>
   <div class="storage-strip">Records are stored only in this browser. Local safety snapshots are site-specific and not durable. <span id="last-saved">Not saved yet</span></div>
   </div>
@@ -203,6 +226,17 @@
     </form>
   </dialog>
 
+  <dialog id="recurring-preview-dialog" class="restore-dialog recurring-preview-dialog" aria-labelledby="recurring-preview-title">
+    <form method="dialog">
+      <h2 id="recurring-preview-title">Preview recurring items</h2>
+      <div id="recurring-preview-content"></div>
+      <div class="dialog-actions">
+        <button id="recurring-preview-cancel" class="btn" value="cancel" autofocus>Cancel</button>
+        <button id="recurring-preview-apply" class="btn btn-primary" value="confirm">Add recurring items</button>
+      </div>
+    </form>
+  </dialog>
+
   <!-- Modals -->
   <div id="modal-overlay" class="modal-overlay" style="display:none;">
     <div id="modal" class="modal">
@@ -219,11 +253,13 @@
   </div>
 
   <script src="js/data-schema.js"></script>
+  <script src="js/recurrence.js"></script>
   <script src="js/data.js"></script>
   <script src="js/budget.js"></script>
   <script src="js/transfers.js"></script>
   <script src="js/dashboard.js"></script>
   <script src="js/structure.js"></script>
   <script src="js/app.js"></script>
+  <script src="js/templates.js"></script>
 </body>
 </html>

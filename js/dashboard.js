@@ -51,6 +51,47 @@ const DashboardView = {
     return d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
   },
 
+  plannedIncome(summary) {
+    return Object.hasOwn(summary, 'totalPlannedIncome') ? summary.totalPlannedIncome : summary.totalIncome;
+  },
+
+  plannedExpenses(summary) {
+    return Object.hasOwn(summary, 'totalPlannedExpenses') ? summary.totalPlannedExpenses : summary.totalProjected;
+  },
+
+  actualExpenses(summary) {
+    if (Object.hasOwn(summary, 'unresolvedExpenseCount')) {
+      return summary.unresolvedExpenseCount === 0 ? summary.totalActualExpenses : null;
+    }
+    return summary.totalActual !== 0 ? summary.totalActual : summary.totalProjected;
+  },
+
+  categoryPlanned(total) {
+    if (!total) return 0;
+    return Object.hasOwn(total, 'planned') ? total.planned : total.projected;
+  },
+
+  categoryActual(total) {
+    if (!total) return 0;
+    if (Object.hasOwn(total, 'unresolvedCount')) {
+      return total.unresolvedCount === 0 ? total.actual : null;
+    }
+    return total.actual !== 0 ? total.actual : total.projected;
+  },
+
+  isV3CategoryTotal(total) {
+    return Boolean(total && Object.hasOwn(total, 'unresolvedCount'));
+  },
+
+  isV3Summary(summary) {
+    return Object.hasOwn(summary, 'unresolvedExpenseCount');
+  },
+
+  formatWholeAmount(value) {
+    if (value === null) return '— Incomplete';
+    return `$${value.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+  },
+
   render() {
     const months = this.getMonthsInRange();
     if (months.length === 0) return;
@@ -96,7 +137,7 @@ const DashboardView = {
     const cats = [...allCategories];
     const datasets = cats.map((cat, i) => ({
       label: cat,
-      data: months.map(mk => (dataByMonth[mk][cat]?.actual || dataByMonth[mk][cat]?.projected || 0)),
+      data: months.map(mk => this.categoryActual(dataByMonth[mk][cat])),
       borderColor: this.COLORS[i % this.COLORS.length],
       backgroundColor: this.COLORS[i % this.COLORS.length] + '33',
       tension: 0.3,
@@ -125,15 +166,16 @@ const DashboardView = {
     let targetMonth = months[months.length - 1];
     for (let i = months.length - 1; i >= 0; i--) {
       const s = Store.calcMonthSummary(months[i]);
-      if (s.totalIncome > 0) { targetMonth = months[i]; break; }
+      if (this.plannedIncome(s) > 0) { targetMonth = months[i]; break; }
     }
 
     const summary = Store.calcMonthSummary(targetMonth);
     const catTotals = Store.calcCategoryTotals(targetMonth);
-    const income = summary.totalIncome || 1;
+    const plannedIncome = this.plannedIncome(summary);
+    const income = plannedIncome === 0 ? 1 : plannedIncome;
 
     const labels = Object.keys(catTotals);
-    const data = labels.map(c => catTotals[c].actual || catTotals[c].projected || 0);
+    const data = labels.map(c => this.categoryPlanned(catTotals[c]));
     const allocations = Store.getMonth(targetMonth).allocations || {};
     // Add allocations as categories
     ALLOCATION_TYPES.forEach(a => {
@@ -174,8 +216,8 @@ const DashboardView = {
   // 3. Projected vs Actual (grouped bar)
   renderProjVsActual(months) {
     this.destroyChart('projVsActual');
-    const projected = months.map(mk => Store.calcMonthSummary(mk).totalProjected);
-    const actual = months.map(mk => Store.calcMonthSummary(mk).totalActual);
+    const projected = months.map(mk => this.plannedExpenses(Store.calcMonthSummary(mk)));
+    const actual = months.map(mk => this.actualExpenses(Store.calcMonthSummary(mk)));
 
     const ctx = document.getElementById('chart-proj-vs-actual').getContext('2d');
     this.charts.projVsActual = new Chart(ctx, {
@@ -205,7 +247,8 @@ const DashboardView = {
       const summary = Store.calcMonthSummary(mk);
       const alloc = Store.getMonth(mk).allocations || {};
       const totalSaved = (alloc.savings || 0) + (alloc.investments || 0);
-      return summary.totalIncome > 0 ? (totalSaved / summary.totalIncome) * 100 : 0;
+      const income = this.plannedIncome(summary);
+      return income > 0 ? (totalSaved / income) * 100 : 0;
     });
 
     const ctx = document.getElementById('chart-savings-rate').getContext('2d');
@@ -236,8 +279,8 @@ const DashboardView = {
   // 5. Payment method breakdown (bar)
   renderPaymentMethod(months) {
     this.destroyChart('paymentMethod');
-    const bank = months.map(mk => Store.calcPaymentMethodTotals(mk).bank || 0);
-    const cc = months.map(mk => Store.calcPaymentMethodTotals(mk).credit_card || 0);
+    const bank = months.map(mk => Store.calcPaymentMethodTotals(mk, 'planned').bank ?? 0);
+    const cc = months.map(mk => Store.calcPaymentMethodTotals(mk, 'planned').credit_card ?? 0);
 
     const ctx = document.getElementById('chart-payment-method').getContext('2d');
     this.charts.paymentMethod = new Chart(ctx, {
@@ -289,7 +332,8 @@ const DashboardView = {
       yearMonths.forEach(mk => {
         const totals = Store.calcCategoryTotals(mk);
         cats.forEach(c => {
-          catSums[c] += (totals[c]?.actual || totals[c]?.projected || 0);
+          const value = this.categoryActual(totals[c]);
+          if (catSums[c] !== null) catSums[c] = value === null ? null : catSums[c] + value;
         });
       });
       return {
@@ -339,10 +383,12 @@ const DashboardView = {
       let total = 0;
       let count = 0;
       months.forEach(mk => {
-        const val = dataByMonth[mk][cat]?.actual || dataByMonth[mk][cat]?.projected || 0;
-        row.insertCell().textContent = `$${val.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
-        total += val;
-        if (val > 0) count++;
+        const val = this.categoryActual(dataByMonth[mk][cat]);
+        row.insertCell().textContent = this.formatWholeAmount(val);
+        if (val !== null) {
+          total += val;
+          if (this.isV3CategoryTotal(dataByMonth[mk][cat]) || val > 0) count++;
+        }
       });
       const avg = count > 0 ? total / count : 0;
       const cell = row.insertCell(); const strong = document.createElement('strong');
@@ -355,11 +401,13 @@ const DashboardView = {
     let monthCount = 0;
     months.forEach(mk => {
       const s = Store.calcMonthSummary(mk);
-      const val = s.totalActual || s.totalProjected;
+      const val = this.actualExpenses(s);
       cell = totalRow.insertCell(); strong = document.createElement('strong');
-      strong.textContent = `$${val.toLocaleString(undefined, { maximumFractionDigits: 0 })}`; cell.append(strong);
-      grandTotal += val;
-      if (val > 0) monthCount++;
+      strong.textContent = this.formatWholeAmount(val); cell.append(strong);
+      if (val !== null) {
+        grandTotal += val;
+        if (this.isV3Summary(s) || val > 0) monthCount++;
+      }
     });
     const grandAvg = monthCount > 0 ? grandTotal / monthCount : 0;
     cell = totalRow.insertCell(); strong = document.createElement('strong');
@@ -368,7 +416,7 @@ const DashboardView = {
     strong.textContent = 'Income'; cell.append(strong);
     months.forEach(mk => {
       const s = Store.calcMonthSummary(mk);
-      incomeRow.insertCell().textContent = `$${s.totalIncome.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+      incomeRow.insertCell().textContent = this.formatWholeAmount(this.plannedIncome(s));
     });
     incomeRow.insertCell();
     document.getElementById('summary-table-container').replaceChildren(table);

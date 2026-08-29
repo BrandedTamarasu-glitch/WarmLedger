@@ -269,12 +269,47 @@ test('v3 records preserve explicit planned amounts and nullable actual calculati
   assert.equal(expense.actualAmount, null);
   assert.deepEqual(store.calcMonthSummary('2026-02'), {
     totalIncome: 0, totalProjected: 500, totalActual: 0, totalAllocated: 0,
-    totalBudgeted: 500, remaining: -500
+    totalBudgeted: 500, remaining: -500,
+    totalPlannedIncome: 1000, totalActualIncome: 0, unresolvedIncomeCount: 0,
+    totalPlannedExpenses: 500, totalActualExpenses: 0, unresolvedExpenseCount: 1
   });
   store.updateExpensePaycheckAmount('2026-02', expense.id, paycheck.id, 300);
   assert.equal(store.getMonth('2026-02').expenses[0].plannedAmount, 500);
   store.updateExpense('2026-02', expense.id, { actualAmount: 0 });
   assert.equal(store.getMonth('2026-02').expenses[0].actualAmount, 0);
+});
+
+test('v3 calculation APIs distinguish planned, null actual, typed zero, and resolved actual values', () => {
+  const budget = Schema.migrateToV3(makeBudget()); budget.months = {};
+  const { store } = readyV3Store({ budget });
+  for (const [plannedAmount, actualAmount, day] of [[100, null, '01'], [200, 0, '02'], [300, 80, '03']]) {
+    store.addPaycheck('2026-03', { earnerId: 'earner-example-1', plannedAmount, actualAmount, date: `2026-03-${day}` });
+  }
+  for (const [plannedAmount, actualAmount, paymentMethod, day] of [
+    [50, null, 'bank', '05'], [60, 0, 'credit_card', '06'], [90, 70, 'bank', '07']
+  ]) {
+    store.addExpense('2026-03', {
+      categoryId: 'category-example-1', categoryItemId: 'item-example-1', name: 'ignored',
+      date: `2026-03-${day}`, paycheckAmounts: {}, plannedAmount, actualAmount, paymentMethod
+    });
+  }
+  assert.deepEqual(store.calcMonthSummary('2026-03'), {
+    totalIncome: 80, totalProjected: 200, totalActual: 70, totalAllocated: 0,
+    totalBudgeted: 200, remaining: -120,
+    totalPlannedIncome: 600, totalActualIncome: 80, unresolvedIncomeCount: 1,
+    totalPlannedExpenses: 200, totalActualExpenses: 70, unresolvedExpenseCount: 1
+  });
+  assert.deepEqual({ ...store.calcCategoryTotals('2026-03') }, {
+    Home: { planned: 200, actual: 70, unresolvedCount: 1, projected: 200 }
+  });
+  assert.deepEqual(store.calcPaymentMethodTotals('2026-03', 'planned'), {
+    bank: 140, credit_card: 60, savings: 0, investments: 0
+  });
+  assert.deepEqual(store.calcPaymentMethodTotals('2026-03', 'actual'), {
+    bank: 70, credit_card: 0, savings: 0, investments: 0
+  });
+  expectStoreCode('INVALID_TOTAL_MODE', () => store.calcPaymentMethodTotals('2026-03'));
+  expectStoreCode('INVALID_TOTAL_MODE', () => store.calcPaymentMethodTotals('2026-03', 'combined'));
 });
 
 test('recurring preview is frozen, zero-write, identity-bound, stale-safe, atomic, and idempotent', () => {

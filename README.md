@@ -38,7 +38,7 @@ The test suite uses Node's built-in test runner and synthetic records only.
 
 The repository now includes a dormant schema-version-3 migration and validation layer, a timezone-independent recurrence engine, and a tested Store foundation for recurring templates. The dormant Store supports income and expense template management, write-free month previews, atomic generation, idempotent reruns, and suppression of deliberately removed generated records. Recurrence supports monthly, twice-monthly, weekly, and biweekly schedules, including end-of-month clamping and leap-year boundaries.
 
-The browser application still uses the active schema-version-2 policy, and its interface does not expose templates or generation yet. Schema-version-3 Store behavior is exercised through an isolated internal policy in automated tests. The browser UI, storage, backups, and snapshots will switch together only after every consumer and the Templates interface are ready.
+The repository also contains the integrated Templates view, recurring preview dialog, and schema-version-3-compatible Budget, Transfers, and Dashboard consumers. These controls remain deliberately hidden while the browser application uses the active schema-version-2 policy. Schema-version-3 behavior is exercised through an isolated internal policy in automated tests; browser storage, backups, snapshots, and the interface will switch together during the activation phase.
 
 ## Data format compatibility
 

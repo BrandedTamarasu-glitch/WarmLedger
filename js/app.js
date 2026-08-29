@@ -1,7 +1,8 @@
 // Main app - startup gating, routing, accessible dialogs, backup and recovery.
 const App = {
   currentView: 'budget', viewsInitialized: false, restorePreview: null,
-  restoreTrigger: null, modalTrigger: null, shownWarnings: new Set(), MAX_IMPORT_BYTES: 5 * 1024 * 1024,
+  restoreTrigger: null, modalTrigger: null, recurringPreview: null, recurringTrigger: null,
+  templatesInitialized: false, shownWarnings: new Set(), MAX_IMPORT_BYTES: 5 * 1024 * 1024,
 
   init() {
     this.bindAppEvents();
@@ -24,6 +25,8 @@ const App = {
     });
     document.getElementById('restore-dialog').addEventListener('close', () => this.onRestoreDialogClose());
     document.getElementById('fresh-dialog').addEventListener('close', () => this.onFreshDialogClose());
+    document.getElementById('btn-preview-recurring').addEventListener('click', event => this.openRecurringPreview(event.currentTarget));
+    document.getElementById('recurring-preview-dialog').addEventListener('close', () => this.onRecurringPreviewClose());
     document.getElementById('modal-close').addEventListener('click', () => this.hideModal());
     document.getElementById('modal-cancel').addEventListener('click', () => this.hideModal());
     document.getElementById('modal-overlay').addEventListener('click', event => {
@@ -40,6 +43,19 @@ const App = {
   initializeViews() {
     if (this.viewsInitialized) return;
     BudgetView.init(); TransfersView.init(); DashboardView.init(); StructureView.init(); this.viewsInitialized = true;
+    this.syncV3Features();
+  },
+
+  isV3() { return Store.getData().schemaVersion >= 3; },
+
+  syncV3Features() {
+    const enabled = this.isV3();
+    document.getElementById('nav-templates').hidden = !enabled;
+    document.getElementById('btn-preview-recurring').hidden = !enabled;
+    document.getElementById('view-templates').hidden = !enabled;
+    if (enabled && !this.templatesInitialized) { TemplatesView.init(); this.templatesInitialized = true; }
+    if (!enabled && this.currentView === 'templates') this.switchView('budget');
+    return enabled;
   },
 
   enterApplication(message, state = 'ready') {
@@ -103,17 +119,51 @@ const App = {
 
   switchView(view) {
     if (!this.viewsInitialized) return;
+    if (view === 'templates' && !this.isV3()) return;
     this.currentView = view;
     document.querySelectorAll('.nav-tab').forEach(tab => tab.classList.toggle('active', tab.dataset.view === view));
     document.querySelectorAll('.view').forEach(panel => panel.classList.toggle('active', panel.id === `view-${view}`));
     if (view === 'transfers') { TransfersView.syncMonth(); TransfersView.render(); }
     else if (view === 'dashboard') requestAnimationFrame(() => DashboardView.render());
     else if (view === 'structure') StructureView.render();
+    else if (view === 'templates') TemplatesView.render();
   },
 
   refreshAllViews() {
     BudgetView.render(); TransfersView.syncMonth(); TransfersView.render(); DashboardView.destroyAllCharts(); StructureView.render();
+    const v3 = this.syncV3Features();
+    if (v3 && this.templatesInitialized) TemplatesView.render();
     if (this.currentView === 'dashboard') requestAnimationFrame(() => DashboardView.render());
+  },
+
+  openRecurringPreview(trigger) {
+    if (!this.isV3()) return;
+    this.recurringTrigger = trigger;
+    try {
+      const preview = Store.previewRecurringMonth(BudgetView.currentMonth);
+      this.recurringPreview = preview;
+      const content = document.getElementById('recurring-preview-content'); content.replaceChildren(TemplatesView.buildPreview(preview));
+      const apply = document.getElementById('recurring-preview-apply');
+      apply.disabled = preview.counts.conflicts > 0 || preview.counts.additions === 0;
+      if (preview.counts.conflicts > 0) apply.title = 'Resolve conflicts before adding recurring items.';
+      else if (preview.counts.additions === 0) apply.title = 'There are no new recurring items to add.';
+      else apply.removeAttribute('title');
+      const dialog = document.getElementById('recurring-preview-dialog'); dialog.returnValue = ''; dialog.showModal();
+    } catch (error) { this.recurringPreview = null; this.showError(error); trigger.focus(); }
+  },
+
+  onRecurringPreviewClose() {
+    const dialog = document.getElementById('recurring-preview-dialog');
+    const preview = this.recurringPreview; this.recurringPreview = null;
+    if (dialog.returnValue !== 'confirm' || !preview) { this.recurringTrigger?.focus(); return; }
+    this.runMutation(() => Store.applyRecurringPreview(preview), {
+      onSuccess: result => {
+        this.refreshAllViews();
+        this.announceStatus(`${result.addedIncome} income and ${result.addedExpenses} expense recurring items added.`);
+        requestAnimationFrame(() => this.recurringTrigger?.focus({ preventScroll: true }));
+      },
+      onFailure: () => this.recurringTrigger?.focus()
+    });
   },
 
   showModal(title, bodyHtml, onSave) {
@@ -260,6 +310,23 @@ const App = {
       LAST_ACTIVE_CATEGORY: 'Keep at least one active category so new expenses can be created.',
       LAST_ACTIVE_EARNER: 'Keep at least one active earner so new paychecks can be created.',
       INVALID_PERMUTATION: 'The structure changed before it could be reordered. Refresh and try again.',
+      RECORD_MONTH_MISMATCH: 'Choose a date within the month you are editing.',
+      GENERATED_DATE_MISMATCH: 'A generated item no longer matches its scheduled date. Preview the month again.',
+      ALLOCATION_EXCEEDS_PLANNED: 'Paycheck allocations cannot exceed the expense’s planned amount.',
+      INVALID_DATE: 'Enter a valid calendar date.',
+      INVALID_DATE_RANGE: 'The end date must be the same as or later than the start date.',
+      INVALID_RECURRENCE_DAY: 'Enter a recurrence day from 1 through 31.',
+      INVALID_RECURRENCE_DAYS: 'Choose two different days from 1 through 31, with the first day earlier than the second.',
+      INVALID_MONTH: 'That month is not valid. Choose another month and try again.',
+      INVALID_RECURRING_PREVIEW: 'This recurring preview is no longer valid. Preview the month again.',
+      STALE_RECURRING_PREVIEW: 'Your budget changed after this preview. Preview the month again before adding items.',
+      RECURRING_CONFLICT: 'Recurring items could not be added because the month contains conflicting generated records.',
+      SCHEMA_V3_REQUIRED: 'Recurring templates are unavailable until this budget is upgraded.',
+      INCOME_TEMPLATE_NOT_FOUND: 'That income template is no longer available. Refresh Templates and try again.',
+      EXPENSE_TEMPLATE_NOT_FOUND: 'That expense template is no longer available. Refresh Templates and try again.',
+      EARNER_ARCHIVED: 'Choose an active earner for this template.',
+      CATEGORY_ARCHIVED: 'Choose an active category for this template.',
+      CATEGORY_ITEM_ARCHIVED: 'Choose an active preset item, or use no preset item.',
       UNKNOWN: 'ZeroBudget could not complete that action. Your last saved budget remains available.'
     };
     const alert = document.getElementById('app-error'); document.getElementById('app-status').textContent = '';
