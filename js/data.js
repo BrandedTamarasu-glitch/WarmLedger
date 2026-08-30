@@ -36,6 +36,14 @@
     'Miscellaneous', 'Debt', 'Taxes', 'Subscriptions', 'Other'
   ]);
   const GENERIC_EARNER_NAMES = Object.freeze(['Primary', 'Secondary']);
+  const FUNDING_TOLERANCE = 0.009;
+  const FUNDING_EPSILON = Number.EPSILON * 64;
+
+  function fundingDirection(value) {
+    if (value > FUNDING_TOLERANCE + FUNDING_EPSILON) return 1;
+    if (value < -FUNDING_TOLERANCE - FUNDING_EPSILON) return -1;
+    return 0;
+  }
 
   class StoreError extends Error {
     constructor(code) {
@@ -1058,7 +1066,7 @@
       for (const expense of current.expenses) {
         const assignedAmount = Object.values(expense.paycheckAmounts).reduce((sum, amount) => sum + amount, 0);
         const shortfall = expense.plannedAmount - assignedAmount;
-        if (shortfall > 0.009 || shortfall < -0.009) issues.push({
+        if (fundingDirection(shortfall) !== 0) issues.push({
           expenseId: expense.id, name: expense.name, category: expense.category,
           plannedAmount: expense.plannedAmount, assignedAmount, shortfall
         });
@@ -1101,6 +1109,101 @@
           actualCashFlow: unresolvedIncome.length || unresolvedExpenses.length ? null : enteredIncome - enteredExpenses
         },
         recurring: { pendingCount, conflictCount, suppressedCount }
+      });
+    }
+
+    function getPayPeriodPlan(monthKey) {
+      requireReady();
+      if (typeof monthKey !== 'string') throw new StoreError('INVALID_MONTH');
+      const match = /^(\d{4})-(\d{2})$/.exec(monthKey);
+      if (!match) throw new StoreError('INVALID_MONTH');
+      try { Recurrence.daysInMonth(Number(match[1]), Number(match[2])); }
+      catch { throw new StoreError('INVALID_MONTH'); }
+      const month = data.months[monthKey];
+      const exists = Boolean(month);
+      const current = month || emptyMonth();
+      const methods = () => ({ bank: 0, credit_card: 0, savings: 0, investments: 0 });
+      const expenseFunding = current.expenses.map(expense => {
+        const fundedAcrossPaychecks = Object.values(expense.paycheckAmounts)
+          .reduce((sum, amount) => sum + amount, 0);
+        const rawRemaining = expense.plannedAmount - fundedAcrossPaychecks;
+        const remainingDirection = fundingDirection(rawRemaining);
+        const remainingToFund = remainingDirection > 0 ? rawRemaining : 0;
+        const fundedPaycheckCount = Object.values(expense.paycheckAmounts)
+          .filter(amount => amount > 0).length;
+        let fundingState;
+        if (remainingDirection > 0) fundingState = fundedAcrossPaychecks > 0
+          ? 'partially-funded' : 'unfunded';
+        else fundingState = 'fully-funded';
+        return { expense, fundedAcrossPaychecks, remainingToFund, fundedPaycheckCount, fundingState };
+      });
+      const periods = current.paychecks.map((paycheck, index) => {
+        const methodTotals = methods();
+        const bills = [];
+        let assignedTotal = 0;
+        for (const funding of expenseFunding) {
+          const amount = funding.expense.paycheckAmounts[paycheck.id] || 0;
+          assignedTotal += amount;
+          methodTotals[funding.expense.paymentMethod] += amount;
+          if (amount <= 0) continue;
+          bills.push({
+            expenseId: funding.expense.id, name: funding.expense.name, category: funding.expense.category,
+            date: funding.expense.date, paymentMethod: funding.expense.paymentMethod,
+            plannedAmount: funding.expense.plannedAmount, fundedByThisPaycheck: amount,
+            fundedAcrossPaychecks: funding.fundedAcrossPaychecks,
+            remainingToFund: funding.remainingToFund,
+            fundedPaycheckCount: funding.fundedPaycheckCount,
+            splitAcrossPaychecks: funding.fundedPaycheckCount > 1,
+            fundingState: funding.fundingState === 'partially-funded' ? 'partially-funded' : 'fully-funded'
+          });
+        }
+        const plannedRemainder = paycheck.plannedAmount - assignedTotal;
+        const remainderDirection = fundingDirection(plannedRemainder);
+        const fundingState = remainderDirection > 0 ? 'remaining'
+          : remainderDirection < 0 ? 'over-assigned' : 'balanced';
+        return {
+          number: index + 1, paycheckId: paycheck.id, earner: paycheck.earner, date: paycheck.date,
+          plannedIncome: paycheck.plannedAmount, actualIncome: paycheck.actualAmount,
+          bills, methodTotals, assignedTotal, plannedRemainder, fundingState
+        };
+      });
+      const billsNeedingFunding = expenseFunding.filter(funding => funding.remainingToFund > 0).map(funding => ({
+        expenseId: funding.expense.id, name: funding.expense.name, category: funding.expense.category,
+        date: funding.expense.date, paymentMethod: funding.expense.paymentMethod,
+        plannedAmount: funding.expense.plannedAmount, fundedAcrossPaychecks: funding.fundedAcrossPaychecks,
+        remainingToFund: funding.remainingToFund, fundedPaycheckCount: funding.fundedPaycheckCount,
+        fundingState: funding.fundingState
+      }));
+      const monthlyAllocationsTotal = Object.values(current.allocations).reduce((sum, amount) => sum + amount, 0);
+      const monthlyAllocations = { ...current.allocations, total: monthlyAllocationsTotal };
+      const plannedIncome = current.paychecks.reduce((sum, paycheck) => sum + paycheck.plannedAmount, 0);
+      const actualIncomeEntered = current.paychecks.reduce((sum, paycheck) => sum + (paycheck.actualAmount ?? 0), 0);
+      const actualIncomeMissingCount = current.paychecks.filter(paycheck => paycheck.actualAmount === null).length;
+      const plannedBills = current.expenses.reduce((sum, expense) => sum + expense.plannedAmount, 0);
+      const fundedAcrossPaychecks = expenseFunding.reduce((sum, funding) => sum + funding.fundedAcrossPaychecks, 0);
+      const billsNeedingFundingAmount = billsNeedingFunding.reduce((sum, bill) => sum + bill.remainingToFund, 0);
+      const paycheckFundingRemainder = plannedIncome - fundedAcrossPaychecks;
+      const overAssignedAmount = periods.reduce((sum, period) =>
+        sum + (fundingDirection(period.plannedRemainder) < 0 ? -period.plannedRemainder : 0), 0);
+      const plannedBalance = plannedIncome - plannedBills - monthlyAllocationsTotal;
+      const methodFundingTotals = methods();
+      for (const period of periods) for (const method of Object.keys(methodFundingTotals)) {
+        methodFundingTotals[method] += period.methodTotals[method];
+      }
+      const rawReconciliation = plannedBalance -
+        (paycheckFundingRemainder - billsNeedingFundingAmount - monthlyAllocationsTotal);
+      const reconciliationDifference = fundingDirection(rawReconciliation) !== 0
+        ? rawReconciliation : 0;
+      return freezeDetached({
+        monthKey, exists, paycheckCount: current.paychecks.length, periods, billsNeedingFunding,
+        monthlyAllocations,
+        summary: {
+          plannedIncome, actualIncomeEntered, actualIncomeMissingCount,
+          actualIncomeComplete: actualIncomeMissingCount === 0,
+          plannedBills, fundedAcrossPaychecks, billsNeedingFundingAmount, paycheckFundingRemainder,
+          overAssignedAmount, monthlyAllocationsTotal, plannedBalance, reconciliationDifference,
+          methodFundingTotals
+        }
       });
     }
 
@@ -1354,7 +1457,8 @@
       reassignExpenseStructure, editExpense,
       updateExpensePaycheckAmount, deleteExpense, undoDeleteExpense, reorderExpenses, updateAllocations, updateAllocation, copyFromMonth,
       clearMonth, previewRecurringMonth, applyRecurringPreview,
-      getMonthReview, getSuppressedOccurrences, unsuppressOccurrence,
+      getMonthReview, getPayPeriodPlan, getSuppressedOccurrences, unsuppressOccurrence,
+      fundingDirection,
       getDataHealth, previewActualResolutions, applyActualResolutions, compareAdditiveBackup,
       calcMonthSummary, calcPaycheckRemaining, calcCategoryTotals, calcPaymentMethodTotals,
       buildExport, exportData, previewImport, commitImport, importData, listSnapshots,

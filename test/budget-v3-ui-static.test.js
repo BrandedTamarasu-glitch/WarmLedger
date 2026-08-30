@@ -29,7 +29,8 @@ test('v3 rendering exposes provenance, dates, allocation state, and explicit zer
   assert.match(source, /From template/);
   assert.match(source, /Needs allocation/);
   assert.match(source, /Object\.hasOwn\(amounts, paycheck\.id\) \? amounts\[paycheck\.id\] : ''/);
-  assert.match(source, /Math\.abs\(assigned - expense\.plannedAmount\)/);
+  assert.match(source, /Store\.fundingDirection\(assigned - expense\.plannedAmount\) !== 0/);
+  assert.doesNotMatch(source, /Math\.abs\(assigned - expense\.plannedAmount\)/);
   assert.match(source, /expense-date/);
   assert.match(source, /Actual not entered/);
   assert.match(source, /allocated to \$\{this\.getPaycheckShortLabel\(paycheck\)\}/);

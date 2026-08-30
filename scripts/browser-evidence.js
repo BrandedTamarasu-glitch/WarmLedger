@@ -220,6 +220,82 @@ const SCENARIO = `(async () => {
   assert(document.activeElement.id === 'recurring-preview-cancel', 'Allow-again preview handoff did not focus Cancel.');
   previewDialog.close('confirm'); await settle();
 
+  const currentGenerated = Store.getMonth(month).expenses.find(item => item.sourceTemplateId !== null);
+  assert(currentGenerated, 'Pay periods setup could not find its generated bill.');
+  const secondIncome = Store.addPaycheck(month, { earnerId, plannedAmount: 200, actualAmount: null, date: '' });
+  Store.updateExpensePaycheckAmount(month, currentGenerated.id, income.id, 60);
+  Store.updateExpensePaycheckAmount(month, currentGenerated.id, secondIncome.id, 63);
+  const hostile = Store.getMonth(month).expenses.find(item => item.name.includes('Hostile ledger label'));
+  Store.updateExpensePaycheckAmount(month, hostile.id, secondIncome.id, 3);
+  const unfunded = Store.addExpense(month, { categoryId: category.id, categoryItemId: null,
+    name: '<img src=x onerror="globalThis.__payHostileRan=true"> ' + 'Synthetic long unfunded bill '.repeat(2).trim(),
+    date: '', paycheckAmounts: {}, plannedAmount: 11, actualAmount: null, paymentMethod: 'savings' });
+  Store.updateAllocation(month, 'savings', 9);
+  const payPeriodBytes = localStorage.getItem(primaryKey);
+  const payPeriodTab = [...document.querySelectorAll('.nav-tab')].find(tab => tab.dataset.view === 'transfers');
+  payPeriodTab.focus(); payPeriodTab.click(); await settle();
+  const payPeriodContent = document.getElementById('transfers-content');
+  const cards = [...payPeriodContent.querySelectorAll('.pay-period-card')];
+  const plan = Store.getPayPeriodPlan(month);
+  assert(document.getElementById('view-transfers').classList.contains('active'), 'Pay periods route did not activate.');
+  assert(document.activeElement === payPeriodTab, 'Pay periods navigation did not retain trigger focus.');
+  assert(localStorage.getItem(primaryKey) === payPeriodBytes, 'Passive Pay periods navigation changed active bytes.');
+  assert(cards.length === 2 && plan.periods.map(item => item.paycheckId).join('|') === [income.id, secondIncome.id].join('|'),
+    'Pay periods did not preserve canonical paycheck order.');
+  assert(cards[0].textContent.includes('$0.00') && cards[1].textContent.includes('Not entered'),
+    'Pay periods did not distinguish entered-zero and missing actual income.');
+  assert(payPeriodContent.textContent.includes('Split across 2 paychecks') &&
+    payPeriodContent.textContent.includes('Fully funded across paychecks') &&
+    payPeriodContent.textContent.includes('Partially funded') && payPeriodContent.textContent.includes('Unfunded'),
+    'Pay periods funding-state text is incomplete.');
+  assert(payPeriodContent.querySelector('.pay-period-allocations')?.textContent.includes('$9.00') &&
+    payPeriodContent.querySelector('.pay-period-monthly-summary'), 'Pay periods allocations or monthly summary are missing.');
+  assert(plan.summary.reconciliationDifference === 0 &&
+    payPeriodContent.querySelector('.pay-period-monthly-summary').textContent.includes('Funding reconciliation difference'),
+    'Pay periods summary did not reconcile.');
+  assert(payPeriodContent.textContent.includes('Synthetic long unfunded bill') &&
+    !payPeriodContent.querySelector('img') && !globalThis.__payHostileRan, 'Hostile Pay periods content was not inert text.');
+
+  const reviewFunding = [...cards[1].querySelectorAll('.pay-period-funding-action')]
+    .find(button => button.dataset.expenseId === currentGenerated.id);
+  BudgetView.collapsedCategories.set(currentGenerated.category, true);
+  reviewFunding.click(); await settle();
+  assert(!BudgetView.collapsedCategories.get(currentGenerated.category), 'Funding route did not expand a collapsed category.');
+  assert(document.activeElement.dataset.fundingExpenseId === currentGenerated.id &&
+    document.activeElement.dataset.fundingPaycheckId === secondIncome.id,
+    'Review funding did not focus the exact paycheck allocation.');
+
+  App.switchView('transfers'); await settle();
+  const fundUnfunded = [...document.querySelectorAll('.pay-period-needs .pay-period-funding-action')]
+    .find(button => button.dataset.expenseId === unfunded.id);
+  fundUnfunded.click(); await settle();
+  assert(document.activeElement.dataset.fundingExpenseId === unfunded.id &&
+    document.activeElement.dataset.fundingPaycheckId === income.id,
+    'Fund this bill did not focus the first canonical paycheck allocation.');
+
+  const staleExpense = Store.addExpense(month, { categoryId: category.id, categoryItemId: null,
+    name: 'Synthetic stale funding bill', date: '', paycheckAmounts: {}, plannedAmount: 2,
+    actualAmount: null, paymentMethod: 'bank' });
+  App.switchView('transfers'); await settle();
+  const staleFunding = [...document.querySelectorAll('.pay-period-needs .pay-period-funding-action')]
+    .find(button => button.dataset.expenseId === staleExpense.id);
+  Store.deleteExpense(month, staleExpense.id); staleFunding.click(); await settle();
+  assert(document.activeElement.id === 'expenses-heading' && document.getElementById('app-status').textContent.includes('no longer available'),
+    'Stale funding route did not use its heading fallback.');
+
+  const zeroMonth = month.slice(0, 5) + (month.endsWith('-12') ? '11' : '12');
+  Store.addExpense(zeroMonth, { categoryId: category.id, categoryItemId: null, name: 'Synthetic zero-paycheck bill',
+    date: '', paycheckAmounts: {}, plannedAmount: 5, actualAmount: null, paymentMethod: 'credit_card' });
+  BudgetView.currentMonth = zeroMonth; App.switchView('transfers'); await settle();
+  assert(Store.getPayPeriodPlan(zeroMonth).paycheckCount === 0 &&
+    document.querySelector('.pay-period-needs')?.textContent.includes('Synthetic zero-paycheck bill'),
+    'Zero-paycheck Pay periods state hid bills needing funding.');
+  const zeroFunding = document.querySelector('.pay-period-needs .pay-period-funding-action');
+  zeroFunding.click(); await settle();
+  assert(document.activeElement.id === 'btn-add-paycheck' && document.getElementById('app-status').textContent.includes('Add a paycheck'),
+    'Zero-paycheck funding route did not focus Add Paycheck.');
+  BudgetView.currentMonth = month; BudgetView.render(); TransfersView.currentMonth = month;
+
   const healthBefore = localStorage.getItem(primaryKey); const healthTab = document.getElementById('nav-data-health');
   healthTab.focus(); healthTab.click(); await settle();
   assert(document.getElementById('view-data-health').classList.contains('active'), 'Data Health route did not activate.');
@@ -227,7 +303,6 @@ const SCENARIO = `(async () => {
   assert(localStorage.getItem(primaryKey) === healthBefore, 'Passive Data Health render changed bytes.');
   assert(document.getElementById('data-health-content').textContent.includes('Hostile ledger label'), 'Hostile label was not rendered as text.');
   assert(!document.querySelector('#data-health-content img'), 'Hostile Data Health label created markup.');
-  const hostile = Store.getMonth(month).expenses.find(item => item.name.includes('Hostile ledger label'));
   const healthCheck = [...document.querySelectorAll('.actual-resolution-row input[type="checkbox"]')]
     .find(input => input.dataset.recordId === hostile.id);
   assert(healthCheck && !healthCheck.checked, 'Missing-actual choice was not default-unselected.');
@@ -287,6 +362,9 @@ const SCENARIO = `(async () => {
   return { month, passiveActionsByteExact: true, monthlyReviewEdit: true, expenseDeleteCancelUndoStale: true,
     generatedTombstoneUndo: true, dataHealthPassiveRoutes: true, actualZeroPreviewCancelApply: true, actualApplyFailureAlertFocus: true,
     compareOnlyNoWrite: true, hostileLabelsSafe: true, recoveryGating: true, restoreInvalidatesUndo: true, allowAgain: true,
+    payPeriodsPassiveByteExact: true, payPeriodsCanonicalActualsFundingStates: true,
+    payPeriodsAllocationsReconcileHostileSafe: true, payPeriodsExactCanonicalCollapsedRoutes: true,
+    payPeriodsStaleAndZeroPaycheckRoutes: true,
     previewCancelApply: true, backupRoundTrip: true, generatedIncome: Store.getMonth(month).paychecks.length,
     generatedExpenses: Store.getMonth(month).expenses.length };
 })()`;
@@ -332,6 +410,41 @@ async function run(options) {
     assertEvidence(escapeDelete.closed && escapeDelete.preserved && escapeDelete.byteExact && escapeDelete.focusReturned,
       `Expense delete Escape failed: ${JSON.stringify(escapeDelete)}`);
     scenario.expenseDeleteEscape = true;
+    await evaluate(cdp, `App.switchView('transfers')`);
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width: 320, height: 900, deviceScaleFactor: 1, mobile: false });
+    const payPeriodNarrow = await evaluate(cdp, `(() => {
+      const viewport = document.documentElement.clientWidth; const view = document.getElementById('view-transfers');
+      const overflowing = [...document.querySelectorAll('body *')].filter(el => {
+        if (!el.getClientRects().length) return false; const rect = el.getBoundingClientRect();
+        return rect.left < -0.5 || rect.right > viewport + 0.5;
+      }).map(el => ({ tag: el.tagName, id: el.id, className: String(el.className || ''),
+        left: el.getBoundingClientRect().left, right: el.getBoundingClientRect().right })).slice(0, 20);
+      const controls = [...view.querySelectorAll('button:not([hidden]), input:not([hidden]), select')];
+      return { active: view.classList.contains('active'), width: document.documentElement.scrollWidth, viewport, overflowing,
+        controlsFit: controls.every(el => el.getBoundingClientRect().width <= viewport), cards: view.querySelectorAll('.pay-period-card').length };
+    })()`);
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width: 640, height: 450, deviceScaleFactor: 1, mobile: false });
+    const payPeriodReflow200Percent = await evaluate(cdp, `({ width: document.documentElement.scrollWidth,
+      viewport: document.documentElement.clientWidth, active: document.getElementById('view-transfers').classList.contains('active') })`);
+    assertEvidence(payPeriodNarrow.active && payPeriodNarrow.cards >= 2 && payPeriodNarrow.width <= payPeriodNarrow.viewport &&
+      payPeriodNarrow.overflowing.length === 0 && payPeriodNarrow.controlsFit,
+      `Pay periods overflows at 320px: ${JSON.stringify(payPeriodNarrow)}`);
+    assertEvidence(payPeriodReflow200Percent.active && payPeriodReflow200Percent.width <= payPeriodReflow200Percent.viewport,
+      `Pay periods overflows at the 200% browser-zoom-equivalent viewport: ${JSON.stringify(payPeriodReflow200Percent)}`);
+    await cdp.send('Emulation.setEmulatedMedia', { features: [{ name: 'forced-colors', value: 'active' }] });
+    const payPeriodForcedColors = await evaluate(cdp, `(() => {
+      const card = document.querySelector('.pay-period-card'); const state = card?.querySelector('.pay-period-state');
+      const focus = card?.querySelector('.pay-period-funding-action'); focus?.focus();
+      return { active: matchMedia('(forced-colors: active)').matches, cardVisible: Boolean(card?.getClientRects().length),
+        cardBorder: card ? getComputedStyle(card).borderColor : '', stateVisible: Boolean(state?.getClientRects().length),
+        stateColor: state ? getComputedStyle(state).color : '', focusOutline: focus ? getComputedStyle(focus).outlineStyle : '' };
+    })()`);
+    assertEvidence(payPeriodForcedColors.active && payPeriodForcedColors.cardVisible && payPeriodForcedColors.stateVisible &&
+      payPeriodForcedColors.cardBorder !== 'rgba(0, 0, 0, 0)' && payPeriodForcedColors.stateColor &&
+      payPeriodForcedColors.focusOutline !== 'none' && payPeriodForcedColors.focusOutline !== 'hidden',
+      `Forced-colors Pay periods evidence failed: ${JSON.stringify(payPeriodForcedColors)}`);
+    await cdp.send('Emulation.setEmulatedMedia', { features: [{ name: 'forced-colors', value: 'none' }] });
+    scenario.payPeriodsNarrowReflowForcedColors = true;
     await evaluate(cdp, `App.switchView('data-health')`);
     await cdp.send('Emulation.setDeviceMetricsOverride', { width: 320, height: 900, deviceScaleFactor: 1, mobile: false });
     const narrow = await evaluate(cdp, `(() => {
@@ -380,7 +493,9 @@ async function run(options) {
     const errors = cdp.events.filter(event => event.method === 'Runtime.exceptionThrown' ||
       (event.method === 'Runtime.consoleAPICalled' && event.params.type === 'error'));
     assertEvidence(errors.length === 0, 'Console or page exceptions were captured.');
-    evidence = { passed: true, browser, disposableProfile: true, scenario, escapeDelete, narrow, forcedColors,
+    evidence = { passed: true, browser, disposableProfile: true, scenario, escapeDelete,
+      payPeriodNarrow, payPeriodForcedColors,
+      payPeriodReflow200Percent: { ...payPeriodReflow200Percent, method: '1280px viewport halved to 640 CSS pixels' }, narrow, forcedColors,
       reflow200Percent: { ...reflow200Percent, method: '1280px viewport halved to 640 CSS pixels' }, reload, errors: [] };
   } finally {
     cdp?.close();

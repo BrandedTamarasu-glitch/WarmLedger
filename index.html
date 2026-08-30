@@ -30,7 +30,7 @@
     <div class="nav-brand">Warm Ledger</div>
     <div class="nav-tabs">
       <button class="nav-tab active" data-view="budget">Budget</button>
-      <button class="nav-tab" data-view="transfers">Transfers</button>
+      <button class="nav-tab" data-view="transfers">Pay periods</button>
       <button class="nav-tab" data-view="dashboard">Dashboard</button>
       <button class="nav-tab" data-view="structure">Structure</button>
       <button id="nav-templates" class="nav-tab" data-view="templates" hidden>Templates</button>
@@ -112,10 +112,14 @@
 
     <!-- Transfers View -->
     <div id="view-transfers" class="view">
+      <header class="pay-period-heading">
+        <h2 id="pay-periods-heading" tabindex="-1">Pay periods</h2>
+        <p>Monthly paycheck funding plan. Each section shows bills explicitly assigned to that paycheck; these are not calendar pay-period boundaries.</p>
+      </header>
       <div class="budget-header">
         <div class="month-selector">
           <button id="btn-transfers-prev" class="btn btn-icon" aria-label="Previous month">&larr;</button>
-          <h2 id="transfers-month-label"></h2>
+          <h3 id="transfers-month-label"></h3>
           <button id="btn-transfers-next" class="btn btn-icon" aria-label="Next month">&rarr;</button>
         </div>
       </div>

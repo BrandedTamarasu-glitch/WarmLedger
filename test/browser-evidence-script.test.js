@@ -53,6 +53,27 @@ test('browser evidence exercises Data Health and reversible expense deletion beh
   assert.match(source, /scenario\.expenseDeleteEscape = true/);
 });
 
+test('browser evidence dynamically covers Pay periods semantics, routes, safety, and reflow', () => {
+  for (const marker of ['payPeriodsPassiveByteExact', 'payPeriodsCanonicalActualsFundingStates',
+    'payPeriodsAllocationsReconcileHostileSafe', 'payPeriodsExactCanonicalCollapsedRoutes',
+    'payPeriodsStaleAndZeroPaycheckRoutes', 'payPeriodsNarrowReflowForcedColors']) {
+    assert.match(source, new RegExp(marker));
+  }
+  assert.match(source, /localStorage\.getItem\(primaryKey\) === payPeriodBytes/);
+  assert.match(source, /Store\.getPayPeriodPlan\(month\)/);
+  assert.match(source, /Split across 2 paychecks/);
+  assert.match(source, /plan\.summary\.reconciliationDifference === 0/);
+  assert.match(source, /BudgetView\.collapsedCategories\.set/);
+  assert.match(source, /dataset\.fundingExpenseId === currentGenerated\.id/);
+  assert.match(source, /dataset\.fundingPaycheckId === income\.id/);
+  assert.match(source, /document\.activeElement\.id === 'btn-add-paycheck'/);
+  assert.match(source, /document\.activeElement\.id === 'expenses-heading'/);
+  assert.match(source, /Pay periods overflows at 320px/);
+  assert.match(source, /Forced-colors Pay periods evidence failed/);
+  assert.match(source, /payPeriodNarrow\.overflowing\.length === 0/);
+  assert.match(source, /payPeriodForcedColors\.focusOutline !== 'none'/);
+});
+
 test('profile cleanup retries transient failures with bounded backoff and eventually succeeds', async () => {
   const calls = []; const waits = [];
   const failures = ['ENOTEMPTY', 'EBUSY'].map(code => Object.assign(new Error(code), { code }));

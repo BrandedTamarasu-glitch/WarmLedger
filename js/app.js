@@ -129,6 +129,13 @@ const App = {
     else if (view === 'data-health') DataHealthView.render();
   },
 
+  openBudgetFunding(monthKey, expenseId, paycheckId = null) {
+    BudgetView.currentMonth = monthKey;
+    this.switchView('budget');
+    BudgetView.render();
+    requestAnimationFrame(() => BudgetView.focusFundingControl(expenseId, paycheckId));
+  },
+
   refreshAllViews() {
     BudgetView.render(); TransfersView.syncMonth(); TransfersView.render(); DashboardView.destroyAllCharts(); StructureView.render();
     this.initializeTemplateFeatures();

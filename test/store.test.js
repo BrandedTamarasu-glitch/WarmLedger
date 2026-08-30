@@ -515,7 +515,7 @@ test('month review is pure, frozen, detached, capability-neutral, and preserves 
   assert.equal(review.expenses.enteredActualTotal, 0);
   assert.equal(review.expenses.completeActualTotal, null);
   assert.equal(review.expenses.unresolvedCount, 1);
-  assert.equal(review.funding.issueCount, 2, 'the unrounded 100 - 99.991 result is greater than 0.009');
+  assert.equal(review.funding.issueCount, 1, 'the mathematical 0.009 boundary is balanced despite binary floating-point noise');
   assert.equal(review.balance.plannedRemainder, 1350);
   assert.equal(review.balance.actualCashFlow, null);
   assert.equal(review.recurring.pendingCount, 1);
@@ -532,11 +532,12 @@ test('month review is pure, frozen, detached, capability-neutral, and preserves 
   assert.deepEqual(store.applyRecurringPreview(preview), { addedIncome: 1, addedExpenses: 0 });
 });
 
-test('funding tolerance uses exact unrounded signed 0.009 boundaries', () => {
+test('funding tolerance keeps the mathematical 0.009 boundary stable under floating-point noise', () => {
   const cases = [
     { plannedAmount: 0.008999999999999998, issues: 0 },
     { plannedAmount: 0.009, issues: 0 },
-    { plannedAmount: 0.009000000000000001, issues: 1 }
+    { plannedAmount: 0.009000000000000001, issues: 0 },
+    { plannedAmount: 0.0091, issues: 1 }
   ];
   for (const [index, entry] of cases.entries()) {
     const budget = makeBudget(); budget.months = {};
@@ -554,13 +555,14 @@ test('funding tolerance uses exact unrounded signed 0.009 boundaries', () => {
     if (entry.issues) assert.equal(review.funding.issues[0].shortfall, entry.plannedAmount);
   }
 
-  // V3 validation excludes persisted over-allocation, so assert the production signed predicate itself
-  // retains the exact symmetric boundary without introducing a rounded or widened tolerance.
+  // V3 validation excludes persisted over-allocation, so assert the production classifier remains
+  // symmetric and uses the same deliberately narrow floating-point guard in both directions.
   const source = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'js', 'data.js'), 'utf8');
-  assert.match(source, /if \(shortfall > 0\.009 \|\| shortfall < -0\.009\)/);
+  assert.match(source, /function fundingDirection\(value\)/);
+  assert.match(source, /FUNDING_TOLERANCE \+ FUNDING_EPSILON/);
   assert.equal(-0.008999999999999998 < -0.009, false);
   assert.equal(-0.009 < -0.009, false);
-  assert.equal(-0.009000000000000001 < -0.009, true);
+  assert.equal(-0.0091 < -0.009, true);
 });
 
 test('missing and empty month reviews remain write-free and never report ready', () => {

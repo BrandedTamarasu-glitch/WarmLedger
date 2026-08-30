@@ -47,12 +47,25 @@ Deferred within this phase: automatic date inference, automatic template creatio
 - Prevent closing incomplete or mismatched months.
 - Lock closed months and require an explicit snapshotted reopen flow.
 
-## Phase 6 — Honest transfers
+## Phase 6 — Honest paycheck funding and transfers
 
-- Label the current view as a planned transfer plan.
-- Separate planned money from actual received money.
+### Phase 6A — Paycheck funding plan
+
+Status: validated locally; awaiting publication.
+
+- Present the compatibility-preserved Transfers route as **Pay periods**, a passive, read-only projection of explicit month-scoped paycheck funding.
+- Show planned income separately from actual income, preserving **Not entered** (`null`) versus an entered zero.
+- Support any number of paychecks and earners, bills split across paychecks, and clear fully funded, partially funded, unfunded, remaining, balanced, and over-assigned states.
+- Keep assignments explicit and editable only in Budget; recurring templates do not auto-assign generated bills.
+- Keep monthly remaining-funds allocations separate from paycheck funding envelopes.
+- Make no claims about calendar pay-period boundaries, cross-month funding, paid status, bank activity, reconciliation, or actual transfers.
+- Preserve data schema version 3 and backup/snapshot envelope version 1.
+
+### Phase 6B — Honest actual transfers and accounts
+
 - Add an Actual mode only after actuals and reconciliation are sufficiently complete.
 - Model accounts and account-to-account transfers explicitly if required.
+- Distinguish planned funding from received money, paid bills, and verified transfers without inferring financial activity.
 
 ## Phase 7 — Dashboard truth, accessibility, and reporting
 

@@ -488,11 +488,12 @@ const BudgetView = {
     if (expense.date) name.append(this.element('span', 'expense-date', ` · ${expense.date}`));
     const assigned = Object.values(amounts).reduce((sum, amount) => sum + amount, 0);
     this.appendRecordMarkers(name, expense, {
-      needsAllocation: Math.abs(assigned - expense.plannedAmount) > 0.009
+      needsAllocation: Store.fundingDirection(assigned - expense.plannedAmount) !== 0
     });
     paychecks.forEach(paycheck => {
       const cell = row.insertCell(); cell.className = 'col-pc'; const input = document.createElement('input');
       input.type = 'number'; input.step = '0.01'; input.placeholder = '0';
+      input.dataset.fundingExpenseId = expense.id; input.dataset.fundingPaycheckId = paycheck.id;
       input.value = Object.hasOwn(amounts, paycheck.id) ? amounts[paycheck.id] : '';
       input.setAttribute('aria-label', `${expense.name} allocated to ${this.getPaycheckShortLabel(paycheck)}`);
       input.min = '0';
@@ -528,6 +529,35 @@ const BudgetView = {
     deleteButton.addEventListener('click', event => this.deleteExpense(expense, event.currentTarget));
     actionCell.append(editButton, moveUp, moveDown, deleteButton);
     return row;
+  },
+
+  focusFundingControl(expenseId, paycheckId = null) {
+    const month = Store.getMonth(this.currentMonth);
+    const expense = month.expenses.find(record => record.id === expenseId);
+    const expensesHeading = document.getElementById('expenses-heading');
+    const focus = target => {
+      target?.focus({ preventScroll: true });
+      target?.scrollIntoView({ block: 'center', inline: 'nearest' });
+    };
+    if (!expense) {
+      App.announceStatus('That bill is no longer available. The current month’s expenses are shown.');
+      focus(expensesHeading); return;
+    }
+    if (this.collapsedCategories.get(expense.category)) {
+      this.collapsedCategories.set(expense.category, false);
+      this.renderExpenses();
+    }
+    if (!month.paychecks.length) {
+      App.announceStatus('Add a paycheck before assigning funding to this bill.');
+      focus(document.getElementById('btn-add-paycheck')); return;
+    }
+    const controls = [...document.querySelectorAll('.expense-table input[data-funding-expense-id][data-funding-paycheck-id]')];
+    const billControls = controls.filter(control => control.dataset.fundingExpenseId === expenseId);
+    const target = paycheckId === null ? billControls[0]
+      : billControls.find(control => control.dataset.fundingPaycheckId === paycheckId);
+    if (target) { focus(target); return; }
+    App.announceStatus('That paycheck funding control is no longer available. The bill is shown in the current month.');
+    focus(expensesHeading);
   },
 
   moveExpense(expense, delta, trigger) {

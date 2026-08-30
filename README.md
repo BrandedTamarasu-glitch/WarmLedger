@@ -9,7 +9,7 @@ See [ROADMAP.md](ROADMAP.md) for planned work and the boundaries of future phase
 
 ## Current features
 
-- Monthly paychecks, expenses, allocations, transfers, and dashboard summaries.
+- Monthly paychecks, expenses, allocations, paycheck funding plans, and dashboard summaries.
 - Add and edit paycheck and expense records.
 - Reorder monthly paychecks and reorder expenses within their displayed category using keyboard-accessible controls.
 - A **Structure** view for adding, renaming, archiving, restoring, and reordering categories, preset expense items, and earners.
@@ -75,6 +75,14 @@ Monthly Review summarizes the selected month without changing it. Several needs 
 An actual amount of **Not entered** means no value has been recorded (`null`). An entered `$0.00` is a real, complete value and is not treated as missing. While any actual is missing, the displayed entered-actual total is explicitly partial and the complete total and actual cash flow remain **Incomplete**. Planned totals and planned remainder remain available independently of actual entry.
 
 “Complete” means the required actual amounts have been entered. It does not mean the month was matched to a bank statement, cleared, closed, or otherwise reconciled with a financial institution. Actual cash flow is entered income minus entered expenses only after both are complete; it is not a bank balance.
+
+## Pay periods
+
+Pay periods is a passive, read-only view of the selected month's paycheck funding plan. Each paycheck is a month-scoped funding envelope containing only the bills explicitly assigned to it in **Budget**. Warm Ledger supports any number of paychecks and earners in a month; it does not assume exactly two checks or one earner. Add or change assignments in Budget, including splitting a bill across multiple paychecks. Pay periods then shows the funded, partially funded, and unfunded results without changing the ledger.
+
+Planned paycheck income drives the funding plan. Actual income is displayed separately: **Not entered** means `null`, while an entered `$0.00` is a real actual value. Monthly remaining-funds allocations remain separate from paycheck-to-bill assignments and are summarized only at the month level. Recurring templates can create records through their explicit Preview and Apply workflow, but they do not automatically assign generated bills to a paycheck.
+
+The view is not a calendar pay-period calculator, does not infer boundaries around paycheck dates, and does not move funding across months. A funding assignment is not evidence that a bill was paid, an account was reconciled, money reached a bank, or an account-to-account transfer occurred. This feature keeps data schema version 3 and backup/snapshot envelope version 1 unchanged.
 
 ## Data Health
 

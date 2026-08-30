@@ -1088,6 +1088,51 @@ label:has(> #field-template-enabled) { display: flex; align-items: center; min-h
 .transfer-summary { max-width: 100%; overflow-x: auto; }
 .transfer-summary-table { min-width: min(460px, 100%); max-width: 100%; overflow-x: auto; }
 
+/* Pay periods retains the established Transfers route and surface classes. */
+.pay-period-heading { margin-bottom: 18px; }
+.pay-period-heading h2 { font-size: clamp(26px, 3vw, 32px); line-height: 1.2; }
+.pay-period-heading p { max-width: 78ch; margin-top: 6px; color: var(--color-text-muted); line-height: 1.55; }
+#view-transfers .budget-header { margin-bottom: 12px; }
+#transfers-month-label { font-size: clamp(20px, 2.5vw, 26px); }
+.pay-period-count, .pay-period-month-state { margin: 0 0 14px; color: var(--color-text-muted); }
+.pay-period-card { border-top: 3px solid var(--color-border-interactive); }
+.pay-period-card.state-over-assigned { border-top-color: var(--color-danger); }
+.pay-period-card-header h3 { font-size: 18px; line-height: 1.3; }
+.pay-period-state { display: block; color: var(--color-text-muted); line-height: 1.45; overflow-wrap: anywhere; }
+.pay-period-state.state-remaining { color: var(--color-info); }
+.pay-period-state.state-balanced, .pay-period-state.state-fully-funded { color: var(--color-positive); }
+.pay-period-state.state-over-assigned, .pay-period-state.state-unfunded,
+.pay-period-state.state-partially-funded { color: var(--color-warning); }
+.pay-period-totals, .pay-period-method-list, .pay-period-summary-list {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px 16px; min-width: 0;
+}
+.pay-period-totals { padding: 16px 20px; border-bottom: 1px solid var(--color-divider); }
+.pay-period-totals dt, .pay-period-method-list dt, .pay-period-summary-list dt { min-width: 0; color: var(--color-text-muted); overflow-wrap: anywhere; }
+.pay-period-totals dd, .pay-period-method-list dd, .pay-period-summary-list dd {
+  min-width: 0; text-align: right; font-weight: 650; font-variant-numeric: tabular-nums; overflow-wrap: anywhere;
+}
+.pay-period-totals dd.is-missing, .pay-period-summary-list dd.is-missing { color: var(--color-warning); }
+.pay-period-bills h4, .pay-period-methods h4 { margin-bottom: 12px; font-size: 14px; }
+.pay-period-bill-list { display: grid; gap: 10px; margin-top: 12px; list-style: none; }
+.pay-period-bill {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 14px;
+  min-width: 0; padding: 12px; border: 1px solid var(--color-divider); border-radius: var(--radius-control);
+  background: var(--color-surface-raised);
+}
+.pay-period-bill-identity { display: grid; gap: 3px; min-width: 0; }
+.pay-period-bill-name, .pay-period-bill-meta { min-width: 0; overflow-wrap: anywhere; }
+.pay-period-bill-meta { color: var(--color-text-muted); font-size: 13px; }
+.pay-period-bill-amounts { display: grid; grid-template-columns: auto auto; gap: 3px 10px; font-size: 13px; }
+.pay-period-bill-amounts dt { color: var(--color-text-muted); }
+.pay-period-bill-amounts dd { text-align: right; font-weight: 650; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.pay-period-funding-action { min-height: 44px; white-space: normal; }
+.pay-period-needs, .pay-period-allocations, .pay-period-monthly-summary { margin-top: 18px; }
+.pay-period-needs > .muted-text { margin-top: 6px; }
+.pay-period-section-note { margin: 6px 0 14px; line-height: 1.5; overflow-wrap: anywhere; }
+.pay-period-summary-list { width: min(100%, 680px); }
+.pay-period-summary-list dt, .pay-period-summary-list dd { padding: 8px 4px; border-bottom: 1px solid var(--color-divider); }
+.pay-period-summary-list .row-total { color: var(--color-text); font-weight: 750; }
+
 .dashboard-controls {
   min-width: 0;
   flex-wrap: wrap;
@@ -1211,6 +1256,9 @@ label:has(> #field-template-enabled) { display: flex; align-items: center; min-h
   .restore-preview { grid-template-columns: 1fr; gap: 4px; }
   .restore-preview dd { margin-bottom: 10px; }
   .transfers-grid { grid-template-columns: 1fr; }
+  .pay-period-bill { align-items: stretch; grid-template-columns: minmax(0, 1fr); }
+  .pay-period-bill-amounts { width: min(100%, 360px); }
+  .pay-period-funding-action { justify-self: start; }
   .month-selector .btn-icon, .btn-delete { min-width: 44px; min-height: 44px; }
   .month-selector { gap: 4px; }
   .month-selector h2 { min-width: 0; flex: 1; font-size: 22px; }
@@ -1295,6 +1343,8 @@ label:has(> #field-template-enabled) { display: flex; align-items: center; min-h
   .transfer-card-header, .transfer-action { padding-inline: 14px; }
   .transfer-action-header { flex-wrap: wrap; }
   .transfer-action-amount { width: 100%; }
+  .pay-period-totals, .pay-period-method-list, .pay-period-summary-list { gap: 7px 10px; }
+  .pay-period-totals { padding-inline: 14px; }
   .dash-card { padding: 16px 14px; }
   .recovery-panel { margin: 12px; padding: 16px 14px; }
   .restore-dialog { width: calc(100vw - 16px); max-height: calc(100dvh - 16px); padding: 16px 14px; }
@@ -1321,6 +1371,10 @@ label:has(> #field-template-enabled) { display: flex; align-items: center; min-h
   .undo-notice { align-items: stretch; flex-direction: column; }
   .undo-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .undo-actions .btn { min-width: 0; min-height: 44px; }
+  .pay-period-bill { padding: 10px 8px; }
+  .pay-period-bill-amounts, .pay-period-summary-list { grid-template-columns: minmax(0, 1fr); }
+  .pay-period-bill-amounts dd, .pay-period-summary-list dd { margin-bottom: 5px; text-align: left; white-space: normal; }
+  .pay-period-funding-action { width: 100%; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1402,6 +1456,13 @@ label:has(> #field-template-enabled) { display: flex; align-items: center; min-h
   }
   .data-health-overview, .data-health-section, .health-counts li, .actual-resolution-row,
   .backup-comparison, .undo-notice { color: CanvasText; background: Canvas; border-color: CanvasText; box-shadow: none; }
+  .pay-period-card, .pay-period-bill, .pay-period-needs, .pay-period-allocations,
+  .pay-period-monthly-summary { color: CanvasText; background: Canvas; border-color: CanvasText; box-shadow: none; }
+  .pay-period-state, .pay-period-state.state-remaining, .pay-period-state.state-balanced,
+  .pay-period-state.state-fully-funded, .pay-period-state.state-over-assigned,
+  .pay-period-state.state-unfunded, .pay-period-state.state-partially-funded,
+  .pay-period-totals dt, .pay-period-method-list dt, .pay-period-summary-list dt,
+  .pay-period-bill-meta, .pay-period-bill-amounts dt { color: CanvasText; }
   .health-counts strong { color: CanvasText; }
   .actual-resolution-row > input[type="checkbox"] { forced-color-adjust: auto; }
 }
