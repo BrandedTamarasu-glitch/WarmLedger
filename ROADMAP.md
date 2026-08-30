@@ -51,7 +51,7 @@ Deferred within this phase: automatic date inference, automatic template creatio
 
 ### Phase 6A — Paycheck funding plan
 
-Status: validated locally; awaiting publication.
+Status: published on 2026-08-30.
 
 - Present the compatibility-preserved Transfers route as **Pay periods**, a passive, read-only projection of explicit month-scoped paycheck funding.
 - Show planned income separately from actual income, preserving **Not entered** (`null`) versus an entered zero.
