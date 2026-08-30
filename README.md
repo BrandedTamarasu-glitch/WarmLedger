@@ -1,6 +1,6 @@
 # Warm Ledger
 
-<p align="center"><img src="icon.png" alt="Warm Ledger open-book sunrise icon" width="128" height="128"></p>
+<p align="center"><img src="warm-ledger-icon.png" alt="Warm Ledger open-book sunrise icon" width="128" height="128"></p>
 <p align="center"><em>A calmer way to plan every dollar.</em></p>
 
 Warm Ledger is a calm, local, dependency-free budgeting application. It runs directly in a browser and stores budget records in that browser's site-specific storage.

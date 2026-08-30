@@ -14,12 +14,12 @@ const schema = read('js/data-schema.js');
 const recurrence = read('js/recurrence.js');
 const evidence = read('scripts/browser-evidence.js');
 const readme = read('README.md');
-const icon = fs.readFileSync(path.join(root, 'icon.png'));
+const icon = fs.readFileSync(path.join(root, 'warm-ledger-icon.png'));
 const packageJson = JSON.parse(read('package.json'));
 
 test('visible application identity is Warm Ledger', () => {
   assert.match(html, /<title>Warm Ledger<\/title>/);
-  assert.match(html, /<link rel="icon" href="icon\.png" type="image\/png">/);
+  assert.match(html, /<link rel="icon" href="warm-ledger-icon\.png" type="image\/png">/);
   assert.match(html, /class="nav-brand">Warm Ledger<\/div>/);
   assert.match(html, /Warm Ledger could not safely open the data stored in this browser/);
   assert.doesNotMatch(html, /ZeroBudget|Zero-Based Budget/);
