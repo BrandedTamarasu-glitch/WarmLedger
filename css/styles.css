@@ -881,6 +881,86 @@ input, select, textarea, .expense-table input[type="number"], .expense-table sel
 .modal, .restore-dialog { border-color: var(--color-border-interactive); }
 .category-items, .table-scroll, #transfers-content { min-width: 0; }
 
+/* Warm Ledger Budget workspace */
+.month-selector { justify-content: center; }
+.month-selector h2 { min-width: min(240px, calc(100% - 112px)); }
+.month-selector .btn-icon { min-width: 44px; min-height: 44px; }
+
+.budget-summary-bar {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+  padding: 18px 20px;
+}
+.summary-item { min-width: 0; padding: 0 20px; border-left: 1px solid var(--color-divider); }
+.summary-item:first-child { padding-left: 0; border-left: 0; }
+.summary-item:last-child { padding-right: 0; }
+.summary-label { line-height: 1.35; overflow-wrap: anywhere; }
+
+.monthly-review-container { background: var(--color-surface-raised); }
+.monthly-review { gap: 18px; }
+.monthly-review-states { gap: 6px; color: var(--color-text-muted); }
+.monthly-review-group {
+  padding: 4px 0 4px 16px;
+  border: 0;
+  border-left: 2px solid var(--color-divider);
+  border-radius: 0;
+  background: transparent;
+}
+.monthly-review-group h4 { font-size: 15px; }
+.monthly-review-details dd { font-variant-numeric: tabular-nums; }
+.monthly-review-exceptions { min-width: 0; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--color-divider); }
+.monthly-review-exceptions h5 { margin-bottom: 8px; font-size: 14px; }
+#monthly-review-empty-heading + p + .monthly-review-actions { padding-top: 4px; }
+
+.paychecks-grid { grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr)); gap: 16px; }
+.paycheck-card { min-width: 0; padding: 18px; }
+.paycheck-card .paycheck-header { min-width: 0; align-items: flex-start; flex-wrap: wrap; gap: 14px; }
+.paycheck-card .paycheck-header > div:first-child { flex: 1 1 160px; min-width: 0; }
+.paycheck-card .paycheck-earner { font-size: 15px; line-height: 1.4; overflow-wrap: anywhere; }
+.paycheck-card .paycheck-date { margin-top: 3px; }
+.paycheck-actions { flex: 1 1 100%; min-width: 0; justify-content: flex-start; }
+.paycheck-card .paycheck-amount { flex: 1 1 100%; min-width: 0; font-size: 16px; line-height: 1.45; overflow-wrap: anywhere; }
+.paycheck-card .amount-label { display: inline; }
+.paycheck-card .paycheck-remaining { margin-top: 14px; padding-top: 12px; font-size: 14px; }
+
+.category-group { min-width: 0; margin-bottom: 18px; }
+.category-header {
+  gap: 16px;
+  padding: 12px 4px;
+  border-radius: 0;
+  border-top: 1px solid transparent;
+  border-bottom: 1px solid var(--color-divider);
+  background: transparent;
+}
+.category-header:hover { background: var(--color-surface-raised); border-top-color: var(--color-divider); }
+.category-header[aria-expanded="true"] { border-bottom-color: var(--color-accent); }
+.category-name, .category-total { min-width: 0; overflow-wrap: anywhere; }
+.category-total { text-align: right; font-variant-numeric: tabular-nums; }
+.category-items { min-width: 0; max-width: 100%; padding: 6px 4px 10px 12px; overflow-x: auto; overscroll-behavior-inline: contain; }
+.expense-table { min-width: 760px; }
+.expense-table thead th { padding: 10px 8px; }
+.expense-table tbody td { padding: 9px 8px; }
+.expense-table thead th.col-name { width: 190px; }
+.expense-table td.col-name {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
+  line-height: 1.4;
+}
+.expense-table input[type="number"], .expense-table select { min-height: 40px; }
+.expense-table input { font-variant-numeric: tabular-nums; }
+
+.allocation-section { border-color: var(--color-warning); background: rgba(231, 189, 117, .06); }
+.allocation-section .section-header { padding-bottom: 10px; border-bottom: 1px solid var(--color-warning); }
+.allocation-prompt { min-width: 0; }
+.allocation-item { border: 1px solid var(--color-divider); background: var(--color-surface-raised); }
+.allocation-footer { padding-top: 12px; border-top: 1px solid var(--color-divider); }
+
+.budget-actions { align-items: center; padding-top: 18px; border-top: 1px solid var(--color-divider); }
+.budget-actions #btn-clear-month { margin-left: auto; }
+
 /* Responsive */
 @media (max-width: 768px) {
   .topnav { flex-wrap: wrap; gap: 12px; padding: 12px 16px; }
@@ -917,7 +997,17 @@ input, select, textarea, .expense-table input[type="number"], .expense-table sel
   .monthly-review-details dd { margin-bottom: 7px; }
   .modal { width: calc(100% - 16px); max-height: calc(100dvh - 16px); }
   .modal-header, .modal-body, .modal-footer { padding-left: 12px; padding-right: 12px; }
-  .btn-delete, .btn-move, .template-actions .btn, .monthly-review-action { min-width: 44px; min-height: 44px; }
+  .btn-delete, .btn-move, .paycheck-actions .btn, .expense-table td.col-actions .btn,
+  .template-actions .btn, .monthly-review-action { min-width: 44px; min-height: 44px; }
+}
+
+@media (max-width: 640px) {
+  .budget-header { margin-bottom: 20px; }
+  .budget-summary-bar { padding: 14px 12px; }
+  .summary-item { padding-inline: 12px; }
+  .category-header { align-items: flex-start; }
+  .paychecks-grid { grid-template-columns: minmax(0, 1fr); }
+  .btn-edit, .btn-move, .btn-delete { min-width: 44px; min-height: 44px; }
 }
 
 @media (max-width: 1200px) {
@@ -931,6 +1021,19 @@ input, select, textarea, .expense-table input[type="number"], .expense-table sel
   [tabindex="-1"], #current-month-label, #recovery-title, #monthly-review-heading,
   #structure-categories-heading, #structure-earners-heading { scroll-margin-top: 270px; }
   .storage-strip { margin-bottom: 16px; padding-inline: 12px; }
+  .budget-summary-bar { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .summary-item, .summary-item:first-child, .summary-item:last-child {
+    padding: 0 0 12px;
+    border-left: 0;
+    border-bottom: 1px solid var(--color-divider);
+  }
+  .summary-item:last-child { padding-bottom: 0; border-bottom: 0; }
+  .category-header { align-items: stretch; flex-direction: column; gap: 6px; }
+  .category-total { text-align: left; }
+  .monthly-review-group { padding-left: 12px; }
+  .budget-actions { display: grid; grid-template-columns: minmax(0, 1fr); }
+  .budget-actions .btn { width: 100%; min-height: 44px; }
+  .budget-actions #btn-clear-month { margin-left: 0; }
 }
 
 @media (max-width: 360px) {
@@ -949,7 +1052,7 @@ input, select, textarea, .expense-table input[type="number"], .expense-table sel
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
   .nav-tab, .btn, button, .category-header, .category-toggle, dialog, .restore-dialog,
-  .modal, .modal-overlay, .feedback-center, .live-message {
+  .modal, .modal-overlay, .feedback-center, .live-message, .paycheck-card, .monthly-review-action {
     transition: none !important;
     animation: none !important;
   }
@@ -978,9 +1081,15 @@ input, select, textarea, .expense-table input[type="number"], .expense-table sel
   :focus-visible, .monthly-review-action:focus-visible { outline: 3px solid Highlight !important; outline-offset: 3px; }
   .expense-table th, .expense-table td, .table-scroll th, .table-scroll td,
   .transfer-detail-table td, .transfer-summary-table td, .paycheck-remaining,
-  .modal-header, .modal-footer { border-color: CanvasText; }
+  .modal-header, .modal-footer, .summary-item, .monthly-review-exceptions,
+  .category-header, .allocation-section, .allocation-footer, .budget-actions { border-color: CanvasText; }
+  .monthly-review-group { border: 0; border-left: 2px solid CanvasText; }
+  .monthly-review-states { color: CanvasText; }
+  .expense-table { border-color: CanvasText; }
+  .allocation-section { background: Canvas; }
   .category-header:hover, .expense-table tbody tr:hover td, .table-scroll tr:hover td { background: ButtonFace; }
   .summary-value, .structure-status, .template-status, .muted-text, .storage-strip,
   .summary-label, .category-count, .field-help, .preview-summary { color: CanvasText; }
   .modal-overlay, .restore-dialog::backdrop { background: Canvas; }
+  .budget-actions #btn-clear-month { color: CanvasText; border: 2px solid CanvasText; }
 }
