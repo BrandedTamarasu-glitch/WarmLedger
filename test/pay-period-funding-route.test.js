@@ -43,8 +43,9 @@ test('allocation inputs expose stable funding datasets', () => {
   assert.match(budgetSource, /input\.dataset\.fundingPaycheckId = paycheck\.id/);
 });
 
-test('Budget allocation markers use the shared Store funding boundary', () => {
-  assert.match(budgetSource, /needsAllocation:\s*Store\.fundingDirection\(assigned - expense\.plannedAmount\) !== 0/);
+test('Budget funding alerts use the shared Store funding boundary without name-column prose', () => {
+  assert.match(budgetSource, /Store\.fundingDirection\(assigned - expense\.plannedAmount\) !== 0/);
+  assert.match(budgetSource, /expense-funding-alert/);
   assert.doesNotMatch(budgetSource, /Math\.abs\(assigned - expense\.plannedAmount\)\s*>\s*0\.009/);
 });
 

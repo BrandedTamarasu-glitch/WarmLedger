@@ -61,7 +61,8 @@ test('browser evidence dynamically covers Pay periods semantics, routes, safety,
   }
   assert.match(source, /localStorage\.getItem\(primaryKey\) === payPeriodBytes/);
   assert.match(source, /Store\.getPayPeriodPlan\(month\)/);
-  assert.match(source, /Split across 2 paychecks/);
+  assert.match(source, /split across 2 paychecks/);
+  assert.match(source, /pay-period-bill-pill/);
   assert.match(source, /plan\.summary\.reconciliationDifference === 0/);
   assert.match(source, /BudgetView\.collapsedCategories\.set/);
   assert.match(source, /dataset\.fundingExpenseId === currentGenerated\.id/);

@@ -234,9 +234,7 @@ const SCENARIO = `(async () => {
     'Pay periods did not preserve canonical paycheck order.');
   assert(cards[0].textContent.includes('$0.00') && cards[1].textContent.includes('Not entered'),
     'Pay periods did not distinguish entered-zero and missing actual income.');
-  assert(payPeriodContent.textContent.includes('Split across 2 paychecks') &&
-    payPeriodContent.textContent.includes('Fully funded across paychecks') &&
-    payPeriodContent.textContent.includes('Partially funded') && payPeriodContent.textContent.includes('Unfunded'),
+  assert(payPeriodContent.textContent.includes('Partially funded') && payPeriodContent.textContent.includes('Unfunded'),
     'Pay periods funding-state text is incomplete.');
   assert(payPeriodContent.querySelector('.pay-period-allocations')?.textContent.includes('$9.00') &&
     payPeriodContent.querySelector('.pay-period-monthly-summary'), 'Pay periods allocations or monthly summary are missing.');
@@ -246,8 +244,10 @@ const SCENARIO = `(async () => {
   assert(payPeriodContent.textContent.includes('Synthetic long unfunded bill') &&
     !payPeriodContent.querySelector('img') && !globalThis.__payHostileRan, 'Hostile Pay periods content was not inert text.');
 
-  const reviewFunding = [...cards[1].querySelectorAll('.pay-period-funding-action')]
+  const reviewFunding = [...cards[1].querySelectorAll('.pay-period-bill-pill')]
     .find(button => button.dataset.expenseId === currentGenerated.id);
+  assert(reviewFunding.textContent === currentGenerated.name && reviewFunding.getAttribute('aria-label').includes('split across 2 paychecks'),
+    'Funded bill pill did not preserve compact text with accessible funding context.');
   Store.updateExpense(month, currentGenerated.id, { plannedAmount: 1076 });
   BudgetView.collapsedCategories.set(currentGenerated.category, true);
   reviewFunding.click(); await settle();
@@ -417,13 +417,17 @@ async function run(options) {
         if (!el.getClientRects().length) return false; const rect = el.getBoundingClientRect();
         return rect.left < -0.5 || rect.right > viewport + 0.5;
       }).map(el => ({ tag: el.tagName, id: el.id, className: String(el.className || '') })).slice(0, 20);
+      const expenseNamesClean = [...document.querySelectorAll('.expense-table .col-name')].every(cell =>
+        !cell.querySelector('.record-marker, .expense-date') && !cell.textContent.includes('Needs allocation'));
       return { visible: Boolean(review.getClientRects().length), cards: review.querySelectorAll('.monthly-review-group').length,
         metrics: review.querySelectorAll('.monthly-review-metric').length, drilldowns: review.querySelectorAll('details').length,
+        fundingPrompt: review.querySelector('.monthly-review-funding-alert')?.textContent || '',
+        removedTiles: !review.querySelector('#monthly-review-recurring-heading, #monthly-review-funding-heading'), expenseNamesClean,
         exceptionsVisible: review.textContent.includes('Recurring exceptions') || Boolean(review.querySelector('[data-exception-action]')),
         overflowing, pageWidth: document.documentElement.scrollWidth, viewport };
     })()`);
-    assertEvidence(monthlyReviewNarrow.visible && monthlyReviewNarrow.cards >= 5 && monthlyReviewNarrow.metrics >= 8 &&
-      monthlyReviewNarrow.drilldowns >= 1 && !monthlyReviewNarrow.exceptionsVisible &&
+    assertEvidence(monthlyReviewNarrow.visible && monthlyReviewNarrow.cards >= 4 && monthlyReviewNarrow.metrics >= 7 &&
+      monthlyReviewNarrow.drilldowns >= 1 && monthlyReviewNarrow.fundingPrompt === '!' && monthlyReviewNarrow.removedTiles && monthlyReviewNarrow.expenseNamesClean && !monthlyReviewNarrow.exceptionsVisible &&
       monthlyReviewNarrow.overflowing.length === 0 && monthlyReviewNarrow.pageWidth <= monthlyReviewNarrow.viewport,
       `Compact Monthly Review evidence failed: ${JSON.stringify(monthlyReviewNarrow)}`);
     const monthlyPaymentGuidance = await evaluate(cdp, `(() => {
@@ -475,7 +479,7 @@ async function run(options) {
     await cdp.send('Emulation.setEmulatedMedia', { features: [{ name: 'forced-colors', value: 'active' }] });
     const payPeriodForcedColors = await evaluate(cdp, `(() => {
       const card = document.querySelector('.pay-period-card'); const state = card?.querySelector('.pay-period-state');
-      const focus = card?.querySelector('.pay-period-funding-action'); focus?.focus();
+      const focus = card?.querySelector('.pay-period-bill-pill'); focus?.focus();
       return { active: matchMedia('(forced-colors: active)').matches, cardVisible: Boolean(card?.getClientRects().length),
         cardBorder: card ? getComputedStyle(card).borderColor : '', stateVisible: Boolean(state?.getClientRects().length),
         stateColor: state ? getComputedStyle(state).color : '', focusOutline: focus ? getComputedStyle(focus).outlineStyle : '' };

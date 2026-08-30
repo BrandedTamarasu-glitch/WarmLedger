@@ -129,6 +129,14 @@ const BudgetView = {
     return button;
   },
 
+  reviewFundingAlert(issue) {
+    const label = `Review funding for ${issue.name}. ${issue.shortfall > 0 ? `${this.fmt(issue.shortfall)} still needs funding` : 'This bill is over-assigned'}.`;
+    const button = this.element('button', 'monthly-review-funding-alert', '!'); button.type = 'button';
+    button.setAttribute('aria-label', label); button.title = label;
+    button.dataset.reviewKind = 'funding'; button.dataset.recordId = issue.expenseId;
+    button.addEventListener('click', () => App.openBudgetFunding(this.currentMonth, issue.expenseId, null)); return button;
+  },
+
   reviewPayPeriodsAction() {
     const button = this.element('button', 'btn btn-sm monthly-review-action', 'View by paycheck'); button.type = 'button';
     button.addEventListener('click', () => App.switchView('transfers')); return button;
@@ -165,25 +173,19 @@ const BudgetView = {
     const header = this.element('div', 'monthly-review-header');
     const statusText = review.empty ? 'Not started' : review.states.ready ? 'Ready' : 'Needs attention';
     const statusTone = review.empty ? 'state-empty' : review.states.ready ? 'state-ready' : 'state-attention';
-    header.append(heading, this.element('span', `monthly-review-status ${statusTone}`, statusText)); wrapper.append(header);
+    header.append(heading, this.element('span', `monthly-review-status ${statusTone}`, statusText));
+    if (review.funding.issueCount) header.append(this.reviewFundingAlert(review.funding.issues[0]));
+    wrapper.append(header);
 
     const states = this.element('ul', 'monthly-review-states');
     const stateText = [];
     if (review.states.needsRecurringReview) stateText.push('Recurring items need review.');
     if (review.states.needsActuals) stateText.push('Actual amounts are not entered for every item.');
-    if (review.states.needsAllocation) stateText.push('Some planned expenses need paycheck funding.');
     if (review.states.ready) stateText.push('Monthly review is ready.');
     if (review.empty) stateText.push('This month is empty and is not ready.');
     stateText.forEach(text => states.append(this.element('li', '', text))); wrapper.append(states);
 
     const grid = this.element('div', 'monthly-review-grid'); wrapper.append(grid);
-    const recurring = this.reviewGroup(grid, 'monthly-review-recurring-heading', 'Recurring items', 'tile-recurring');
-    const recurringMetrics = this.element('div', 'monthly-review-metrics');
-    this.reviewMetric(recurringMetrics, 'Pending', String(review.recurring.pendingCount), review.recurring.pendingCount ? 'metric-attention' : '');
-    this.reviewMetric(recurringMetrics, 'Conflicts', String(review.recurring.conflictCount), review.recurring.conflictCount ? 'metric-attention' : '');
-    recurring.append(recurringMetrics);
-    if (review.recurring.pendingCount || review.recurring.conflictCount) recurring.append(this.reviewPreviewAction());
-
     if (review.empty) {
       const empty = this.reviewGroup(grid, 'monthly-review-empty-heading', 'Start this month', 'tile-start');
       empty.append(this.element('p', '', 'Add records or bring forward a prior plan before reviewing this month.'));
@@ -214,26 +216,6 @@ const BudgetView = {
 
     this.renderReviewActualGroup(grid, 'income', review.income);
     this.renderReviewActualGroup(grid, 'expense', review.expenses);
-
-    const funding = this.reviewGroup(grid, 'monthly-review-funding-heading', 'Expense funding', 'tile-funding');
-    const fundingMetrics = this.element('div', 'monthly-review-metrics');
-    this.reviewMetric(fundingMetrics, 'Needs attention', String(review.funding.issueCount), review.funding.issueCount ? 'metric-attention' : 'metric-positive');
-    funding.append(fundingMetrics);
-    if (!review.funding.issueCount) funding.append(this.element('p', 'monthly-review-compact-note', 'Every expense is funded.'));
-    else {
-      const drilldown = this.reviewDrilldown(funding, `Review ${review.funding.issueCount} funding ${review.funding.issueCount === 1 ? 'issue' : 'issues'}`);
-      const list = this.element('ul', 'monthly-review-list');
-      review.funding.issues.forEach(issue => {
-        const item = this.element('li', 'monthly-review-item');
-        const difference = issue.shortfall > 0 ? `Needs ${this.fmt(issue.shortfall)}` : `Over-assigned by ${this.fmt(Math.abs(issue.shortfall))}`;
-        item.append(this.element('span', '', `${issue.name} — ${issue.category}: ${difference}.`));
-        const button = this.element('button', 'btn btn-sm monthly-review-action', `Edit funding for ${issue.name}`); button.type = 'button';
-        button.dataset.reviewKind = 'funding'; button.dataset.recordId = issue.expenseId;
-        button.addEventListener('click', () => this.openReviewEditor('expense', issue.expenseId, button, { kind: 'funding', id: issue.expenseId }));
-        item.append(button); list.append(item);
-      });
-      drilldown.append(list);
-    }
 
     const balance = this.reviewGroup(grid, 'monthly-review-balance-heading', 'Balance', 'tile-balance');
     const balanceMetrics = this.element('div', 'monthly-review-metrics monthly-review-metrics-three');
@@ -494,11 +476,15 @@ const BudgetView = {
     const row = document.createElement('tr'); row.dataset.id = expense.id;
     const name = row.insertCell(); name.className = 'col-name';
     name.append(this.element('span', 'expense-name', expense.name));
-    if (expense.date) name.append(this.element('span', 'expense-date', ` · ${expense.date}`));
+    if (Object.hasOwn(expense, 'sourceTemplateId') && expense.sourceTemplateId !== null) {
+      name.append(this.element('span', 'visually-hidden', 'From recurring template'));
+    }
     const assigned = Object.values(amounts).reduce((sum, amount) => sum + amount, 0);
-    this.appendRecordMarkers(name, expense, {
-      needsAllocation: Store.fundingDirection(assigned - expense.plannedAmount) !== 0
-    });
+    if (Store.fundingDirection(assigned - expense.plannedAmount) !== 0) {
+      const alert = this.element('span', 'expense-funding-alert', '!');
+      alert.setAttribute('role', 'img'); alert.setAttribute('aria-label', `${expense.name} needs paycheck funding`);
+      alert.title = 'Needs paycheck funding'; name.append(alert);
+    }
     paychecks.forEach(paycheck => {
       const cell = row.insertCell(); cell.className = 'col-pc'; const input = document.createElement('input');
       input.type = 'number'; input.step = '0.01'; input.placeholder = '0';

@@ -25,13 +25,15 @@ test('budget uses canonical v3 planned and nullable actual fields without serial
   assert.doesNotMatch(source, /usesV3|schemaVersion|field-amount|\.amount\b|\.actual\b/);
 });
 
-test('v3 rendering exposes provenance, dates, allocation state, and explicit zero values', () => {
+test('expense names stay clean while provenance and funding state remain accessible', () => {
   assert.match(source, /From template/);
-  assert.match(source, /Needs allocation/);
   assert.match(source, /Object\.hasOwn\(amounts, paycheck\.id\) \? amounts\[paycheck\.id\] : ''/);
   assert.match(source, /Store\.fundingDirection\(assigned - expense\.plannedAmount\) !== 0/);
   assert.doesNotMatch(source, /Math\.abs\(assigned - expense\.plannedAmount\)/);
-  assert.match(source, /expense-date/);
+  const expenseRow = source.slice(source.indexOf('  renderExpenseRow('), source.indexOf('\n  focusFundingControl(', source.indexOf('  renderExpenseRow(')));
+  assert.match(expenseRow, /expense-funding-alert/);
+  assert.match(expenseRow, /visually-hidden', 'From recurring template'/);
+  assert.doesNotMatch(expenseRow, /appendRecordMarkers|expense-date|From template|Needs allocation/);
   assert.match(source, /Actual not entered/);
   assert.match(source, /allocated to \$\{this\.getPaycheckShortLabel\(paycheck\)\}/);
   assert.match(source, /\$\{expense\.name\} actual amount/);

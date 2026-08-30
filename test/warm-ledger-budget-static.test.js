@@ -42,7 +42,7 @@ test('Budget summary is a stable numeric grid with narrow fallbacks', () => {
 
 test('Monthly Review uses a compact metric dashboard with wrap-safe drilldowns', () => {
   for (const selector of ['.monthly-review-grid', '.monthly-review-group', '.monthly-review-metrics',
-    '.monthly-review-metric-value', '.monthly-review-drilldown', '.monthly-review-list', '.monthly-review-action']) {
+    '.monthly-review-metric-value', '.monthly-review-funding-alert', '.monthly-review-drilldown', '.monthly-review-list', '.monthly-review-action']) {
     assert.match(css, new RegExp(selector.replace('.', '\\.')));
   }
   assert.match(css, /\.monthly-review-grid\s*\{[^}]*repeat\(auto-fit/is);
@@ -53,6 +53,7 @@ test('Monthly Review uses a compact metric dashboard with wrap-safe drilldowns',
   assert.match(css, /(?:\.monthly-review-item[^,{]*|\.monthly-review-list\s+li)[^{]*\{[^}]*overflow-wrap\s*:\s*anywhere/is);
   assert.match(css, /\.monthly-review-action\s*\{[^}]*min-height\s*:\s*44px/is);
   assert.match(css, /\.monthly-review-action:focus-visible\s*\{[^}]*outline\s*:/is);
+  assert.match(css, /\.visually-hidden\s*\{[^}]*clip\s*:/is);
 });
 
 test('paycheck cards fit long content and preserve action hierarchy', () => {

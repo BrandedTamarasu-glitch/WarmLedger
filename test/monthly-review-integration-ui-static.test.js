@@ -20,7 +20,7 @@ test('Budget contains one labelled Monthly Review integration region before deta
 
 test('Monthly Review styling is scoped, readable, touch-sized, and narrow-screen safe', () => {
   for (const selector of [
-    '.monthly-review-container:empty', '.monthly-review', '.monthly-review-header', '.monthly-review-status',
+    '.monthly-review-container:empty', '.monthly-review', '.monthly-review-header', '.monthly-review-status', '.monthly-review-funding-alert',
     '.monthly-review-states', '.monthly-review-grid', '.monthly-review-group', '.monthly-review-metrics',
     '.monthly-review-metric-value', '.monthly-review-destination-list', '.monthly-review-destination',
     '.monthly-review-drilldown', '.monthly-review-item', '.monthly-review-actions',
@@ -28,9 +28,11 @@ test('Monthly Review styling is scoped, readable, touch-sized, and narrow-screen
   ]) assert.match(styles, new RegExp(selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   assert.match(styles, /grid-template-columns: repeat\(auto-fit, minmax\(min\(210px, 100%\), 1fr\)\)/);
   assert.match(styles, /\.monthly-review-action \{[^}]*min-height: 44px/);
+  assert.match(styles, /\.monthly-review-funding-alert \{[^}]*min-height: 36px/);
   assert.match(styles, /\.monthly-review-action:focus-visible/);
   assert.match(styles, /@media \(max-width: 360px\)[\s\S]*?\.monthly-review-container/);
   assert.match(styles, /@media \(forced-colors: active\)[\s\S]*?\.monthly-review-action:focus-visible/);
+  assert.match(styles, /\.expense-funding-alert/);
   assert.match(styles, /@media \(prefers-reduced-motion: reduce\)/);
   assert.match(styles, /overflow-wrap: anywhere/);
   assert.doesNotMatch(styles, /body\s*\{[^}]*overflow-x\s*:\s*hidden/);

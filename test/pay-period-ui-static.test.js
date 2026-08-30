@@ -40,8 +40,8 @@ test('actual zero, funding states, split context, and all methods remain textual
   for (const state of ['remaining', 'balanced', 'over-assigned', 'partially-funded', 'unfunded']) {
     assert.match(source, new RegExp(state));
   }
-  assert.match(source, /Fully funded across paychecks/);
-  assert.match(source, /Split across/);
+  assert.match(source, /fully funded/);
+  assert.match(source, /split across/);
   for (const method of ['Keep in bank', 'Plan for credit card', 'Plan for savings', 'Plan for investments']) assert.match(source, new RegExp(method));
   assert.doesNotMatch(source, /bonus|extra paycheck|disposable/i);
 });
@@ -55,6 +55,21 @@ test('contextual funding controls are safe, dataset-backed, and ready for Wave 3
   assert.doesNotMatch(source, /\.innerHTML\s*=|insertAdjacentHTML|outerHTML|querySelector\([^)]*expenseId/);
   assert.match(source, /document\.createElement/);
   assert.match(source, /\.textContent = text/);
+});
+
+test('funded bills render as compact name-only pills while retaining the funding route', () => {
+  const start = source.indexOf('  renderBill('); const end = source.indexOf('\n  methodGuidance(', start);
+  const renderer = source.slice(start, end);
+  assert.match(renderer, /pay-period-bill-pill/);
+  assert.match(renderer, /bill\.name/);
+  assert.doesNotMatch(renderer, /fundedByThisPaycheck|plannedAmount|pay-period-bill-meta|billContext/);
+  assert.match(source, /Review funding for \$\{bill\.name\} from Paycheck \$\{paycheckNumber\}: \$\{this\.billFundingContext\(bill\)\}/);
+  assert.match(source, /fundedByThisPaycheck.*bill\.category.*methodLabel\(bill\.paymentMethod\).*fundedPaycheckCount/s);
+  assert.match(source, /pay-period-bill-list pay-period-bill-pills/);
+  assert.match(css, /\.pay-period-bill-pills\s*\{[^}]*flex-wrap\s*:\s*wrap/is);
+  assert.match(css, /\.pay-period-bill-pill\s*\{[^}]*border-radius\s*:\s*999px/is);
+  assert.match(css, /\.pay-period-bill-pill\s*\{[^}]*min-height\s*:\s*44px/is);
+  assert.match(css, /@media \(forced-colors:\s*active\)[\s\S]*?\.pay-period-bill-pill\s*\{[^}]*ButtonText/is);
 });
 
 test('Pay periods has narrow targets, wrapping, forced colors, and inherited reduced motion', () => {

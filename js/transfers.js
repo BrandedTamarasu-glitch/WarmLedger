@@ -28,8 +28,8 @@ const TransfersView = {
   definition(list, term, value, className = '') {
     const dt = this.element('dt', '', term); const dd = this.element('dd', className, value); list.append(dt, dd);
   },
-  fundingButton(expenseId, paycheckId, label, accessibleLabel) {
-    const button = this.element('button', 'btn btn-sm pay-period-funding-action', label); button.type = 'button';
+  fundingButton(expenseId, paycheckId, label, accessibleLabel, className = 'pay-period-funding-action') {
+    const button = this.element('button', `btn btn-sm ${className}`, label); button.type = 'button';
     button.setAttribute('aria-label', accessibleLabel);
     button.dataset.expenseId = expenseId; if (paycheckId !== null) button.dataset.paycheckId = paycheckId;
     button.addEventListener('click', () => App.openBudgetFunding(this.currentMonth, expenseId, paycheckId)); return button;
@@ -39,26 +39,19 @@ const TransfersView = {
     if (period.fundingState === 'balanced') return `${this.fmt(0)} balanced`;
     return `${this.fmt(period.plannedRemainder)} remaining`;
   },
-  billContext(bill) {
-    const parts = [];
-    if (bill.splitAcrossPaychecks) parts.push(`Split across ${bill.fundedPaycheckCount} paychecks`);
-    if (bill.fundingState === 'partially-funded') parts.push(`${this.fmt(bill.remainingToFund)} still needs funding`);
-    else parts.push('Fully funded across paychecks');
-    return parts.join(' · ');
+  billFundingContext(bill) {
+    const split = bill.splitAcrossPaychecks ? `split across ${bill.fundedPaycheckCount} paychecks` : 'one paycheck';
+    const funding = bill.fundingState === 'partially-funded' ? `${this.fmt(bill.remainingToFund)} still needs funding` : 'fully funded';
+    return `${this.fmt(bill.fundedByThisPaycheck)} assigned; ${bill.category}; ${this.methodLabel(bill.paymentMethod)}; ${split}; ${funding}`;
   },
   methodLabel(method) {
     return ({ bank: 'Bank', credit_card: 'Credit card', savings: 'Savings', investments: 'Investments' })[method] || 'Other';
   },
   renderBill(bill, paycheckId, paycheckNumber) {
-    const item = this.element('li', 'pay-period-bill'); const identity = this.element('div', 'pay-period-bill-identity');
-    identity.append(this.element('strong', 'pay-period-bill-name', bill.name),
-      this.element('span', 'pay-period-bill-meta', `${bill.category} · ${this.formatDate(bill.date)} · ${this.methodLabel(bill.paymentMethod)}`),
-      this.element('span', `pay-period-state state-${bill.fundingState}`, this.billContext(bill)));
-    const amounts = this.element('dl', 'pay-period-bill-amounts');
-    this.definition(amounts, 'From this paycheck', this.fmt(bill.fundedByThisPaycheck));
-    this.definition(amounts, 'Bill planned', this.fmt(bill.plannedAmount));
-    item.append(identity, amounts, this.fundingButton(bill.expenseId, paycheckId, 'Review funding',
-      `Review funding for ${bill.name} from Paycheck ${paycheckNumber}`)); return item;
+    const item = this.element('li', 'pay-period-bill');
+    const pill = this.fundingButton(bill.expenseId, paycheckId, bill.name,
+      `Review funding for ${bill.name} from Paycheck ${paycheckNumber}: ${this.billFundingContext(bill)}.`, 'pay-period-bill-pill');
+    item.append(pill); return item;
   },
   methodGuidance(period) {
     const section = this.element('div', 'transfer-action pay-period-methods'); section.append(this.element('h4', '', 'Planned funding guidance'));
@@ -81,7 +74,7 @@ const TransfersView = {
     this.definition(totals, 'Planned remainder', this.remainderText(period), `state-${period.fundingState}`);
     const bills = this.element('div', 'transfer-action pay-period-bills'); bills.append(this.element('h4', '', 'Bills funded by this paycheck'));
     if (period.bills.length) {
-      const list = this.element('ul', 'pay-period-bill-list');
+      const list = this.element('ul', 'pay-period-bill-list pay-period-bill-pills');
       period.bills.forEach(bill => list.append(this.renderBill(bill, period.paycheckId, period.number))); bills.append(list);
     } else bills.append(this.element('p', 'transfer-empty', 'No bills are explicitly assigned to this paycheck.'));
     section.append(header, totals, bills, this.methodGuidance(period)); return section;
