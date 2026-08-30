@@ -102,7 +102,7 @@ const App = {
   downloadEvidence() {
     const evidence = Store.getCorruptEvidence();
     if (typeof evidence !== 'string') return this.showErrorCode('EVIDENCE_UNAVAILABLE');
-    this.download(evidence, `zerobudget-preserved-data-${this.fileTimestamp()}.txt`, 'text/plain');
+    this.download(evidence, `warm-ledger-preserved-data-${this.fileTimestamp()}.txt`, 'text/plain');
     this.announceStatus('Preserved data downloaded.');
   },
 
@@ -250,7 +250,7 @@ const App = {
 
   downloadBackup() {
     try {
-      this.download(Store.exportData(), `zerobudget-backup-${this.fileTimestamp()}.json`, 'application/json');
+      this.download(Store.exportData(), `warm-ledger-backup-${this.fileTimestamp()}.json`, 'application/json');
       this.announceStatus('Backup downloaded.');
     } catch (error) { this.showError(error); }
   },
@@ -333,20 +333,20 @@ const App = {
   showError(error) { this.showErrorCode(error && error.code ? error.code : 'UNKNOWN'); },
   showErrorCode(code) {
     const messages = {
-      INVALID_IMPORT: 'This file is not a valid ZeroBudget backup. Your current budget was not changed.',
+      INVALID_IMPORT: 'This file is not a valid Warm Ledger backup. Your current budget was not changed.',
       STALE_IMPORT_PREVIEW: 'Your budget changed while the backup was open. Select the backup again before restoring.',
-      SNAPSHOT_WRITE_FAILED: 'ZeroBudget could not create a safety snapshot, so your budget was not replaced.',
+      SNAPSHOT_WRITE_FAILED: 'Warm Ledger could not create a safety snapshot, so your budget was not replaced.',
       PRIMARY_WRITE_FAILED: 'Changes could not be saved in this browser. Your last saved budget is still available.',
-      FILE_TOO_LARGE: 'This backup is too large to open. Choose a ZeroBudget JSON backup smaller than 5 MB.',
+      FILE_TOO_LARGE: 'This backup is too large to open. Choose a Warm Ledger JSON backup smaller than 5 MB.',
       FILE_READ_FAILED: 'This file could not be read. Your current budget was not changed.',
-      EVIDENCE_WRITE_FAILED: 'The unreadable data is available only during this session. Download it before closing ZeroBudget.',
+      EVIDENCE_WRITE_FAILED: 'The unreadable data is available only during this session. Download it before closing Warm Ledger.',
       EVIDENCE_UNAVAILABLE: 'No preserved data is available to download.',
       SNAPSHOT_NOT_FOUND: 'That recovery snapshot is no longer available. Choose another recovery option.',
       INVALID_SNAPSHOT_SKIPPED: 'One damaged local recovery snapshot was skipped. Your active budget is still available.',
       SNAPSHOT_CLEANUP_FAILED: 'An older local recovery snapshot could not be removed. Your active budget was saved.',
       SNAPSHOT_READ_FAILED: 'Local recovery snapshots could not be read. Download a JSON backup to keep a durable copy.',
-      CLOCK_FAILED: 'ZeroBudget could not read this device’s clock, so a safety snapshot may not have been created. Download a JSON backup now.',
-      IDENTIFIER_GENERATION_FAILED: 'ZeroBudget could not create a safe record identifier. Your last saved budget is unchanged. Try the action again.',
+      CLOCK_FAILED: 'Warm Ledger could not read this device’s clock, so a safety snapshot may not have been created. Download a JSON backup now.',
+      IDENTIFIER_GENERATION_FAILED: 'Warm Ledger could not create a safe record identifier. Your last saved budget is unchanged. Try the action again.',
       INVALID_AMOUNT: 'Enter an amount between 0 and 1,000,000,000,000.',
       AMOUNT_OUT_OF_RANGE: 'Enter an amount between 0 and 1,000,000,000,000.',
       INVALID_STRING: 'Names must contain 1 to 120 characters without leading or trailing spaces.',
@@ -380,7 +380,7 @@ const App = {
       SUPPRESSED_OCCURRENCE_NOT_FOUND: 'That recurring exception is no longer available. Review the current month and try again.',
       SUPPRESSED_OCCURRENCE_INELIGIBLE: 'Update the recurring template as described before allowing this occurrence again.',
       UNSUPPRESS_PREVIEW_FAILED: 'The exception was removed and can be generated again, but preview could not open. Use Preview recurring items to try again. No record was added.',
-      UNKNOWN: 'ZeroBudget could not complete that action. Your last saved budget remains available.'
+      UNKNOWN: 'Warm Ledger could not complete that action. Your last saved budget remains available.'
     };
     const alert = document.getElementById('app-error'); document.getElementById('app-status').textContent = '';
     alert.textContent = messages[code] || messages.UNKNOWN; alert.hidden = false;

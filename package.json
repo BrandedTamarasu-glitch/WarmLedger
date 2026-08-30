@@ -1,5 +1,5 @@
 {
-  "name": "zerobudget",
+  "name": "warm-ledger",
   "private": true,
   "scripts": {
     "test": "node --test",

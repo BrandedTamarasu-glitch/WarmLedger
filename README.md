@@ -1,6 +1,9 @@
-# ZeroBudget
+# Warm Ledger
 
-ZeroBudget is a local, dependency-free budgeting application. It runs directly in a browser and stores budget records in that browser's site-specific storage.
+<p align="center"><img src="icon.png" alt="Warm Ledger open-book sunrise icon" width="128" height="128"></p>
+<p align="center"><em>A calmer way to plan every dollar.</em></p>
+
+Warm Ledger is a calm, local, dependency-free budgeting application. It runs directly in a browser and stores budget records in that browser's site-specific storage.
 
 ## Current features
 
@@ -16,13 +19,13 @@ ZeroBudget is a local, dependency-free budgeting application. It runs directly i
 - Versioned JSON backup and restore with validation and preview.
 - Local safety snapshots and a startup recovery workflow.
 
-Archived Structure choices remain visible in historical records and totals but are hidden when creating new records. Archiving does not delete or rewrite prior months. ZeroBudget prevents archiving the last active category or earner so new expenses and paychecks can still be created.
+Archived Structure choices remain visible in historical records and totals but are hidden when creating new records. Archiving does not delete or rewrite prior months. Warm Ledger prevents archiving the last active category or earner so new expenses and paychecks can still be created.
 
 Paycheck and expense order is stored as part of each month and survives reload, backup/restore, and copying a month. Expense movement stays within its displayed historical category group and does not change its category or any financial values.
 
 ## Warm Ledger interface
 
-ZeroBudget uses a comfortable-density, warm-dark interface designed to keep the current month and its next actions easy to scan. The clay accent marks primary actions, while sage, gold, blue, and red support the existing positive, warning, informational, and destructive text labels; color is never the only indication of meaning.
+Warm Ledger uses a comfortable-density, warm-dark interface designed to keep the current month and its next actions easy to scan. The clay accent marks primary actions, while sage, gold, blue, and red support the existing positive, warning, informational, and destructive text labels; color is never the only indication of meaning.
 
 All five views remain available at narrow widths. Cards and controls reflow for phone-sized screens, while wide financial tables scroll inside their own bounded regions instead of making the whole page overflow. Keyboard focus is visible, narrow-screen controls have touch-friendly targets, native dialog action order matches keyboard order, reduced-motion preferences are respected, and high-contrast/forced-colors modes retain borders and focus indicators.
 
@@ -37,6 +40,8 @@ chromium "file://$PWD/index.html"
 ```
 
 Continue opening the same absolute file path in the same browser profile. Browser storage for a `file://` page can be path- and browser-specific, so moving the project or changing profiles may present a separate empty budget.
+
+The product was previously named ZeroBudget. Existing installations should keep using the same local project path: the legacy storage keys and backup/snapshot format identifiers are intentionally unchanged so current budgets, snapshots, and JSON backups remain compatible after the rebrand.
 
 No install or dependency download is required. To run the automated data-safety tests, install Node.js and run:
 
@@ -80,7 +85,7 @@ An exception can be allowed again only while its template occurrence is currentl
 
 ## Local and manual behavior
 
-ZeroBudget does not automatically generate recurring records, close months, reconcile accounts, or contact a bank or other service. Template generation and recurring-exception recovery always require explicit confirmation through the visible Preview and Apply flow. Passive navigation and Monthly Review do not write budget data.
+Warm Ledger does not automatically generate recurring records, close months, reconcile accounts, or contact a bank or other service. Template generation and recurring-exception recovery always require explicit confirmation through the visible Preview and Apply flow. Passive navigation and Monthly Review do not write budget data.
 
 The application has no server component and makes no account or financial-data network connection. Active data, templates, exceptions, and safety snapshots remain in this browser's site-specific storage. Downloads occur only when you request a JSON backup or preserved recovery data.
 
@@ -88,23 +93,23 @@ The application has no server component and makes no account or financial-data n
 
 The active data model is schema version 3. Existing unversioned, schema-version-1, and schema-version-2 data is migrated deterministically in memory when opened; loading alone does not rewrite browser storage. The first later successful edit persists schema version 3 atomically. If that write fails, the original stored bytes and the last committed in-memory budget remain unchanged.
 
-Backup and snapshot envelopes remain format version 1 and can contain older ZeroBudget data that the current application migrates during validation. Backups created by the current application contain schema-version-3 data and may be rejected by older application versions, so download and retain a backup before intentionally downgrading.
+Backup and snapshot envelopes remain format version 1 and can contain older ZeroBudget data that Warm Ledger migrates during validation. Backups created by the current application contain schema-version-3 data and may be rejected by older application versions, so download and retain a backup before intentionally downgrading.
 
 ## Back up and restore
 
 Use **Download backup** to save one timestamped, versioned JSON file. Keep downloaded backups somewhere durable; they are the portable way to retain or move a budget.
 
-Use **Restore backup** to select a ZeroBudget JSON backup. The app validates and previews the file before asking for confirmation. Restoring replaces the current budget, so ZeroBudget first creates a local safety snapshot when valid saved data exists. Invalid or cancelled restores do not replace the active budget.
+Use **Restore backup** to select a Warm Ledger or legacy ZeroBudget JSON backup. The app validates and previews the file before asking for confirmation. Restoring replaces the current budget, so Warm Ledger first creates a local safety snapshot when valid saved data exists. Invalid or cancelled restores do not replace the active budget.
 
 Do not rename JavaScript files to use them as backups and do not paste budget data into the source tree. Executable seed-data backups are intentionally unsupported.
 
 ## Local snapshots and recovery
 
-ZeroBudget keeps a logical list of the seven newest valid safety snapshots. These snapshots are stored in the same browser, for the same site or file origin, as the active budget. They are useful for recovering from a damaged active record, but they are not durable backups.
+Warm Ledger keeps a logical list of the seven newest valid safety snapshots. These snapshots are stored in the same browser, for the same site or file origin, as the active budget. They are useful for recovering from a damaged active record, but they are not durable backups.
 
 Browser storage limits or cleanup failures can temporarily leave more than seven physical snapshot entries; the app still exposes only the newest seven valid snapshots and retries valid-snapshot cleanup during later saves. Malformed or unreadable snapshot entries are retained rather than deleted automatically, so they may remain physically present and contribute to browser storage quota until site data is cleared.
 
-If active data cannot be validated, ZeroBudget blocks ordinary editing and displays recovery actions:
+If active data cannot be validated, Warm Ledger blocks ordinary editing and displays recovery actions:
 
 - Restore a validated local snapshot.
 - Download the preserved corrupt bytes for diagnosis or manual recovery.
