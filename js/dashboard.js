@@ -1,5 +1,16 @@
 // Dashboard view - charts and analytics
 
+const DASHBOARD_THEME = Object.freeze({
+  text: '#f7f0e6',
+  muted: '#b7aa9a',
+  grid: '#40382d',
+  accent: '#e09a72',
+  positive: '#8fc89a',
+  warning: '#e7bd75',
+  danger: '#f08a80',
+  info: '#8eb7c7'
+});
+
 const DashboardView = {
   charts: {},
 
@@ -103,9 +114,9 @@ const DashboardView = {
   },
 
   COLORS: [
-    '#6366f1', '#22c55e', '#ef4444', '#eab308', '#3b82f6',
-    '#ec4899', '#14b8a6', '#f97316', '#8b5cf6', '#06b6d4',
-    '#84cc16', '#e11d48'
+    '#e09a72', '#8fc89a', '#e7bd75', '#8eb7c7',
+    '#b8a1d9', '#76b7aa', '#d98fa3', '#d9a65f',
+    '#a8b878', '#78a9c2', '#d78374', '#b9a58f'
   ],
 
   // 1. Category spending trend (line chart)
@@ -136,10 +147,10 @@ const DashboardView = {
       data: { labels: months.map(m => this.formatMonthShort(m)), datasets },
       options: {
         responsive: true,
-        plugins: { legend: { position: 'bottom', labels: { color: '#e4e6ef', boxWidth: 12 } } },
+        plugins: { legend: { position: 'bottom', labels: { color: DASHBOARD_THEME.text, boxWidth: 12 } } },
         scales: {
-          x: { ticks: { color: '#8b8fa3' }, grid: { color: '#2e3347' } },
-          y: { ticks: { color: '#8b8fa3', callback: v => '$' + v.toLocaleString() }, grid: { color: '#2e3347' } }
+          x: { ticks: { color: DASHBOARD_THEME.muted }, grid: { color: DASHBOARD_THEME.grid } },
+          y: { ticks: { color: DASHBOARD_THEME.muted, callback: v => '$' + v.toLocaleString() }, grid: { color: DASHBOARD_THEME.grid } }
         }
       }
     });
@@ -185,7 +196,7 @@ const DashboardView = {
       options: {
         responsive: true,
         plugins: {
-          legend: { position: 'bottom', labels: { color: '#e4e6ef', boxWidth: 12, font: { size: 11 } } },
+          legend: { position: 'bottom', labels: { color: DASHBOARD_THEME.text, boxWidth: 12, font: { size: 11 } } },
           tooltip: {
             callbacks: {
               label: (ctx) => {
@@ -211,16 +222,16 @@ const DashboardView = {
       data: {
         labels: months.map(m => this.formatMonthShort(m)),
         datasets: [
-          { label: 'Projected', data: projected, backgroundColor: '#6366f1' },
-          { label: 'Actual', data: actual, backgroundColor: '#22c55e' }
+          { label: 'Projected', data: projected, backgroundColor: DASHBOARD_THEME.accent },
+          { label: 'Actual', data: actual, backgroundColor: DASHBOARD_THEME.positive }
         ]
       },
       options: {
         responsive: true,
-        plugins: { legend: { position: 'bottom', labels: { color: '#e4e6ef', boxWidth: 12 } } },
+        plugins: { legend: { position: 'bottom', labels: { color: DASHBOARD_THEME.text, boxWidth: 12 } } },
         scales: {
-          x: { ticks: { color: '#8b8fa3' }, grid: { color: '#2e3347' } },
-          y: { ticks: { color: '#8b8fa3', callback: v => '$' + v.toLocaleString() }, grid: { color: '#2e3347' } }
+          x: { ticks: { color: DASHBOARD_THEME.muted }, grid: { color: DASHBOARD_THEME.grid } },
+          y: { ticks: { color: DASHBOARD_THEME.muted, callback: v => '$' + v.toLocaleString() }, grid: { color: DASHBOARD_THEME.grid } }
         }
       }
     });
@@ -245,8 +256,8 @@ const DashboardView = {
         datasets: [{
           label: 'Savings Rate %',
           data: rates,
-          borderColor: '#22c55e',
-          backgroundColor: '#22c55e33',
+          borderColor: DASHBOARD_THEME.positive,
+          backgroundColor: DASHBOARD_THEME.positive + '33',
           tension: 0.3,
           fill: true
         }]
@@ -255,8 +266,8 @@ const DashboardView = {
         responsive: true,
         plugins: { legend: { display: false } },
         scales: {
-          x: { ticks: { color: '#8b8fa3' }, grid: { color: '#2e3347' } },
-          y: { ticks: { color: '#8b8fa3', callback: v => v + '%' }, grid: { color: '#2e3347' }, min: 0 }
+          x: { ticks: { color: DASHBOARD_THEME.muted }, grid: { color: DASHBOARD_THEME.grid } },
+          y: { ticks: { color: DASHBOARD_THEME.muted, callback: v => v + '%' }, grid: { color: DASHBOARD_THEME.grid }, min: 0 }
         }
       }
     });
@@ -274,16 +285,16 @@ const DashboardView = {
       data: {
         labels: months.map(m => this.formatMonthShort(m)),
         datasets: [
-          { label: 'Bank', data: bank, backgroundColor: '#3b82f6' },
-          { label: 'Credit Card', data: cc, backgroundColor: '#f97316' }
+          { label: 'Bank', data: bank, backgroundColor: DASHBOARD_THEME.info },
+          { label: 'Credit Card', data: cc, backgroundColor: DASHBOARD_THEME.warning }
         ]
       },
       options: {
         responsive: true,
-        plugins: { legend: { position: 'bottom', labels: { color: '#e4e6ef', boxWidth: 12 } } },
+        plugins: { legend: { position: 'bottom', labels: { color: DASHBOARD_THEME.text, boxWidth: 12 } } },
         scales: {
-          x: { ticks: { color: '#8b8fa3' }, grid: { color: '#2e3347' } },
-          y: { ticks: { color: '#8b8fa3', callback: v => '$' + v.toLocaleString() }, grid: { color: '#2e3347' }, stacked: true }
+          x: { ticks: { color: DASHBOARD_THEME.muted }, grid: { color: DASHBOARD_THEME.grid } },
+          y: { ticks: { color: DASHBOARD_THEME.muted, callback: v => '$' + v.toLocaleString() }, grid: { color: DASHBOARD_THEME.grid }, stacked: true }
         }
       }
     });
@@ -335,10 +346,10 @@ const DashboardView = {
       data: { labels: cats, datasets },
       options: {
         responsive: true,
-        plugins: { legend: { position: 'bottom', labels: { color: '#e4e6ef', boxWidth: 12 } } },
+        plugins: { legend: { position: 'bottom', labels: { color: DASHBOARD_THEME.text, boxWidth: 12 } } },
         scales: {
-          x: { ticks: { color: '#8b8fa3' }, grid: { color: '#2e3347' } },
-          y: { ticks: { color: '#8b8fa3', callback: v => '$' + v.toLocaleString() }, grid: { color: '#2e3347' } }
+          x: { ticks: { color: DASHBOARD_THEME.muted }, grid: { color: DASHBOARD_THEME.grid } },
+          y: { ticks: { color: DASHBOARD_THEME.muted, callback: v => '$' + v.toLocaleString() }, grid: { color: DASHBOARD_THEME.grid } }
         }
       }
     });
