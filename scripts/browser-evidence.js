@@ -8,6 +8,9 @@ const http = require('node:http');
 const { spawn, spawnSync } = require('node:child_process');
 const CDP_STARTUP_ATTEMPTS = 600;
 const CDP_POLL_MS = 50;
+const PROFILE_CLEANUP_ATTEMPTS = 6;
+const PROFILE_CLEANUP_DELAY_MS = 25;
+const TRANSIENT_CLEANUP_CODES = new Set(['ENOTEMPTY', 'EBUSY', 'EPERM']);
 
 function parseArgs(argv) {
   const options = { output: path.join(os.tmpdir(), 'zerobudget-browser-evidence.json') };
@@ -102,6 +105,27 @@ async function stopBrowser(child) {
   if (await waitForExit(child, 2000)) return;
   child.kill('SIGKILL');
   if (!await waitForExit(child, 2000)) throw new Error('Chromium did not stop after SIGKILL.');
+}
+
+async function removeDisposableProfile(profile, {
+  fileSystem = fs,
+  wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)),
+  attempts = PROFILE_CLEANUP_ATTEMPTS,
+  initialDelayMs = PROFILE_CLEANUP_DELAY_MS
+} = {}) {
+  let finalError = null;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      fileSystem.rmSync(profile, { recursive: true, force: true });
+      if (!fileSystem.existsSync(profile)) return;
+      finalError = Object.assign(new Error('Disposable Chromium profile still exists after removal.'), { code: 'ENOTEMPTY' });
+    } catch (error) {
+      if (!TRANSIENT_CLEANUP_CODES.has(error?.code)) throw error;
+      finalError = error;
+    }
+    if (attempt + 1 < attempts) await wait(initialDelayMs * (2 ** attempt));
+  }
+  throw finalError || new Error('Disposable Chromium profile cleanup failed.');
 }
 
 async function evaluate(cdp, expression) {
@@ -229,7 +253,7 @@ async function run(options) {
   } finally {
     cdp?.close();
     await stopBrowser(child);
-    fs.rmSync(profile, { recursive: true, force: true });
+    await removeDisposableProfile(profile);
   }
   assertEvidence(!fs.existsSync(profile), 'Disposable Chromium profile cleanup failed.');
   evidence.profileCleanup = true;
@@ -253,5 +277,5 @@ function helpText() {
   return 'Usage: npm run test:browser -- [--output PATH]\nUses synthetic data in a disposable Chromium profile; defaults evidence to the OS temp directory.';
 }
 
-module.exports = { parseArgs, locateChromium, helpText, run };
+module.exports = { parseArgs, locateChromium, helpText, removeDisposableProfile, run };
 if (require.main === module) main().catch(error => { console.error(`Browser evidence failed: ${error.message}`); process.exitCode = 1; });

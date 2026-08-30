@@ -20,6 +20,14 @@ Archived Structure choices remain visible in historical records and totals but a
 
 Paycheck and expense order is stored as part of each month and survives reload, backup/restore, and copying a month. Expense movement stays within its displayed historical category group and does not change its category or any financial values.
 
+## Warm Ledger interface
+
+ZeroBudget uses a comfortable-density, warm-dark interface designed to keep the current month and its next actions easy to scan. The clay accent marks primary actions, while sage, gold, blue, and red support the existing positive, warning, informational, and destructive text labels; color is never the only indication of meaning.
+
+All five views remain available at narrow widths. Cards and controls reflow for phone-sized screens, while wide financial tables scroll inside their own bounded regions instead of making the whole page overflow. Keyboard focus is visible, narrow-screen controls have touch-friendly targets, native dialog action order matches keyboard order, reduced-motion preferences are respected, and high-contrast/forced-colors modes retain borders and focus indicators.
+
+The interface currently has one built-in warm-dark appearance rather than a theme selector. Dashboard canvas charts are supplementary visual summaries: their accompanying labels, filters, and summary table remain the authoritative accessible content, but per-chart data-table equivalents are not yet provided.
+
 ## Run locally
 
 Open `index.html` in a modern browser. From this directory on Linux, for example:
