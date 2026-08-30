@@ -121,6 +121,22 @@ test('actual resolution stale and write faults are failure-safe and capabilities
   code('INVALID_ACTUAL_RESOLUTION_PREVIEW', () => second.store.applyActualResolutions(preview));
 });
 
+test('blank-date repair is previewed, cancel-safe, atomic, and capability-bound', () => {
+  const budget = makeV3Budget();
+  budget.months['2026-01'].paychecks[0].date = '';
+  const { store, storage } = ready(budget);
+  const before = storage.getItem(STORAGE_KEY); const preview = store.previewDefaultDateResolutions();
+  assert.equal(Object.isFrozen(preview), true);
+  assert.deepEqual(preview.resolutions.map(item => [item.kind, item.date]), [['income', '2026-01-01'], ['expense', '2026-01-01']]);
+  assert.equal(storage.getItem(STORAGE_KEY), before);
+  assert.equal(storage.operations.some(item => item.op === 'setItem'), false);
+  store.applyDefaultDateResolutions(preview);
+  assert.equal(store.getMonth('2026-01').paychecks[0].date, '2026-01-01');
+  assert.equal(store.getMonth('2026-01').expenses[0].date, '2026-01-01');
+  code('INVALID_DATE_RESOLUTION_PREVIEW', () => store.applyDefaultDateResolutions(preview));
+  code('INVALID_DATE_RESOLUTION_PREVIEW', () => store.applyDefaultDateResolutions({ ...preview }));
+});
+
 test('actual resolution preview rejects individual and aggregate schema limits without writes', () => {
   const budget = makeV3Budget();
   budget.months['2026-01'].paychecks[0].actualAmount = null;

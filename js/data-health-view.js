@@ -1,9 +1,11 @@
 // Read-only Data Health rendering and explicit, previewed repair workflows.
 const DataHealthView = {
   preview: null,
+  datePreview: null,
 
   init() {
     document.getElementById('actual-resolution-dialog').addEventListener('close', () => this.onActualDialogClose());
+    document.getElementById('date-resolution-dialog').addEventListener('close', () => this.onDateDialogClose());
     this.render();
   },
 
@@ -20,26 +22,27 @@ const DataHealthView = {
     try { health = Store.getDataHealth(); }
     catch (error) { App.showError(error); return; }
 
+    const primaryCount = health.counts.missingActuals + health.counts.missingDates + health.counts.fundingMismatches;
     const overview = this.node('section', 'budget-section data-health-overview');
-    const title = this.node('h3', '', 'Ledger overview'); overview.append(title);
-    const summary = this.node('p', '', this.totalIssues(health) === 0
-      ? 'No tracked data-health issues were found.'
-      : `${this.totalIssues(health)} tracked items may need review. Nothing has been changed.`);
-    overview.append(summary);
-    const counts = this.node('ul', 'health-counts');
-    [['Actual amounts not entered', health.counts.missingActuals], ['Dates not entered', health.counts.missingDates],
-      ['Funding mismatches', health.counts.fundingMismatches], ['Missing months in the ledger range', health.counts.absentMonths],
-      ['Repeated manual patterns', health.counts.repeatedManualPatterns]].forEach(([label, count]) => {
-      const item = this.node('li'); item.append(this.node('span', '', label), this.node('strong', '', String(count))); counts.append(item);
-    });
-    overview.append(counts); container.append(overview);
+    overview.append(this.node('h3', '', primaryCount ? 'What needs attention' : 'Everything looks good'),
+      this.node('p', '', primaryCount
+        ? `${primaryCount} ${primaryCount === 1 ? 'record needs' : 'records need'} attention. Nothing changes until you choose an action.`
+        : 'No unfinished amounts, funding problems, or blank dates were found.'));
+    const priorities = [['Actual amounts to enter', health.counts.missingActuals], ['Funding to review', health.counts.fundingMismatches],
+      ['Blank dates to set', health.counts.missingDates]].filter(([, count]) => count > 0);
+    if (priorities.length) {
+      const counts = this.node('ul', 'health-counts');
+      priorities.forEach(([label, count]) => {
+        const item = this.node('li'); item.append(this.node('span', '', label), this.node('strong', '', String(count))); counts.append(item);
+      });
+      overview.append(counts);
+    }
+    container.append(overview);
 
-    container.append(this.actualsSection(health.missingActuals));
-    container.append(this.recordIssueSection('Dates not entered', 'Records with a blank date are kept as entered.', health.missingDates));
-    container.append(this.fundingSection(health.fundingMismatches));
-    container.append(this.absentMonthsSection(health.absentMonths));
-    container.append(this.patternsSection(health.repeatedManualPatterns));
-    container.append(this.comparisonSection());
+    if (health.missingActuals.length) container.append(this.actualsSection(health.missingActuals));
+    if (health.missingDates.length) container.append(this.dateResolutionSection(health.missingDates));
+    if (health.fundingMismatches.length) container.append(this.fundingSection(health.fundingMismatches));
+    container.append(this.moreToolsSection(health));
   },
 
   totalIssues(health) { return Object.values(health.counts).reduce((sum, count) => sum + count, 0); },
@@ -151,6 +154,38 @@ const DataHealthView = {
     });
   },
 
+  dateResolutionSection(references) {
+    const section = this.section('Set blank dates', 'Use the first day of each record’s month. This keeps historic data unchanged until you confirm.');
+    const button = this.node('button', 'btn btn-primary', `Review ${references.length} ${references.length === 1 ? 'date' : 'dates'}`); button.type = 'button'; button.id = 'review-default-dates';
+    button.addEventListener('click', () => this.previewDefaultDates(button)); section.append(button); return section;
+  },
+
+  previewDefaultDates(trigger) {
+    try {
+      this.datePreview = Store.previewDefaultDateResolutions();
+      const count = this.datePreview.resolutions.length;
+      if (!count) { App.announceStatus('There are no blank dates to set.'); trigger.focus(); return; }
+      const content = document.getElementById('date-resolution-preview'); content.replaceChildren(
+        this.node('p', '', `${count} ${count === 1 ? 'record' : 'records'} will use the first day of their recorded month.`));
+      const dialog = document.getElementById('date-resolution-dialog'); dialog.returnValue = ''; dialog.showModal();
+    } catch (error) { this.datePreview = null; App.showError(error); trigger.focus(); }
+  },
+
+  onDateDialogClose() {
+    const dialog = document.getElementById('date-resolution-dialog'); const preview = this.datePreview; this.datePreview = null;
+    if (dialog.returnValue !== 'confirm' || !preview) {
+      document.getElementById('review-default-dates')?.focus({ preventScroll: true }); return;
+    }
+    App.runMutation(() => Store.applyDefaultDateResolutions(preview), {
+      onSuccess: resolutions => {
+        App.refreshAllViews(); App.switchView('data-health');
+        App.announceStatus(`${resolutions.length} ${resolutions.length === 1 ? 'date was' : 'dates were'} set to the first of the month.`);
+        requestAnimationFrame(() => document.getElementById('data-health-heading').focus({ preventScroll: true }));
+      },
+      onFailure: () => { this.render(); }
+    });
+  },
+
   fundingSection(issues) {
     const section = this.section('Funding mismatches', 'These expenses are funded by an amount different from their planned total.');
     if (!issues.length) { section.append(this.empty('No funding mismatches were found.')); return section; }
@@ -162,6 +197,14 @@ const DataHealthView = {
       item.append(details, this.routeButton(issue, 'Review allocations')); list.append(item);
     });
     section.append(list); return section;
+  },
+
+  moreToolsSection(health) {
+    const details = this.node('details', 'data-health-more'); details.append(this.node('summary', '', 'More checks and tools'));
+    const content = this.node('div', 'data-health-more-content');
+    if (health.absentMonths.length) content.append(this.absentMonthsSection(health.absentMonths));
+    if (health.repeatedManualPatterns.length) content.append(this.patternsSection(health.repeatedManualPatterns));
+    content.append(this.comparisonSection()); details.append(content); return details;
   },
 
   absentMonthsSection(months) {
@@ -180,13 +223,33 @@ const DataHealthView = {
     if (!patterns.length) { section.append(this.empty('No repeated manual patterns were found.')); return section; }
     const list = this.node('ul', 'health-issue-list'); patterns.forEach(pattern => {
       const item = this.node('li'); const details = this.node('div', 'health-issue-details');
-      details.append(this.node('strong', '', pattern.kind === 'income' ? 'Repeated manual income' : 'Repeated manual expense'),
-        this.node('span', 'muted-text', `${pattern.monthKeys.length} months · ${pattern.occurrences.length} records`));
-      const button = this.node('button', 'btn btn-sm', 'Review Templates'); button.type = 'button';
-      button.addEventListener('click', () => { App.switchView('templates'); requestAnimationFrame(() =>
-        document.getElementById(pattern.kind === 'income' ? 'templates-income-heading' : 'templates-expenses-heading')?.focus({ preventScroll: true })); });
+      const draft = this.templateDraft(pattern);
+      details.append(this.node('strong', 'break-anywhere', draft.name),
+        this.node('span', 'muted-text', `${pattern.monthKeys.length} months · ${pattern.occurrences.length} records · Monthly on day ${draft.recurrence.day}`));
+      const button = this.node('button', 'btn btn-sm', 'Create template'); button.type = 'button';
+      button.setAttribute('aria-label', `Create a recurring template for ${draft.name}`);
+      button.addEventListener('click', () => this.openPatternTemplate(pattern, button));
       item.append(details, button); list.append(item);
     }); section.append(list); return section;
+  },
+
+  openPatternTemplate(pattern, trigger) {
+    const current = Store.getDataHealth().repeatedManualPatterns.find(item => item.kind === pattern.kind && item.signature === pattern.signature);
+    if (!current) { App.announceStatus('That repeated pattern has changed. Refresh Data Health and try again.'); trigger.focus(); return; }
+    const draft = this.templateDraft(current);
+    TemplatesView.showTemplateModal(current.kind === 'income' ? 'income' : 'expense', null, trigger, draft);
+  },
+
+  templateDraft(pattern) {
+    const reference = pattern.occurrences[0]; const record = this.record(reference);
+    const date = record?.date || `${reference.monthKey}-01`;
+    const latestMonth = pattern.monthKeys.at(-1);
+    const draft = { name: pattern.kind === 'income' ? record.earner : record.name,
+      plannedAmount: record.plannedAmount, enabled: false, startDate: TemplatesView.nextMonthStart(`${latestMonth}-01`), endDate: null,
+      recurrence: { cadence: 'monthly', day: Number(date.slice(8)) } };
+    if (pattern.kind === 'income') draft.earnerId = record.earnerId;
+    else Object.assign(draft, { categoryId: record.categoryId, categoryItemId: record.categoryItemId, paymentMethod: record.paymentMethod });
+    return draft;
   },
 
   comparisonSection() {

@@ -250,6 +250,18 @@
     </form>
   </dialog>
 
+  <dialog id="date-resolution-dialog" class="restore-dialog" aria-labelledby="date-resolution-title">
+    <form method="dialog">
+      <h2 id="date-resolution-title">Use the first of the month?</h2>
+      <div id="date-resolution-preview"></div>
+      <p>This only updates the records shown above. Future entries already default to the first.</p>
+      <div class="dialog-actions">
+        <button id="date-resolution-cancel" class="btn" value="cancel" autofocus>Cancel</button>
+        <button id="date-resolution-confirm" class="btn btn-primary" value="confirm">Apply dates</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="restore-dialog" class="restore-dialog" aria-labelledby="restore-title" aria-describedby="restore-warning">
     <form method="dialog">
       <h2 id="restore-title">Restore this backup?</h2>

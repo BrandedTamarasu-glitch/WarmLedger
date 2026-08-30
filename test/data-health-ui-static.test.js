@@ -21,7 +21,7 @@ test('Data Health scripts and sixth view load in dependency order', () => {
 });
 
 test('health workflows use frozen Store APIs without unsafe persisted-content sinks', () => {
-  for (const api of ['getDataHealth', 'previewActualResolutions', 'applyActualResolutions', 'compareAdditiveBackup']) {
+  for (const api of ['getDataHealth', 'previewActualResolutions', 'applyActualResolutions', 'previewDefaultDateResolutions', 'applyDefaultDateResolutions', 'compareAdditiveBackup']) {
     assert.match(view, new RegExp(`Store\\.${api}\\(`));
   }
   assert.doesNotMatch(view, /\.innerHTML\s*=|insertAdjacentHTML\s*\(/);
@@ -29,6 +29,12 @@ test('health workflows use frozen Store APIs without unsafe persisted-content si
   assert.match(view, /Nothing was imported/);
   assert.match(view, /type\s*=\s*'checkbox'/);
   assert.match(view, /dialog\.returnValue\s*!==\s*'confirm'/);
+  assert.match(view, /More checks and tools/);
+  assert.match(view, /review-default-dates/);
+  assert.match(view, /Create template/);
+  assert.match(view, /openPatternTemplate\(pattern, trigger\)/);
+  assert.match(view, /Store\.getDataHealth\(\)\.repeatedManualPatterns\.find/);
+  assert.match(view, /TemplatesView\.showTemplateModal/);
 });
 
 test('expense deletion is Cancel-first and offers receipt-based session Undo', () => {

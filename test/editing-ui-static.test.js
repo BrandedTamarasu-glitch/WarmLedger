@@ -41,7 +41,9 @@ test('edit modals prefill detached records and select definitions by stable ID',
   assert.match(source, /existing\.earnerId === earner\.id/);
   assert.match(source, /field-planned-amount'\)\.value = existing \? existing\.plannedAmount : ''/);
   assert.match(source, /field-actual-amount'\)\.value = existing \? \(existing\.actualAmount \?\? ''\) : ''/);
-  assert.match(source, /field-date'\)\.value = existing \? existing\.date : ''/);
+  assert.match(source, /field-date'\)\.value = existing\?\.date \|\| `\$\{this\.currentMonth\}-01`/);
+  assert.match(source, /field-expense-date'\)\.value = existing\?\.date \|\| `\$\{this\.currentMonth\}-01`/);
+  assert.match(source, /defaults to the 1st/);
   assert.match(source, /option\.value = category\.id/);
   assert.match(source, /existing\.categoryId === category\.id/);
   assert.match(source, /field-name'\)\.value = existing && existing\.categoryItemId === null \? existing\.name : ''/);
@@ -77,4 +79,13 @@ test('successful edits restore focus to the safely located replacement control',
   assert.match(source, /if \(existing\) this\.focusEditControl\('paycheck', existing\.id\)/);
   assert.match(source, /if \(existing\) this\.focusEditControl\('expense', existing\.id\)/);
   assert.doesNotMatch(source, /querySelector\s*\(\s*`[^`]*\$\{/);
+});
+
+test('new expenses can open a disabled monthly template draft after the expense is saved', () => {
+  const source = fs.readFileSync(budgetPath, 'utf8');
+  assert.match(source, /Review a recurring template after saving/);
+  assert.match(source, /The expense is saved first/);
+  assert.match(source, /TemplatesView\.monthlyExpenseDraft\(result, TemplatesView\.nextMonthStart\(result\.date\)\)/);
+  assert.match(source, /TemplatesView\.showTemplateModal\('expense', null/);
+  assert.doesNotMatch(source, /Store\.addExpenseWithMonthlyTemplate/);
 });

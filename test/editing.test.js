@@ -11,7 +11,7 @@ function readyStore() {
   const store = createStore({
     storage,
     now: makeClock(),
-    uuid: makeUuid('editing-snapshot-1', 'editing-snapshot-2')
+    uuid: makeUuid('editing-snapshot-1', 'editing-snapshot-2', 'editing-record-1', 'editing-record-2')
   });
   assert.equal(store.load().state, 'ready');
   storage.operations.length = 0;
@@ -80,4 +80,22 @@ test('failed and missing-ID record edits preserve memory and primary bytes', () 
   assert.deepEqual(store.getData(), beforeData);
   assert.equal(storage.getItem(STORAGE_KEY), beforeRaw);
   assert.equal(storage.operations.filter(entry => entry.op === 'setItem' && entry.key === STORAGE_KEY).length, 0);
+});
+
+test('blank dates default to the first day of the selected month at the Store boundary', () => {
+  const { store } = readyStore();
+  store.updatePaycheck('2026-01', 'paycheck-example-1', { date: '' });
+  store.updateExpense('2026-01', 'expense-example-1', { date: '' });
+  assert.equal(store.getMonth('2026-01').paychecks[0].date, '2026-01-01');
+  assert.equal(store.getMonth('2026-01').expenses[0].date, '2026-01-01');
+
+  const paycheck = store.addPaycheck('2026-02', {
+    earnerId: 'earner-example-1', plannedAmount: 100, actualAmount: null, date: ''
+  });
+  const expense = store.addExpense('2026-02', {
+    categoryId: 'category-example-1', categoryItemId: null, name: 'Phone', date: '', paycheckAmounts: {},
+    plannedAmount: 50, actualAmount: null, paymentMethod: 'bank'
+  });
+  assert.equal(paycheck.date, '2026-02-01');
+  assert.equal(expense.date, '2026-02-01');
 });

@@ -1219,6 +1219,11 @@ label:has(> #field-template-enabled) { display: flex; align-items: center; min-h
 /* Data Health and reversible expense deletion */
 #data-health-content { min-width: 0; display: grid; gap: 18px; }
 .data-health-overview, .data-health-section { min-width: 0; }
+.data-health-more { border: 1px solid var(--color-divider); border-radius: var(--radius-control); background: var(--color-surface-raised); }
+.data-health-more > summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; padding: 0 14px; font-weight: 700; }
+.data-health-more-content { display: grid; gap: 18px; padding: 0 14px 14px; }
+.data-health-more .data-health-section { padding: 0; border: 0; background: transparent; box-shadow: none; }
+.template-shortcut { display: flex; align-items: center; gap: 8px; margin-top: 4px; font-weight: 700; }
 .data-health-overview > p, .data-health-section > p { margin-top: 6px; line-height: 1.55; }
 .health-counts, .health-issue-list { list-style: none; margin-top: 16px; }
 .health-counts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr)); gap: 10px; }

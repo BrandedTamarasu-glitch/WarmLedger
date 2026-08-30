@@ -70,3 +70,12 @@ test('focus restoration compares dataset values without selector interpolation',
   assert.match(source, /focus\(\{ preventScroll: true \}\)/);
   assert.match(source, /showTemplateModal\(kind, record, event\.currentTarget\)/);
 });
+
+test('template drafts can be safely seeded without changing normal new-template defaults', () => {
+  assert.match(source, /showTemplateModal\(kind, existing, trigger, draft = null\)/);
+  assert.match(source, /const initial = existing \|\| draft/);
+  assert.match(source, /if \(!existing && !draft\) document\.getElementById\('field-template-enabled'\)\.checked = true/);
+  assert.match(source, /monthlyExpenseDraft\(expense, startDate\)/);
+  assert.match(source, /enabled: false/);
+  assert.match(source, /nextMonthStart\(date\)/);
+});

@@ -70,6 +70,17 @@ const TemplatesView = {
     return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(amount);
   },
 
+  nextMonthStart(date) {
+    const year = Number(date.slice(0, 4)); const month = Number(date.slice(5, 7));
+    return `${String(month === 12 ? year + 1 : year).padStart(4, '0')}-${String(month === 12 ? 1 : month + 1).padStart(2, '0')}-01`;
+  },
+
+  monthlyExpenseDraft(expense, startDate) {
+    return { name: expense.name, categoryId: expense.categoryId, categoryItemId: expense.categoryItemId,
+      plannedAmount: expense.plannedAmount, paymentMethod: expense.paymentMethod, enabled: false,
+      startDate, endDate: null, recurrence: { cadence: 'monthly', day: Number(expense.date.slice(8)) } };
+  },
+
   recurrenceLabel(recurrence) {
     if (recurrence.cadence === 'monthly') return `Monthly on day ${recurrence.day} (clamped to month end)`;
     if (recurrence.cadence === 'twice-monthly') return `Twice monthly on days ${recurrence.days[0]} and ${recurrence.days[1]} (each clamped)`;
@@ -123,11 +134,13 @@ const TemplatesView = {
     });
   },
 
-  showTemplateModal(kind, existing, trigger) {
-    if (trigger) App.modalTrigger = trigger;
+  showTemplateModal(kind, existing, trigger, draft = null) {
     App.showModal(`${existing ? 'Edit' : 'Add'} ${kind} template`, this.formMarkup(kind), () => this.saveForm(kind, existing));
-    this.populateStructuralChoices(kind, existing);
-    this.populateForm(existing);
+    if (trigger) App.modalTrigger = trigger;
+    const initial = existing || draft;
+    this.populateStructuralChoices(kind, initial);
+    this.populateForm(initial);
+    if (!existing && !draft) document.getElementById('field-template-enabled').checked = true;
     this.syncCadenceFields();
     document.getElementById('field-template-cadence').addEventListener('change', () => this.syncCadenceFields());
     if (kind === 'expense') {
@@ -197,7 +210,7 @@ const TemplatesView = {
     document.getElementById('field-template-amount').value = existing ? existing.plannedAmount : '';
     document.getElementById('field-template-start').value = existing ? existing.startDate : '';
     document.getElementById('field-template-end').value = existing ? existing.endDate || '' : '';
-    document.getElementById('field-template-enabled').checked = existing ? existing.enabled : true;
+    document.getElementById('field-template-enabled').checked = existing ? existing.enabled : false;
     const recurrence = existing ? existing.recurrence : { cadence: 'monthly', day: 1 };
     document.getElementById('field-template-cadence').value = recurrence.cadence;
     if (recurrence.cadence === 'monthly') document.getElementById('field-template-day').value = recurrence.day;
@@ -253,8 +266,11 @@ const TemplatesView = {
     return App.runMutation(() => {
       if (kind === 'income') return existing ? Store.updateIncomeTemplate(existing.id, input) : Store.addIncomeTemplate(input);
       return existing ? Store.updateExpenseTemplate(existing.id, input) : Store.addExpenseTemplate(input);
-    }, { onSuccess: result => this.afterMutation(`${kind === 'income' ? 'Income' : 'Expense'} template ${existing ? 'updated' : 'added'}.`,
-      { kind, action: 'edit', id: result.id }) });
+    }, { onSuccess: result => this.afterMutation(existing
+      ? `${kind === 'income' ? 'Income' : 'Expense'} template updated.`
+      : input.enabled ? `${kind === 'income' ? 'Income' : 'Expense'} template added.`
+        : `Disabled ${kind === 'income' ? 'income' : 'expense'} template added. It will not add budget records until enabled.`,
+    { kind, action: 'edit', id: result.id }) });
   },
 
   buildPreview(preview) {

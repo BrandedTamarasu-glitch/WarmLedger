@@ -360,7 +360,7 @@ const BudgetView = {
       <div class="form-row">
         ${amountFields}
         <div class="form-group">
-          <label for="field-date">Pay Date</label>
+          <label for="field-date">Pay date (defaults to the 1st)</label>
           <input type="date" id="field-date">
         </div>
       </div>
@@ -399,7 +399,7 @@ const BudgetView = {
     }
     document.getElementById('field-planned-amount').value = existing ? existing.plannedAmount : '';
     document.getElementById('field-actual-amount').value = existing ? (existing.actualAmount ?? '') : '';
-    document.getElementById('field-date').value = existing ? existing.date : '';
+    document.getElementById('field-date').value = existing?.date || `${this.currentMonth}-01`;
   },
 
   deletePaycheck(id) {
@@ -658,7 +658,7 @@ const BudgetView = {
         </div>
       </div>
       <div class="form-group">
-        <label for="field-expense-date">Expense date</label>
+        <label for="field-expense-date">Expense date (defaults to the 1st)</label>
         <input type="date" id="field-expense-date">
       </div>`;
 
@@ -687,11 +687,14 @@ const BudgetView = {
           <option value="investments">Investments</option>
         </select>
       </div>
+      ${existing ? '' : `<label class="template-shortcut"><input type="checkbox" id="field-create-expense-template"> Review a recurring template after saving</label>
+      <p class="field-help">The expense is saved first. A disabled monthly template opens for your review and adds no budget records.</p>`}
     `, () => {
       const categoryId = document.getElementById('field-category').value;
       const categoryItemId = document.getElementById('field-preset').value || null;
       const customName = document.getElementById('field-name').value.trim();
       const paymentMethod = document.getElementById('field-method').value;
+      const createTemplate = !existing && document.getElementById('field-create-expense-template').checked;
 
       if (categoryItemId === null && (!customName || customName.length > 120)) { document.getElementById('field-name').reportValidity(); return false; }
       const plannedInput = document.getElementById('field-planned-amount');
@@ -708,12 +711,18 @@ const BudgetView = {
       else if (categoryItemId === null && customName !== existing.name) updates.name = customName;
       return App.runMutation(() => {
         if (existing) return Store.editExpense(this.currentMonth, existing.id, updates);
-        return Store.addExpense(this.currentMonth, {
+        const input = {
           categoryId, categoryItemId, name: customName, date: updates.date, paycheckAmounts: {},
           plannedAmount: updates.plannedAmount, actualAmount: updates.actualAmount, paymentMethod
-        });
-      }, { onSuccess: () => {
+        };
+        return Store.addExpense(this.currentMonth, input);
+      }, { onSuccess: result => {
           this.render();
+          if (createTemplate) requestAnimationFrame(() => {
+            App.announceStatus('Expense saved. Template draft opened.');
+            TemplatesView.showTemplateModal('expense', null, document.getElementById('expenses-heading'),
+              TemplatesView.monthlyExpenseDraft(result, TemplatesView.nextMonthStart(result.date)));
+          });
           if (reviewFocus) this.restoreReviewFocus(reviewFocus.kind, reviewFocus.id);
           else if (existing) this.focusEditControl('expense', existing.id);
       } });
@@ -739,7 +748,7 @@ const BudgetView = {
     const plannedInput = document.getElementById('field-planned-amount');
     plannedInput.min = String(assigned); plannedInput.value = existing ? existing.plannedAmount : '';
     document.getElementById('field-actual-amount').value = existing ? (existing.actualAmount ?? '') : '';
-    document.getElementById('field-expense-date').value = existing ? existing.date : '';
+    document.getElementById('field-expense-date').value = existing?.date || `${this.currentMonth}-01`;
     document.getElementById('field-preset').addEventListener('change', function() {
       const isPreset = Boolean(this.value);
       document.getElementById('field-name').disabled = isPreset;

@@ -113,6 +113,9 @@
     return `${year}-${month}-${day}`;
   }
 
+  function firstDayOfMonth(monthKey) { return `${monthKey}-01`; }
+  function normalizeMonthlyDate(monthKey, date) { return date === '' ? firstDayOfMonth(monthKey) : date; }
+
   function createStore({ storage, now = () => new Date(), uuid = () => crypto.randomUUID(), schemaPolicy = Schema.ACTIVE_SCHEMA_POLICY } = {}) {
     if (schemaPolicy !== Schema.ACTIVE_SCHEMA_POLICY && schemaPolicy !== Schema.V3_SCHEMA_POLICY) {
       throw new StoreError('INVALID_SCHEMA_POLICY');
@@ -124,6 +127,7 @@
     const previewCapabilities = new WeakMap();
     const deleteReceipts = new WeakMap();
     const actualResolutionCapabilities = new WeakMap();
+    const defaultDateResolutionCapabilities = new WeakMap();
 
     let data = null;
     let committedRaw = null;
@@ -684,9 +688,10 @@
       }
       return transact(candidate => {
         const earner = activeEarner(candidate, paycheck.earnerId);
+        const month = requireMonth(candidate, monthKey);
         const created = { id: newId(), earnerId: earner.id, earner: earner.name, plannedAmount: paycheck.plannedAmount,
-          actualAmount: paycheck.actualAmount, date: paycheck.date, sourceTemplateId: null, occurrenceKey: null };
-        requireMonth(candidate, monthKey).paychecks.push(created);
+          actualAmount: paycheck.actualAmount, date: normalizeMonthlyDate(monthKey, paycheck.date), sourceTemplateId: null, occurrenceKey: null };
+        month.paychecks.push(created);
         return created;
       });
     }
@@ -696,6 +701,7 @@
         const month = candidate.months[monthKey];
         if (!month) throw new StoreError('MONTH_NOT_FOUND');
         const paycheck = findOrThrow(month.paychecks, id, 'PAYCHECK_NOT_FOUND');
+        if (Object.hasOwn(patch, 'date')) patch.date = normalizeMonthlyDate(monthKey, patch.date);
         Object.assign(paycheck, patch);
         return paycheck;
       });
@@ -722,7 +728,7 @@
         }
         if (Object.hasOwn(patch, 'plannedAmount')) paycheck.plannedAmount = patch.plannedAmount;
         if (Object.hasOwn(patch, 'actualAmount')) paycheck.actualAmount = patch.actualAmount;
-        if (Object.hasOwn(patch, 'date')) paycheck.date = patch.date;
+        if (Object.hasOwn(patch, 'date')) paycheck.date = normalizeMonthlyDate(monthKey, patch.date);
         return paycheck;
       });
     }
@@ -755,7 +761,7 @@
         const category = activeCategory(candidate, expense.categoryId);
         const created = { id: newId() };
         applyExpenseStructure(created, category, expense.categoryItemId, expense.name);
-        created.date = expense.date;
+        created.date = normalizeMonthlyDate(monthKey, expense.date);
         created.paycheckAmounts = expense.paycheckAmounts || {};
         created.plannedAmount = expense.plannedAmount;
         created.actualAmount = expense.actualAmount;
@@ -775,7 +781,7 @@
           expense.name = patch.name;
           expense.categoryItemId = null;
         }
-        if (Object.hasOwn(patch, 'date')) expense.date = patch.date;
+        if (Object.hasOwn(patch, 'date')) expense.date = normalizeMonthlyDate(monthKey, patch.date);
         if (Object.hasOwn(patch, 'plannedAmount')) expense.plannedAmount = patch.plannedAmount;
         if (Object.hasOwn(patch, 'actualAmount')) expense.actualAmount = patch.actualAmount;
         if (Object.hasOwn(patch, 'paymentMethod')) expense.paymentMethod = patch.paymentMethod;
@@ -807,7 +813,7 @@
         else if (Object.hasOwn(patch, 'name') && patch.name !== expense.name) {
           expense.name = patch.name; expense.categoryItemId = null;
         }
-        if (Object.hasOwn(patch, 'date')) expense.date = patch.date;
+        if (Object.hasOwn(patch, 'date')) expense.date = normalizeMonthlyDate(monthKey, patch.date);
         if (Object.hasOwn(patch, 'plannedAmount')) expense.plannedAmount = patch.plannedAmount;
         if (Object.hasOwn(patch, 'actualAmount')) expense.actualAmount = patch.actualAmount;
         if (Object.hasOwn(patch, 'paymentMethod')) expense.paymentMethod = patch.paymentMethod;
@@ -899,7 +905,7 @@
         const idMap = Object.create(null);
         const paychecks = source.paychecks.map(paycheck => {
           const id = newId(); idMap[paycheck.id] = id;
-          return { ...paycheck, id, date: paycheck.date.startsWith(`${targetKey}-`) ? paycheck.date : '',
+          return { ...paycheck, id, date: paycheck.date.startsWith(`${targetKey}-`) ? paycheck.date : firstDayOfMonth(targetKey),
             actualAmount: null, sourceTemplateId: null, occurrenceKey: null };
         });
         const expenses = source.expenses.map(expense => {
@@ -907,7 +913,7 @@
           for (const [paycheckId, amount] of Object.entries(expense.paycheckAmounts)) {
             if (idMap[paycheckId]) paycheckAmounts[idMap[paycheckId]] = amount;
           }
-          return { ...expense, id: newId(), date: expense.date.startsWith(`${targetKey}-`) ? expense.date : '',
+          return { ...expense, id: newId(), date: expense.date.startsWith(`${targetKey}-`) ? expense.date : firstDayOfMonth(targetKey),
             actualAmount: null, sourceTemplateId: null, occurrenceKey: null, paycheckAmounts };
         });
         candidate.months[targetKey] = { paychecks, expenses, allocations: { ...EMPTY_ALLOCATIONS } };
@@ -1328,6 +1334,35 @@
       });
     }
 
+    function previewDefaultDateResolutions() {
+      requireReady();
+      if (!DataHealth) throw new StoreError('DATA_HEALTH_UNAVAILABLE');
+      const resolutions = DataHealth.analyze(schemaPolicy.clone(data)).missingDates.map(reference => ({
+        ...reference, date: firstDayOfMonth(reference.monthKey)
+      }));
+      const preview = freezeDetached({ generation, resolutions });
+      defaultDateResolutionCapabilities.set(preview, { generation, resolutions });
+      return preview;
+    }
+
+    function applyDefaultDateResolutions(preview) {
+      requireReady();
+      const capability = preview && typeof preview === 'object' ? defaultDateResolutionCapabilities.get(preview) : null;
+      if (preview && typeof preview === 'object') defaultDateResolutionCapabilities.delete(preview);
+      if (!capability) throw new StoreError('INVALID_DATE_RESOLUTION_PREVIEW');
+      if (capability.generation !== generation) throw new StoreError('STALE_DATE_RESOLUTION_PREVIEW');
+      return transact(candidate => {
+        for (const item of capability.resolutions) {
+          const month = candidate.months[item.monthKey];
+          const records = month && (item.kind === 'income' ? month.paychecks : month.expenses);
+          const record = records && records.find(entry => entry.id === item.recordId);
+          if (!record || record.date !== '') throw new StoreError('STALE_DATE_RESOLUTION_PREVIEW');
+          record.date = item.date;
+        }
+        return capability.resolutions;
+      });
+    }
+
     function compareAdditiveBackup(text) {
       requireReady();
       let incoming;
@@ -1459,7 +1494,7 @@
       clearMonth, previewRecurringMonth, applyRecurringPreview,
       getMonthReview, getPayPeriodPlan, getSuppressedOccurrences, unsuppressOccurrence,
       fundingDirection,
-      getDataHealth, previewActualResolutions, applyActualResolutions, compareAdditiveBackup,
+      getDataHealth, previewActualResolutions, applyActualResolutions, previewDefaultDateResolutions, applyDefaultDateResolutions, compareAdditiveBackup,
       calcMonthSummary, calcPaycheckRemaining, calcCategoryTotals, calcPaymentMethodTotals,
       buildExport, exportData, previewImport, commitImport, importData, listSnapshots,
       listSnapshotMetadata, restoreSnapshot, startFresh, getCorruptEvidence
