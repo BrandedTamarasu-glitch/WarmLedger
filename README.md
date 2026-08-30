@@ -5,6 +5,8 @@
 
 Warm Ledger is a calm, local, dependency-free budgeting application. It runs directly in a browser and stores budget records in that browser's site-specific storage.
 
+See [ROADMAP.md](ROADMAP.md) for planned work and the boundaries of future phases.
+
 ## Current features
 
 - Monthly paychecks, expenses, allocations, transfers, and dashboard summaries.
@@ -14,6 +16,7 @@ Warm Ledger is a calm, local, dependency-free budgeting application. It runs dir
 - A **Templates** view for recurring income and expenses with monthly, twice-monthly, weekly, and biweekly schedules.
 - Preview-first recurring generation that shows additions and skips before making one atomic change.
 - A write-free **Monthly Review** showing recurring work, missing actuals, expense funding, planned balance, and paycheck-assignment notes.
+- A write-free **Data Health** view for incomplete or unusual ledger records and compare-only backup analysis.
 - Reversible recurring exceptions for deliberately removed generated occurrences.
 - Stable structural IDs with historical labels preserved in existing monthly records.
 - Versioned JSON backup and restore with validation and preview.
@@ -23,11 +26,13 @@ Archived Structure choices remain visible in historical records and totals but a
 
 Paycheck and expense order is stored as part of each month and survives reload, backup/restore, and copying a month. Expense movement stays within its displayed historical category group and does not change its category or any financial values.
 
+**Copy from Previous Month** copies the plan but clears every copied paycheck and expense actual to **Not entered**, including source actuals that were entered as zero. Deleting an expense uses a native Cancel-first confirmation and offers one session-only **Undo**. That Undo is invalidated by the next budget mutation or by reloading the page.
+
 ## Warm Ledger interface
 
 Warm Ledger uses a comfortable-density, warm-dark interface designed to keep the current month and its next actions easy to scan. The clay accent marks primary actions, while sage, gold, blue, and red support the existing positive, warning, informational, and destructive text labels; color is never the only indication of meaning.
 
-All five views remain available at narrow widths. Cards and controls reflow for phone-sized screens, while wide financial tables scroll inside their own bounded regions instead of making the whole page overflow. Keyboard focus is visible, narrow-screen controls have touch-friendly targets, native dialog action order matches keyboard order, reduced-motion preferences are respected, and high-contrast/forced-colors modes retain borders and focus indicators.
+All six views remain available at narrow widths. Cards and controls reflow for phone-sized screens, while wide financial tables scroll inside their own bounded regions instead of making the whole page overflow. Keyboard focus is visible, narrow-screen controls have touch-friendly targets, native dialog action order matches keyboard order, reduced-motion preferences are respected, and high-contrast/forced-colors modes retain borders and focus indicators.
 
 The interface currently has one built-in warm-dark appearance rather than a theme selector. Dashboard canvas charts are supplementary visual summaries: their accompanying labels, filters, and summary table remain the authoritative accessible content, but per-chart data-table equivalents are not yet provided.
 
@@ -71,6 +76,14 @@ An actual amount of **Not entered** means no value has been recorded (`null`). A
 
 “Complete” means the required actual amounts have been entered. It does not mean the month was matched to a bank statement, cleared, closed, or otherwise reconciled with a financial institution. Actual cash flow is entered income minus entered expenses only after both are complete; it is not a bank balance.
 
+## Data Health
+
+Data Health checks the ledger without writing to it. It reports actual amounts not entered (`null`), dates not entered (an empty string), expense-funding mismatches, absent months inside the earliest-to-latest nonempty ledger range, and conservative manual-record patterns repeated across at least three months. These are review prompts, not proof that a record is wrong.
+
+For missing actuals, select only the records to resolve, enter each amount, and review the preview before confirming one atomic change. An entered zero is a completed value and remains distinct from **Not entered**. Cancelling the preview changes nothing.
+
+**Compare a backup** validates and analyzes a selected backup without importing, restoring, or otherwise changing the ledger. The interface accepts files up to 5 MB and classifies months and structure for comparison. Comparison imports nothing. **Restore backup** is a separate, destructive workflow that previews and then replaces the active budget only after explicit confirmation.
+
 ## Recurring templates
 
 Use **Templates** to add recurring income and expense plans, pause or archive them, and control their order. From the Budget view, choose **Preview recurring items** to review a month's additions and skips before confirming. Previewing and cancelling write nothing; confirmation adds the complete preview atomically.
@@ -85,7 +98,7 @@ An exception can be allowed again only while its template occurrence is currentl
 
 ## Local and manual behavior
 
-Warm Ledger does not automatically generate recurring records, close months, reconcile accounts, or contact a bank or other service. Template generation and recurring-exception recovery always require explicit confirmation through the visible Preview and Apply flow. Passive navigation and Monthly Review do not write budget data.
+Warm Ledger does not automatically generate recurring records, close months, reconcile accounts, or contact a bank or other service. Template generation and recurring-exception recovery always require explicit confirmation through the visible Preview and Apply flow. Passive navigation, Monthly Review, Data Health checks, and backup comparison do not write budget data.
 
 The application has no server component and makes no account or financial-data network connection. Active data, templates, exceptions, and safety snapshots remain in this browser's site-specific storage. Downloads occur only when you request a JSON backup or preserved recovery data.
 

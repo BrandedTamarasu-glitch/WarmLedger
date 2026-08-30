@@ -4,7 +4,9 @@
     : (typeof require === 'function' ? require('./data-schema.js') : null);
   const Recurrence = root && root.ZeroBudgetRecurrence ? root.ZeroBudgetRecurrence
     : (typeof require === 'function' ? require('./recurrence.js') : null);
-  const api = factory(Schema, Recurrence);
+  const DataHealth = root && root.ZeroBudgetDataHealth ? root.ZeroBudgetDataHealth
+    : (typeof require === 'function' ? require('./data-health.js') : null);
+  const api = factory(Schema, Recurrence, DataHealth);
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (root && root.localStorage) {
     root.ZeroBudgetStore = api;
@@ -15,7 +17,7 @@
     });
     root.ALLOCATION_TYPES = api.ALLOCATION_TYPES;
   }
-})(typeof globalThis !== 'undefined' ? globalThis : this, function(Schema, Recurrence) {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function(Schema, Recurrence, DataHealth) {
   'use strict';
   if (!Schema) throw new Error('ZeroBudgetSchema is required');
 
@@ -83,6 +85,19 @@
     return freeze(detached);
   }
 
+  function stableCanonical(value) {
+    if (Array.isArray(value)) return `[${value.map(stableCanonical).join(',')}]`;
+    if (value && typeof value === 'object') {
+      return `{${Object.keys(value).sort().map(key =>
+        `${JSON.stringify(key)}:${stableCanonical(value[key])}`).join(',')}}`;
+    }
+    return JSON.stringify(value);
+  }
+
+  function semanticEqual(left, right) {
+    return stableCanonical(left) === stableCanonical(right);
+  }
+
   function localDate(date) {
     const year = date.getFullYear();
     const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -99,6 +114,8 @@
     }
     if (typeof now !== 'function' || typeof uuid !== 'function') throw new StoreError('INVALID_ADAPTER');
     const previewCapabilities = new WeakMap();
+    const deleteReceipts = new WeakMap();
+    const actualResolutionCapabilities = new WeakMap();
 
     let data = null;
     let committedRaw = null;
@@ -800,14 +817,46 @@
       });
     }
     function deleteExpense(monthKey, id) {
-      return transact(candidate => {
+      const details = transact(candidate => {
         const month = candidate.months[monthKey];
         if (!month) throw new StoreError('MONTH_NOT_FOUND');
         const index = month.expenses.findIndex(expense => expense.id === id);
         if (index < 0) throw new StoreError('EXPENSE_NOT_FOUND');
         const removed = month.expenses[index];
-        if (removed.sourceTemplateId !== null) addTombstone(month, removed);
+        const tombstone = removed.sourceTemplateId === null ? null : {
+          sourceTemplateId: removed.sourceTemplateId, occurrenceKey: removed.occurrenceKey
+        };
+        const tombstoneCreated = tombstone !== null && !month.suppressedOccurrences.some(entry =>
+          entry.sourceTemplateId === tombstone.sourceTemplateId && entry.occurrenceKey === tombstone.occurrenceKey);
+        if (tombstoneCreated) month.suppressedOccurrences.push(tombstone);
         month.expenses.splice(index, 1);
+        return { monthKey, index, removed, tombstone, tombstoneCreated };
+      });
+      const receipt = Object.freeze(Object.create(null));
+      deleteReceipts.set(receipt, { generation, ...details });
+      return receipt;
+    }
+    function undoDeleteExpense(receipt) {
+      requireReady();
+      const capability = receipt && typeof receipt === 'object' ? deleteReceipts.get(receipt) : null;
+      if (receipt && typeof receipt === 'object') deleteReceipts.delete(receipt);
+      if (!capability) throw new StoreError('INVALID_DELETE_RECEIPT');
+      if (capability.generation !== generation) throw new StoreError('STALE_DELETE_RECEIPT');
+      return transact(candidate => {
+        const month = candidate.months[capability.monthKey];
+        if (!month || capability.index < 0 || capability.index > month.expenses.length ||
+            month.expenses.some(expense => expense.id === capability.removed.id)) {
+          throw new StoreError('STALE_DELETE_RECEIPT');
+        }
+        if (capability.tombstoneCreated) {
+          const matches = month.suppressedOccurrences.reduce((found, entry, index) =>
+            entry.sourceTemplateId === capability.tombstone.sourceTemplateId &&
+            entry.occurrenceKey === capability.tombstone.occurrenceKey ? [...found, index] : found, []);
+          if (matches.length !== 1) throw new StoreError('STALE_DELETE_RECEIPT');
+          month.suppressedOccurrences.splice(matches[0], 1);
+        }
+        month.expenses.splice(capability.index, 0, capability.removed);
+        return capability.removed;
       });
     }
     function reorderExpenses(monthKey, orderedIds) {
@@ -843,7 +892,7 @@
         const paychecks = source.paychecks.map(paycheck => {
           const id = newId(); idMap[paycheck.id] = id;
           return { ...paycheck, id, date: paycheck.date.startsWith(`${targetKey}-`) ? paycheck.date : '',
-            sourceTemplateId: null, occurrenceKey: null };
+            actualAmount: null, sourceTemplateId: null, occurrenceKey: null };
         });
         const expenses = source.expenses.map(expense => {
           const paycheckAmounts = {};
@@ -1120,6 +1169,95 @@
     }
     function getAllMonthKeys() { requireReady(); return Object.keys(data.months).sort(); }
 
+    function getDataHealth() {
+      requireReady();
+      if (!DataHealth) throw new StoreError('DATA_HEALTH_UNAVAILABLE');
+      return DataHealth.analyze(schemaPolicy.clone(data));
+    }
+
+    function previewActualResolutions(proposals) {
+      requireReady();
+      let selections;
+      try { selections = schemaPolicy.clone(proposals); }
+      catch { throw new StoreError('INVALID_ACTUAL_RESOLUTIONS'); }
+      if (!Array.isArray(selections) || selections.length === 0) throw new StoreError('INVALID_ACTUAL_RESOLUTIONS');
+      const seen = new Set();
+      const staged = schemaPolicy.clone(data);
+      for (const item of selections) {
+        if (!item || typeof item !== 'object' || Array.isArray(item) ||
+            !['income', 'expense'].includes(item.kind) || typeof item.monthKey !== 'string' ||
+            typeof item.recordId !== 'string' || typeof item.actualAmount !== 'number' ||
+            !Number.isFinite(item.actualAmount) || item.actualAmount < 0) throw new StoreError('INVALID_ACTUAL_RESOLUTIONS');
+        const key = `${item.kind}\u0000${item.monthKey}\u0000${item.recordId}`;
+        if (seen.has(key)) throw new StoreError('DUPLICATE_ACTUAL_RESOLUTION');
+        seen.add(key);
+        const month = data.months[item.monthKey];
+        const records = month && (item.kind === 'income' ? month.paychecks : month.expenses);
+        const record = records && records.find(entry => entry.id === item.recordId);
+        if (!record) throw new StoreError('ACTUAL_RECORD_NOT_FOUND');
+        if (record.actualAmount !== null) throw new StoreError('ACTUAL_ALREADY_RESOLVED');
+        const stagedMonth = staged.months[item.monthKey];
+        const stagedRecords = item.kind === 'income' ? stagedMonth.paychecks : stagedMonth.expenses;
+        stagedRecords.find(entry => entry.id === item.recordId).actualAmount = item.actualAmount;
+      }
+      try { schemaPolicy.migrateActive(staged); }
+      catch { throw new StoreError('INVALID_ACTUAL_RESOLUTIONS'); }
+      const preview = freezeDetached({ generation, resolutions: selections });
+      actualResolutionCapabilities.set(preview, { generation, fingerprint: JSON.stringify(selections), selections });
+      return preview;
+    }
+
+    function applyActualResolutions(preview) {
+      requireReady();
+      const capability = preview && typeof preview === 'object' ? actualResolutionCapabilities.get(preview) : null;
+      if (preview && typeof preview === 'object') actualResolutionCapabilities.delete(preview);
+      if (!capability) throw new StoreError('INVALID_ACTUAL_RESOLUTION_PREVIEW');
+      if (capability.generation !== generation) throw new StoreError('STALE_ACTUAL_RESOLUTION_PREVIEW');
+      return transact(candidate => {
+        for (const item of capability.selections) {
+          const month = candidate.months[item.monthKey];
+          const records = month && (item.kind === 'income' ? month.paychecks : month.expenses);
+          const record = records && records.find(entry => entry.id === item.recordId);
+          if (!record || record.actualAmount !== null) throw new StoreError('STALE_ACTUAL_RESOLUTION_PREVIEW');
+          record.actualAmount = item.actualAmount;
+        }
+        return capability.selections;
+      });
+    }
+
+    function compareAdditiveBackup(text) {
+      requireReady();
+      let incoming;
+      try { incoming = schemaPolicy.parseBackup(text).data; }
+      catch { throw new StoreError('INVALID_COMPARISON_BACKUP'); }
+      const classifications = { identical: [], addable: [], conflicting: [] };
+      for (const monthKey of Object.keys(incoming.months).sort()) {
+        if (!Object.hasOwn(data.months, monthKey)) classifications.addable.push(monthKey);
+        else if (semanticEqual(data.months[monthKey], incoming.months[monthKey])) classifications.identical.push(monthKey);
+        else classifications.conflicting.push(monthKey);
+      }
+      const structure = {};
+      const classifyArray = (current, candidate) => {
+        if (semanticEqual(current, candidate)) return 'identical';
+        if (candidate.length > current.length && current.every((item, index) =>
+          semanticEqual(item, candidate[index]))) return 'addable';
+        return 'conflicting';
+      };
+      for (const [name, current, candidate] of [
+        ['categories', data.categories, incoming.categories],
+        ['earners', data.settings.earners, incoming.settings.earners],
+      ]) structure[name] = classifyArray(current, candidate);
+      const incomeTemplates = classifyArray(data.templates.income, incoming.templates.income);
+      const expenseTemplates = classifyArray(data.templates.expenses, incoming.templates.expenses);
+      structure.templates = incomeTemplates === 'identical' && expenseTemplates === 'identical' ? 'identical'
+        : ![incomeTemplates, expenseTemplates].includes('conflicting') ? 'addable' : 'conflicting';
+      return freezeDetached({ structure, months: classifications, counts: {
+        identical: classifications.identical.length, addable: classifications.addable.length,
+        conflicting: classifications.conflicting.length,
+        structuralConflicts: Object.values(structure).filter(value => value === 'conflicting').length
+      } });
+    }
+
     function buildExport() { requireReady(); return schemaPolicy.buildBackup(data, instantNow().toISOString()); }
     function exportData() { return JSON.stringify(buildExport(), null, 2); }
     function previewImport(text) {
@@ -1214,9 +1352,10 @@
       expenseProjected, addPaycheck, updatePaycheck, reassignPaycheckEarner, editPaycheck, deletePaycheck, reorderPaychecks,
       addExpense, updateExpense,
       reassignExpenseStructure, editExpense,
-      updateExpensePaycheckAmount, deleteExpense, reorderExpenses, updateAllocations, updateAllocation, copyFromMonth,
+      updateExpensePaycheckAmount, deleteExpense, undoDeleteExpense, reorderExpenses, updateAllocations, updateAllocation, copyFromMonth,
       clearMonth, previewRecurringMonth, applyRecurringPreview,
       getMonthReview, getSuppressedOccurrences, unsuppressOccurrence,
+      getDataHealth, previewActualResolutions, applyActualResolutions, compareAdditiveBackup,
       calcMonthSummary, calcPaycheckRemaining, calcCategoryTotals, calcPaymentMethodTotals,
       buildExport, exportData, previewImport, commitImport, importData, listSnapshots,
       listSnapshotMetadata, restoreSnapshot, startFresh, getCorruptEvidence

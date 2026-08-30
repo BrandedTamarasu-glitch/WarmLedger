@@ -46,7 +46,8 @@ test('storage origins, keys, global APIs, and compatibility evidence identifiers
   assert.match(data, /const STORAGE_KEY = 'zeroBudget_data'/);
   assert.match(data, /const CORRUPT_KEY = 'zeroBudget_corrupt'/);
   assert.match(data, /const SNAPSHOT_PREFIX = 'zeroBudget_snapshot:'/);
-  assert.match(evidence, /localStorage\.getItem\('zeroBudgetData'\)/);
+  assert.match(evidence, /const primaryKey = Store\.STORAGE_KEY \|\| ZeroBudgetStore\.STORAGE_KEY/);
+  assert.doesNotMatch(evidence, /zeroBudgetData/);
   assert.match(schema, /root\.ZeroBudgetSchema = api/);
   assert.match(data, /root\.ZeroBudgetStore = api/);
   assert.match(recurrence, /root\.ZeroBudgetRecurrence = api/);

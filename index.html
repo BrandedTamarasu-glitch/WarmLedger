@@ -34,6 +34,7 @@
       <button class="nav-tab" data-view="dashboard">Dashboard</button>
       <button class="nav-tab" data-view="structure">Structure</button>
       <button id="nav-templates" class="nav-tab" data-view="templates" hidden>Templates</button>
+      <button id="nav-data-health" class="nav-tab" data-view="data-health">Data Health</button>
     </div>
     <div class="nav-actions">
       <button id="btn-export" class="btn btn-sm">Download backup</button>
@@ -202,9 +203,48 @@
         <div id="templates-expenses"></div>
       </section>
     </div>
+
+    <div id="view-data-health" class="view">
+      <header class="structure-heading">
+        <h2 id="data-health-heading" tabindex="-1">Data Health</h2>
+        <p>Review incomplete or unusual ledger records. Checking this page does not change your budget.</p>
+      </header>
+      <div id="data-health-content"></div>
+    </div>
   </main>
   <div class="storage-strip">Records are stored only in this browser. Local safety snapshots are site-specific and not durable. <span id="last-saved">Not saved yet</span></div>
   </div>
+
+  <aside id="expense-undo-notice" class="undo-notice" aria-labelledby="expense-undo-message" hidden>
+    <span id="expense-undo-message"></span>
+    <div class="undo-actions">
+      <button id="expense-undo" class="btn btn-sm" type="button">Undo</button>
+      <button id="expense-undo-dismiss" class="btn btn-sm" type="button">Dismiss</button>
+    </div>
+  </aside>
+
+  <dialog id="expense-delete-dialog" class="restore-dialog" aria-labelledby="expense-delete-title" aria-describedby="expense-delete-warning">
+    <form method="dialog">
+      <h2 id="expense-delete-title">Delete this expense?</h2>
+      <p id="expense-delete-warning" class="break-anywhere"></p>
+      <div class="dialog-actions">
+        <button id="expense-delete-cancel" class="btn" value="cancel" autofocus>Cancel</button>
+        <button id="expense-delete-confirm" class="btn btn-danger" value="confirm">Delete expense</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="actual-resolution-dialog" class="restore-dialog" aria-labelledby="actual-resolution-title">
+    <form method="dialog">
+      <h2 id="actual-resolution-title">Apply these actual amounts?</h2>
+      <div id="actual-resolution-preview"></div>
+      <p>Only the explicitly selected records shown above will change.</p>
+      <div class="dialog-actions">
+        <button id="actual-resolution-cancel" class="btn" value="cancel" autofocus>Cancel</button>
+        <button id="actual-resolution-confirm" class="btn btn-primary" value="confirm">Apply selected amounts</button>
+      </div>
+    </form>
+  </dialog>
 
   <dialog id="restore-dialog" class="restore-dialog" aria-labelledby="restore-title" aria-describedby="restore-warning">
     <form method="dialog">
@@ -269,11 +309,13 @@
 
   <script src="js/data-schema.js"></script>
   <script src="js/recurrence.js"></script>
+  <script src="js/data-health.js"></script>
   <script src="js/data.js"></script>
   <script src="js/budget.js"></script>
   <script src="js/transfers.js"></script>
   <script src="js/dashboard.js"></script>
   <script src="js/structure.js"></script>
+  <script src="js/data-health-view.js"></script>
   <script src="js/app.js"></script>
   <script src="js/templates.js"></script>
 </body>

@@ -37,6 +37,22 @@ test('browser evidence owns a disposable, collision-free CDP endpoint and cleans
   assert.doesNotMatch(source, /setPageScaleFactor/);
 });
 
+test('browser evidence exercises Data Health and reversible expense deletion behavior', () => {
+  for (const marker of ['expenseDeleteCancelUndoStale', 'generatedTombstoneUndo', 'dataHealthPassiveRoutes',
+    'actualZeroPreviewCancelApply', 'actualApplyFailureAlertFocus', 'compareOnlyNoWrite', 'hostileLabelsSafe', 'recoveryGating',
+    'restoreInvalidatesUndo']) assert.match(source, new RegExp(marker));
+  assert.match(source, /Store\.getMonth\(month\)\.suppressedOccurrences\.length === 1/);
+  assert.match(source, /const primaryKey = Store\.STORAGE_KEY \|\| ZeroBudgetStore\.STORAGE_KEY/);
+  assert.match(source, /localStorage\.getItem\(primaryKey\) === healthBefore/);
+  assert.doesNotMatch(source, /zeroBudgetData/);
+  assert.match(source, /Emulation\.setEmulatedMedia/);
+  assert.match(source, /forced-colors/);
+  assert.match(source, /focusOutline !== 'none'/);
+  assert.match(source, /focusOutline !== 'hidden'/);
+  assert.match(source, /Input\.dispatchKeyEvent/);
+  assert.match(source, /scenario\.expenseDeleteEscape = true/);
+});
+
 test('profile cleanup retries transient failures with bounded backoff and eventually succeeds', async () => {
   const calls = []; const waits = [];
   const failures = ['ENOTEMPTY', 'EBUSY'].map(code => Object.assign(new Error(code), { code }));

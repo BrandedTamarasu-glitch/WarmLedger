@@ -2,7 +2,8 @@
 const App = {
   currentView: 'budget', viewsInitialized: false, restorePreview: null,
   restoreTrigger: null, modalTrigger: null, recurringPreview: null, recurringTrigger: null,
-  unsuppressContext: null, templatesInitialized: false, shownWarnings: new Set(), MAX_IMPORT_BYTES: 5 * 1024 * 1024,
+  unsuppressContext: null, deleteContext: null, expenseUndo: null, templatesInitialized: false,
+  shownWarnings: new Set(), MAX_IMPORT_BYTES: 5 * 1024 * 1024,
 
   init() {
     this.bindAppEvents();
@@ -28,6 +29,9 @@ const App = {
     document.getElementById('btn-preview-recurring').addEventListener('click', event => this.openRecurringPreview(event.currentTarget));
     document.getElementById('recurring-preview-dialog').addEventListener('close', () => this.onRecurringPreviewClose());
     document.getElementById('unsuppress-dialog').addEventListener('close', () => this.onUnsuppressDialogClose());
+    document.getElementById('expense-delete-dialog').addEventListener('close', () => this.onExpenseDeleteClose());
+    document.getElementById('expense-undo').addEventListener('click', () => this.undoExpenseDelete());
+    document.getElementById('expense-undo-dismiss').addEventListener('click', () => this.clearExpenseUndo(true));
     document.getElementById('modal-close').addEventListener('click', () => this.hideModal());
     document.getElementById('modal-cancel').addEventListener('click', () => this.hideModal());
     document.getElementById('modal-overlay').addEventListener('click', event => {
@@ -43,7 +47,7 @@ const App = {
 
   initializeViews() {
     if (this.viewsInitialized) return;
-    BudgetView.init(); TransfersView.init(); DashboardView.init(); StructureView.init(); this.viewsInitialized = true;
+    BudgetView.init(); TransfersView.init(); DashboardView.init(); StructureView.init(); DataHealthView.init(); this.viewsInitialized = true;
     this.initializeTemplateFeatures();
   },
 
@@ -95,7 +99,7 @@ const App = {
 
   restoreSnapshot(id, button) {
     button.disabled = true;
-    try { Store.restoreSnapshot(id); this.enterApplication('Recovery snapshot restored.', 'ready'); this.markSaved(); }
+    try { Store.restoreSnapshot(id); this.clearExpenseUndo(); this.enterApplication('Recovery snapshot restored.', 'ready'); this.markSaved(); }
     catch (error) { button.disabled = false; this.showError(error); }
   },
 
@@ -109,7 +113,7 @@ const App = {
   onFreshDialogClose() {
     const dialog = document.getElementById('fresh-dialog');
     if (dialog.returnValue !== 'confirm') return document.getElementById('btn-start-fresh').focus();
-    try { Store.startFresh(); this.enterApplication('A new budget was created.', 'ready'); this.markSaved(); }
+    try { Store.startFresh(); this.clearExpenseUndo(); this.enterApplication('A new budget was created.', 'ready'); this.markSaved(); }
     catch (error) { this.showError(error); document.getElementById('btn-start-fresh').focus(); }
   },
 
@@ -122,12 +126,14 @@ const App = {
     else if (view === 'dashboard') requestAnimationFrame(() => DashboardView.render());
     else if (view === 'structure') StructureView.render();
     else if (view === 'templates') TemplatesView.render();
+    else if (view === 'data-health') DataHealthView.render();
   },
 
   refreshAllViews() {
     BudgetView.render(); TransfersView.syncMonth(); TransfersView.render(); DashboardView.destroyAllCharts(); StructureView.render();
     this.initializeTemplateFeatures();
     TemplatesView.render();
+    DataHealthView.render();
     if (this.currentView === 'dashboard') requestAnimationFrame(() => DashboardView.render());
   },
 
@@ -217,6 +223,58 @@ const App = {
     });
   },
 
+  confirmExpenseDelete(expense, monthKey, trigger) {
+    this.deleteContext = { expenseId: expense.id, expenseName: expense.name, monthKey, trigger };
+    document.getElementById('expense-delete-warning').textContent =
+      `Delete “${expense.name}” from ${this.formatMonth(monthKey)}? You can undo this deletion until another saved change makes it stale.`;
+    const dialog = document.getElementById('expense-delete-dialog'); dialog.returnValue = ''; dialog.showModal();
+  },
+
+  onExpenseDeleteClose() {
+    const dialog = document.getElementById('expense-delete-dialog'); const context = this.deleteContext; this.deleteContext = null;
+    if (!context) return;
+    if (dialog.returnValue !== 'confirm') { context.trigger?.focus({ preventScroll: true }); return; }
+    this.runMutation(() => Store.deleteExpense(context.monthKey, context.expenseId), {
+      onSuccess: receipt => {
+        BudgetView.render(); this.offerExpenseUndo(receipt, context);
+        requestAnimationFrame(() => document.getElementById('expense-undo').focus({ preventScroll: true }));
+      },
+      onFailure: () => { BudgetView.render(); context.trigger?.focus({ preventScroll: true }); }
+    });
+  },
+
+  offerExpenseUndo(receipt, context) {
+    this.expenseUndo = { receipt, ...context };
+    document.getElementById('expense-undo-message').textContent = `“${context.expenseName}” was deleted.`;
+    document.getElementById('expense-undo-notice').hidden = false;
+    this.announceStatus(`${context.expenseName} was deleted. Undo is available.`);
+  },
+
+  clearExpenseUndo(restoreFocus = false) {
+    const context = this.expenseUndo; this.expenseUndo = null;
+    document.getElementById('expense-undo-notice').hidden = true;
+    if (restoreFocus) requestAnimationFrame(() => {
+      const target = context?.trigger?.isConnected ? context.trigger : document.getElementById('expenses-heading');
+      target?.focus({ preventScroll: true });
+    });
+  },
+
+  undoExpenseDelete() {
+    const context = this.expenseUndo; if (!context) return;
+    this.runMutation(() => Store.undoDeleteExpense(context.receipt), {
+      onSuccess: () => {
+        this.clearExpenseUndo(); this.refreshAllViews(); this.switchView('budget'); BudgetView.currentMonth = context.monthKey; BudgetView.render();
+        this.announceStatus(`${context.expenseName} was restored.`);
+        requestAnimationFrame(() => {
+          const target = document.querySelector(`[data-edit-type="expense"][data-record-id="${CSS.escape(context.expenseId)}"]`) ||
+            document.getElementById('expenses-heading');
+          target?.focus({ preventScroll: true });
+        });
+      },
+      onFailure: () => { this.clearExpenseUndo(); }
+    });
+  },
+
   showModal(title, bodyHtml, onSave) {
     this.modalTrigger = document.activeElement;
     document.getElementById('modal-title').textContent = title;
@@ -293,7 +351,7 @@ const App = {
     }
     const preview = this.restorePreview; this.restorePreview = null;
     try {
-      Store.commitImport(preview); this.refreshAllViews(); this.markSaved();
+      Store.commitImport(preview); this.clearExpenseUndo(); this.refreshAllViews(); this.markSaved();
       this.announceStatus('Backup restored. Your budget views are up to date.');
       requestAnimationFrame(() => document.getElementById('current-month-label').focus({ preventScroll: true }));
     } catch (error) { this.showError(error); this.restoreTrigger?.focus(); }
@@ -307,7 +365,10 @@ const App = {
     try {
       const generation = Store.getStatus().generation;
       const result = mutate();
-      if (Store.getStatus().generation !== generation) this.markSaved();
+      if (Store.getStatus().generation !== generation) {
+        this.markSaved();
+        if (this.expenseUndo) this.clearExpenseUndo();
+      }
       if (onSuccess) onSuccess(result);
       this.showWarnings(Store.getStatus().warnings || []);
       return true;
@@ -380,6 +441,14 @@ const App = {
       SUPPRESSED_OCCURRENCE_NOT_FOUND: 'That recurring exception is no longer available. Review the current month and try again.',
       SUPPRESSED_OCCURRENCE_INELIGIBLE: 'Update the recurring template as described before allowing this occurrence again.',
       UNSUPPRESS_PREVIEW_FAILED: 'The exception was removed and can be generated again, but preview could not open. Use Preview recurring items to try again. No record was added.',
+      STALE_DELETE_RECEIPT: 'Undo is no longer available because the budget changed. The expense remains deleted; nothing else was changed.',
+      INVALID_DELETE_RECEIPT: 'This expense deletion can no longer be undone. Nothing else was changed.',
+      INVALID_ACTUAL_RESOLUTIONS: 'Select at least one unresolved record and enter a valid actual amount. Nothing was changed.',
+      ACTUAL_ALREADY_RESOLVED: 'One selected record already has an actual amount. Refresh Data Health and review the selection again.',
+      ACTUAL_RECORD_NOT_FOUND: 'One selected record is no longer available. Refresh Data Health and review the selection again.',
+      STALE_ACTUAL_RESOLUTION_PREVIEW: 'Your budget changed while this preview was open. No actual amounts were applied.',
+      INVALID_ACTUAL_RESOLUTION_PREVIEW: 'This actual-amount preview is no longer valid. No actual amounts were applied.',
+      INVALID_COMPARISON_BACKUP: 'This file is not a valid Warm Ledger backup. Nothing was imported and your ledger was not changed.',
       UNKNOWN: 'Warm Ledger could not complete that action. Your last saved budget remains available.'
     };
     const alert = document.getElementById('app-error'); document.getElementById('app-status').textContent = '';

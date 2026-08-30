@@ -524,7 +524,8 @@ const BudgetView = {
     const moveDown = this.moveButton('expense', 'move-down', expense, groupIndex === groupSize - 1,
       event => this.moveExpense(expense, 1, event.currentTarget));
     const deleteButton = this.element('button', 'btn-delete', '×'); deleteButton.type = 'button';
-    deleteButton.setAttribute('aria-label', `Delete ${expense.name}`); deleteButton.addEventListener('click', () => this.deleteExpense(expense.id));
+    deleteButton.setAttribute('aria-label', `Delete ${expense.name}`);
+    deleteButton.addEventListener('click', event => this.deleteExpense(expense, event.currentTarget));
     actionCell.append(editButton, moveUp, moveDown, deleteButton);
     return row;
   },
@@ -725,8 +726,8 @@ const BudgetView = {
     document.getElementById('field-name').required = !isPreset;
   },
 
-  deleteExpense(id) {
-    App.runMutation(() => Store.deleteExpense(this.currentMonth, id), { onSuccess: () => this.render(), onFailure: () => this.render() });
+  deleteExpense(expense, trigger) {
+    App.confirmExpenseDelete(expense, this.currentMonth, trigger);
   },
 
   // ---- Allocation ----

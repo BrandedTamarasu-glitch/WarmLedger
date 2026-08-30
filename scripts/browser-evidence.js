@@ -137,7 +137,10 @@ async function evaluate(cdp, expression) {
 const SCENARIO = `(async () => {
   const assert = (condition, message) => { if (!condition) throw new Error(message); };
   const settle = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  const pause = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
   localStorage.clear(); Store.startFresh(); App.enterApplication('', 'ready');
+  const primaryKey = Store.STORAGE_KEY || ZeroBudgetStore.STORAGE_KEY;
+  assert(typeof primaryKey === 'string' && primaryKey.length > 0, 'Primary storage key is unavailable.');
   const month = BudgetView.currentMonth;
   const day = Number(month.slice(5, 7)) === new Date().getMonth() + 1 ? new Date().getDate() : 1;
   const date = month + '-' + String(day).padStart(2, '0');
@@ -148,17 +151,18 @@ const SCENARIO = `(async () => {
   Store.addExpenseTemplate({ name: 'Synthetic browser bill', categoryId: category.id,
     categoryItemId: null, plannedAmount: 123, paymentMethod: 'bank', enabled: true,
     startDate: date, endDate: null, recurrence: { cadence: 'monthly', day } });
+  assert(localStorage.getItem(primaryKey) !== null, 'Synthetic setup did not establish active primary storage bytes.');
   App.refreshAllViews();
 
   const previewTrigger = document.getElementById('btn-preview-recurring');
-  const passiveBefore = localStorage.getItem('zeroBudgetData'); previewTrigger.click(); await settle();
+  const passiveBefore = localStorage.getItem(primaryKey); previewTrigger.click(); await settle();
   const previewDialog = document.getElementById('recurring-preview-dialog');
   assert(previewDialog.open, 'Recurring preview did not open.');
   assert(document.activeElement.id === 'recurring-preview-cancel', 'Recurring preview did not focus Cancel.');
-  assert(localStorage.getItem('zeroBudgetData') === passiveBefore, 'Opening recurring preview changed storage bytes.');
+  assert(localStorage.getItem(primaryKey) === passiveBefore, 'Opening recurring preview changed storage bytes.');
   previewDialog.close('cancel'); await settle();
   assert(document.activeElement === previewTrigger, 'Cancel did not restore preview-trigger focus.');
-  assert(localStorage.getItem('zeroBudgetData') === passiveBefore, 'Cancel changed storage bytes.');
+  assert(localStorage.getItem(primaryKey) === passiveBefore, 'Cancel changed storage bytes.');
 
   previewTrigger.click(); await settle(); previewDialog.close('confirm'); await settle();
   const generated = Store.getMonth(month); assert(generated.paychecks.length && generated.expenses.length, 'Apply did not create recurring records.');
@@ -173,25 +177,116 @@ const SCENARIO = `(async () => {
     document.activeElement.dataset.reviewKind === 'income',
     'Monthly Review edit did not restore contextual focus or its heading fallback.');
 
-  Store.deleteExpense(month, generated.expenses[0].id); BudgetView.render(); await settle();
+  const generatedExpense = generated.expenses[0];
+  const deleteControl = () => [...document.querySelectorAll('.expense-table [aria-label^="Delete "]')]
+    .find(button => button.closest('tr')?.dataset.id === generatedExpense.id);
+  const deleteDialog = document.getElementById('expense-delete-dialog');
+  const beforeDelete = localStorage.getItem(primaryKey); deleteControl().click(); await settle();
+  assert(deleteDialog.open && document.activeElement.id === 'expense-delete-cancel', 'Expense delete did not open on Cancel.');
+  assert(localStorage.getItem(primaryKey) === beforeDelete, 'Opening expense delete changed bytes.');
+  document.getElementById('expense-delete-cancel').click(); await settle();
+  assert(Store.getMonth(month).expenses.some(item => item.id === generatedExpense.id), 'Delete Cancel removed the expense.');
+  assert(document.activeElement === deleteControl(), 'Delete Cancel did not restore trigger focus.');
+  assert(localStorage.getItem(primaryKey) === beforeDelete, 'Delete Cancel changed bytes.');
+
+  deleteControl().click(); await settle(); document.getElementById('expense-delete-confirm').click(); await settle();
+  assert(!Store.getMonth(month).expenses.some(item => item.id === generatedExpense.id), 'Confirmed expense delete did not remove it.');
+  assert(Store.getMonth(month).suppressedOccurrences.length === 1, 'Generated deletion did not create its tombstone.');
+  assert(document.activeElement.id === 'expense-undo', 'Confirmed deletion did not focus Undo.');
+  document.getElementById('expense-undo').click(); await settle();
+  assert(Store.getMonth(month).expenses[0].id === generatedExpense.id, 'Undo did not restore the exact expense position.');
+  assert(Store.getMonth(month).suppressedOccurrences.length === 0, 'Undo did not remove the exact generated tombstone.');
+  assert(document.activeElement.dataset.recordId === generatedExpense.id, 'Undo did not restore expense edit focus.');
+
+  deleteControl().click(); await settle(); document.getElementById('expense-delete-confirm').click(); await settle();
+  Store.addExpense(month, { categoryId: category.id, categoryItemId: null,
+    name: '<img src=x onerror="globalThis.__hostileRan=true"> Hostile ledger label', date: '', paycheckAmounts: {},
+    plannedAmount: 7, actualAmount: null, paymentMethod: 'bank' });
+  document.getElementById('expense-undo').click(); await settle();
+  assert(document.getElementById('expense-undo-notice').hidden, 'Stale Undo notice was not cleared.');
+  assert(!document.getElementById('app-error').hidden && document.activeElement.id === 'app-error', 'Stale Undo did not preserve alert focus.');
+  assert(!globalThis.__hostileRan, 'A hostile record label executed markup.');
+  App.announceStatus('Continuing browser evidence.'); BudgetView.render(); await settle();
+
   const allow = document.querySelector('[data-exception-action="allow-again"]');
   assert(allow, 'Allow-again control is missing after generated deletion.');
-  const allowPassive = localStorage.getItem('zeroBudgetData'); allow.click(); await settle();
+  const allowPassive = localStorage.getItem(primaryKey); allow.click(); await settle();
   const allowDialog = document.getElementById('unsuppress-dialog');
   assert(allowDialog.open && document.activeElement.id === 'unsuppress-cancel', 'Allow-again dialog focus is incorrect.');
-  assert(localStorage.getItem('zeroBudgetData') === allowPassive, 'Opening Allow-again changed storage bytes.');
-  allowDialog.close('cancel'); await settle(); assert(localStorage.getItem('zeroBudgetData') === allowPassive, 'Allow-again Cancel changed bytes.');
+  assert(localStorage.getItem(primaryKey) === allowPassive, 'Opening Allow-again changed storage bytes.');
+  allowDialog.close('cancel'); await settle(); assert(localStorage.getItem(primaryKey) === allowPassive, 'Allow-again Cancel changed bytes.');
   document.querySelector('[data-exception-action="allow-again"]').click(); await settle(); allowDialog.close('confirm'); await settle();
   assert(previewDialog.open, 'Confirmed Allow-again did not hand off to recurring preview.');
   assert(document.activeElement.id === 'recurring-preview-cancel', 'Allow-again preview handoff did not focus Cancel.');
   previewDialog.close('confirm'); await settle();
 
-  const backup = Store.exportData(); const importBytes = localStorage.getItem('zeroBudgetData');
+  const healthBefore = localStorage.getItem(primaryKey); const healthTab = document.getElementById('nav-data-health');
+  healthTab.focus(); healthTab.click(); await settle();
+  assert(document.getElementById('view-data-health').classList.contains('active'), 'Data Health route did not activate.');
+  assert(document.activeElement.id === 'nav-data-health', 'Data Health navigation did not retain trigger focus.');
+  assert(localStorage.getItem(primaryKey) === healthBefore, 'Passive Data Health render changed bytes.');
+  assert(document.getElementById('data-health-content').textContent.includes('Hostile ledger label'), 'Hostile label was not rendered as text.');
+  assert(!document.querySelector('#data-health-content img'), 'Hostile Data Health label created markup.');
+  const hostile = Store.getMonth(month).expenses.find(item => item.name.includes('Hostile ledger label'));
+  const healthCheck = [...document.querySelectorAll('.actual-resolution-row input[type="checkbox"]')]
+    .find(input => input.dataset.recordId === hostile.id);
+  assert(healthCheck && !healthCheck.checked, 'Missing-actual choice was not default-unselected.');
+  healthCheck.click(); const amount = document.getElementById(healthCheck.id.replace('resolve-actual-', 'resolve-amount-'));
+  amount.value = '0'; const resolutionForm = healthCheck.closest('form'); resolutionForm.requestSubmit(); await settle();
+  const resolutionDialog = document.getElementById('actual-resolution-dialog');
+  assert(resolutionDialog.open && document.activeElement.id === 'actual-resolution-cancel', 'Actual preview did not focus Cancel.');
+  assert(localStorage.getItem(primaryKey) === healthBefore, 'Actual preview changed bytes.');
+  document.getElementById('actual-resolution-cancel').click(); await settle();
+  assert(Store.getMonth(month).expenses.find(item => item.id === hostile.id).actualAmount === null, 'Actual preview Cancel applied a value.');
+  assert(localStorage.getItem(primaryKey) === healthBefore, 'Actual preview Cancel changed bytes.');
+  resolutionForm.requestSubmit(); await settle(); document.getElementById('actual-resolution-confirm').click(); await settle();
+  assert(Store.getMonth(month).expenses.find(item => item.id === hostile.id).actualAmount === 0, 'Selected actual zero was not applied.');
+
+  const staleActual = Store.addExpense(month, { categoryId: category.id, categoryItemId: null,
+    name: 'Synthetic stale actual', date, paycheckAmounts: {}, plannedAmount: 4, actualAmount: null, paymentMethod: 'bank' });
+  DataHealthView.render(); const staleCheck = [...document.querySelectorAll('.actual-resolution-row input[type="checkbox"]')]
+    .find(input => input.dataset.recordId === staleActual.id); staleCheck.click();
+  const staleAmount = document.getElementById(staleCheck.id.replace('resolve-actual-', 'resolve-amount-')); staleAmount.value = '2';
+  staleCheck.closest('form').requestSubmit(); await settle();
+  Store.addExpense(month, { categoryId: category.id, categoryItemId: null, name: 'Synthetic generation change',
+    date, paycheckAmounts: {}, plannedAmount: 1, actualAmount: 1, paymentMethod: 'bank' });
+  document.getElementById('actual-resolution-confirm').click(); await settle();
+  assert(Store.getMonth(month).expenses.find(item => item.id === staleActual.id).actualAmount === null,
+    'Stale actual preview partially applied.');
+  assert(!document.getElementById('app-error').hidden && document.activeElement.id === 'app-error',
+    'Actual apply failure did not preserve application-alert focus.');
+  App.announceStatus('Continuing browser evidence.'); DataHealthView.render();
+
+  const compareBefore = localStorage.getItem(primaryKey); const compareInput = document.getElementById('health-compare-file');
+  const transfer = new DataTransfer(); transfer.items.add(new File([Store.exportData()], 'synthetic-backup.json', { type: 'application/json' }));
+  compareInput.files = transfer.files; compareInput.dispatchEvent(new Event('change', { bubbles: true })); await pause(80); await settle();
+  const compareText = document.getElementById('health-compare-result').textContent;
+  assert(compareText.includes('Nothing was imported') && !compareText.includes('Apply'), 'Comparison did not remain clearly report-only.');
+  assert(localStorage.getItem(primaryKey) === compareBefore, 'Backup comparison changed bytes.');
+
+  App.showRecovery({ hasEvidence: false, snapshots: [], warnings: [] }); await settle();
+  assert(!document.getElementById('recovery-panel').hidden && document.getElementById('application-shell').hidden &&
+    document.getElementById('application-shell').inert, 'Recovery did not gate the application shell.');
+  App.enterApplication('Recovery gate evidence complete.', 'ready'); App.switchView('data-health'); await settle();
+
+  App.switchView('budget'); BudgetView.currentMonth = month; BudgetView.render(); await settle();
+  const hostileDelete = [...document.querySelectorAll('.expense-table [aria-label^="Delete "]')]
+    .find(button => button.closest('tr')?.dataset.id === hostile.id);
+  hostileDelete.click(); await settle(); document.getElementById('expense-delete-confirm').click(); await settle();
+  assert(!document.getElementById('expense-undo-notice').hidden, 'Restore invalidation setup did not create an outstanding Undo.');
+  const backup = Store.exportData(); const importBytes = localStorage.getItem(primaryKey);
   const importPreview = Store.previewImport(backup);
-  assert(localStorage.getItem('zeroBudgetData') === importBytes, 'Backup preview changed storage bytes.');
-  Store.commitImport(importPreview); assert(localStorage.getItem('zeroBudgetData') === importBytes, 'No-op backup restore changed bytes.');
+  assert(localStorage.getItem(primaryKey) === importBytes, 'Backup preview changed storage bytes.');
+  App.restorePreview = importPreview; App.restoreTrigger = document.getElementById('btn-import');
+  document.getElementById('restore-dialog').returnValue = 'confirm'; App.onRestoreDialogClose(); await settle();
+  assert(document.getElementById('expense-undo-notice').hidden && App.expenseUndo === null,
+    'Successful Restore did not invalidate outstanding expense Undo.');
+  assert(localStorage.getItem(primaryKey) === importBytes, 'No-op backup restore changed bytes.');
   const rerun = Store.previewRecurringMonth(month); assert(rerun.counts.additions === 0, 'Recurring apply was not idempotent.');
-  return { month, passiveActionsByteExact: true, monthlyReviewEdit: true, allowAgain: true,
+  App.switchView('data-health'); await settle();
+  return { month, passiveActionsByteExact: true, monthlyReviewEdit: true, expenseDeleteCancelUndoStale: true,
+    generatedTombstoneUndo: true, dataHealthPassiveRoutes: true, actualZeroPreviewCancelApply: true, actualApplyFailureAlertFocus: true,
+    compareOnlyNoWrite: true, hostileLabelsSafe: true, recoveryGating: true, restoreInvalidatesUndo: true, allowAgain: true,
     previewCancelApply: true, backupRoundTrip: true, generatedIncome: Store.getMonth(month).paychecks.length,
     generatedExpenses: Store.getMonth(month).expenses.length };
 })()`;
@@ -211,6 +306,33 @@ async function run(options) {
     await cdp.send('Page.navigate', { url: appUrl });
     await new Promise(resolve => setTimeout(resolve, 800));
     const scenario = await evaluate(cdp, SCENARIO);
+    const escapeSetup = await evaluate(cdp, `(async () => {
+      App.switchView('budget'); BudgetView.render();
+      const button = document.querySelector('.expense-table [aria-label^="Delete "]');
+      if (!button) return { ready: false };
+      globalThis.__escapeExpenseId = button.closest('tr').dataset.id;
+      globalThis.__escapeBytes = localStorage.getItem(Store.STORAGE_KEY);
+      button.focus(); button.click();
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      return { ready: document.getElementById('expense-delete-dialog').open,
+        cancelFocused: document.activeElement.id === 'expense-delete-cancel' };
+    })()`);
+    assertEvidence(escapeSetup.ready && escapeSetup.cancelFocused, 'Expense delete Escape setup failed.');
+    await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+    await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+    await new Promise(resolve => setTimeout(resolve, 100));
+    const escapeDelete = await evaluate(cdp, `(() => {
+      const id = globalThis.__escapeExpenseId; const bytes = globalThis.__escapeBytes;
+      const result = { closed: !document.getElementById('expense-delete-dialog').open,
+        preserved: Store.getMonth(BudgetView.currentMonth).expenses.some(item => item.id === id),
+        byteExact: localStorage.getItem(Store.STORAGE_KEY) === bytes,
+        focusReturned: document.activeElement.closest('tr')?.dataset.id === id && document.activeElement.getAttribute('aria-label')?.startsWith('Delete ') };
+      delete globalThis.__escapeExpenseId; delete globalThis.__escapeBytes; return result;
+    })()`);
+    assertEvidence(escapeDelete.closed && escapeDelete.preserved && escapeDelete.byteExact && escapeDelete.focusReturned,
+      `Expense delete Escape failed: ${JSON.stringify(escapeDelete)}`);
+    scenario.expenseDeleteEscape = true;
+    await evaluate(cdp, `App.switchView('data-health')`);
     await cdp.send('Emulation.setDeviceMetricsOverride', { width: 320, height: 900, deviceScaleFactor: 1, mobile: false });
     const narrow = await evaluate(cdp, `(() => {
       const viewport = document.documentElement.clientWidth;
@@ -241,6 +363,16 @@ async function run(options) {
     assertEvidence(narrow.width <= narrow.viewport, `Page overflows at 320px: ${JSON.stringify(narrow)}`);
     assertEvidence(narrow.controls, `A visible form control is wider than the 320px viewport: ${JSON.stringify(narrow)}`);
     assertEvidence(reflow200Percent.width <= reflow200Percent.viewport, 'Page overflows at the 200% browser-zoom-equivalent viewport.');
+    await cdp.send('Emulation.setEmulatedMedia', { features: [{ name: 'forced-colors', value: 'active' }] });
+    const forcedColors = await evaluate(cdp, `(() => {
+      const section = document.querySelector('.data-health-section'); const focus = document.getElementById('nav-data-health'); focus.focus();
+      return { active: matchMedia('(forced-colors: active)').matches, sectionVisible: Boolean(section?.getClientRects().length),
+        sectionBorder: section ? getComputedStyle(section).borderColor : '', focusOutline: getComputedStyle(focus).outlineStyle };
+    })()`);
+    assertEvidence(forcedColors.active && forcedColors.sectionVisible && forcedColors.sectionBorder !== 'rgba(0, 0, 0, 0)' &&
+      forcedColors.focusOutline !== 'none' && forcedColors.focusOutline !== 'hidden',
+      `Forced-colors Data Health evidence failed: ${JSON.stringify(forcedColors)}`);
+    await cdp.send('Emulation.setEmulatedMedia', { features: [{ name: 'forced-colors', value: 'none' }] });
     await cdp.send('Page.reload', { ignoreCache: true }); await new Promise(resolve => setTimeout(resolve, 700));
     const reload = await evaluate(cdp, `({ schemaVersion: Store.getData().schemaVersion,
       additions: Store.previewRecurringMonth(BudgetView.currentMonth).counts.additions })`);
@@ -248,7 +380,7 @@ async function run(options) {
     const errors = cdp.events.filter(event => event.method === 'Runtime.exceptionThrown' ||
       (event.method === 'Runtime.consoleAPICalled' && event.params.type === 'error'));
     assertEvidence(errors.length === 0, 'Console or page exceptions were captured.');
-    evidence = { passed: true, browser, disposableProfile: true, scenario, narrow,
+    evidence = { passed: true, browser, disposableProfile: true, scenario, escapeDelete, narrow, forcedColors,
       reflow200Percent: { ...reflow200Percent, method: '1280px viewport halved to 640 CSS pixels' }, reload, errors: [] };
   } finally {
     cdp?.close();
