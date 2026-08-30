@@ -1,24 +1,52 @@
 :root {
-  --bg: #0f1117;
-  --surface: #1a1d27;
-  --surface-2: #242836;
-  --border: #2e3347;
-  --text: #e4e6ef;
-  --text-muted: #8b8fa3;
-  --primary: #6366f1;
-  --primary-hover: #818cf8;
-  --green: #22c55e;
-  --red: #ef4444;
-  --yellow: #eab308;
-  --blue: #3b82f6;
-  --radius: 8px;
-  --shadow: 0 2px 8px rgba(0,0,0,0.3);
+  --color-canvas: #15130f;
+  --color-surface: #1d1a16;
+  --color-surface-raised: #27221c;
+  --color-divider: #40382d;
+  --color-border-interactive: #756957;
+  --color-text: #f7f0e6;
+  --color-text-muted: #b7aa9a;
+  --color-accent: #e09a72;
+  --color-on-accent: #24140d;
+  --color-positive: #8fc89a;
+  --color-warning: #e7bd75;
+  --color-danger: #f08a80;
+  --color-info: #8eb7c7;
+  --color-focus: #f2bd91;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --radius-control: 10px;
+  --radius-card: 14px;
+  --radius-panel: 16px;
+  --shadow-shell: 0 8px 24px rgba(0, 0, 0, .22);
+  --shadow-elevated: 0 18px 48px rgba(0, 0, 0, .34);
+
+  /* Compatibility aliases for established component selectors. */
+  --bg: var(--color-canvas);
+  --surface: var(--color-surface);
+  --surface-2: var(--color-surface-raised);
+  --border: var(--color-divider);
+  --text: var(--color-text);
+  --text-muted: var(--color-text-muted);
+  --primary: var(--color-accent);
+  --primary-hover: var(--color-focus);
+  --green: var(--color-positive);
+  --red: var(--color-danger);
+  --yellow: var(--color-warning);
+  --blue: var(--color-info);
+  --radius: var(--radius-control);
+  --shadow: var(--shadow-elevated);
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
 :focus-visible {
-  outline: 3px solid var(--primary-hover) !important;
+  outline: 3px solid var(--color-focus) !important;
   outline-offset: 2px;
 }
 
@@ -27,7 +55,16 @@ body {
   background: var(--bg);
   color: var(--text);
   min-height: 100vh;
+  font-size: 15px;
+  line-height: 1.5;
 }
+
+button, input, select, textarea { font: inherit; }
+button:active:not(:disabled), .btn:active:not(:disabled) { transform: translateY(1px); }
+button:disabled, input:disabled, select:disabled, textarea:disabled { cursor: not-allowed; opacity: .55; }
+#application-shell { padding-bottom: 160px; }
+[tabindex="-1"], #current-month-label, #recovery-title, #monthly-review-heading,
+#structure-categories-heading, #structure-earners-heading { scroll-margin-top: 190px; }
 
 /* Nav */
 .topnav {
@@ -40,6 +77,7 @@ body {
   position: sticky;
   top: 0;
   z-index: 100;
+  box-shadow: var(--shadow-shell);
 }
 
 .nav-brand {
@@ -62,11 +100,11 @@ body {
   border-radius: var(--radius);
   font-size: 14px;
   font-weight: 500;
-  transition: all 0.2s;
+  transition: color .18s, background-color .18s, border-color .18s;
 }
 
 .nav-tab:hover { color: var(--text); background: var(--surface-2); }
-.nav-tab.active { color: var(--text); background: var(--primary); }
+.nav-tab.active { color: var(--color-on-accent); background: var(--color-accent); }
 
 .nav-actions {
   margin-left: auto;
@@ -84,14 +122,14 @@ body {
   cursor: pointer;
   font-size: 13px;
   font-weight: 500;
-  transition: all 0.2s;
+  transition: color .18s, background-color .18s, border-color .18s, box-shadow .18s, transform .12s;
 }
 
 .btn:hover { border-color: var(--text-muted); }
-.btn-primary { background: var(--primary); border-color: var(--primary); }
-.btn-primary:hover { background: var(--primary-hover); border-color: var(--primary-hover); }
+.btn-primary { color: var(--color-on-accent); background: var(--color-accent); border-color: var(--color-accent); }
+.btn-primary:hover { background: var(--color-focus); border-color: var(--color-focus); }
 .btn-danger { color: var(--red); border-color: var(--red); background: transparent; }
-.btn-danger:hover { background: rgba(239,68,68,0.1); }
+.btn-danger:hover { background: rgba(240, 138, 128, .12); }
 .btn-sm { padding: 6px 12px; font-size: 12px; }
 .btn-icon { background: transparent; border: none; color: var(--text-muted); font-size: 18px; cursor: pointer; padding: 4px 8px; }
 .btn-icon:hover { color: var(--text); }
@@ -100,7 +138,7 @@ body {
 .btn-edit { white-space: nowrap; }
 
 /* Views */
-.view { display: none; padding: 24px; max-width: 1200px; margin: 0 auto; }
+.view { display: none; padding: clamp(16px, 3vw, 32px) 24px; max-width: 1200px; margin: 0 auto; }
 .view.active { display: block; }
 
 /* Budget Header */
@@ -113,7 +151,8 @@ body {
   margin-bottom: 16px;
 }
 
-.month-selector h2 { font-size: 24px; min-width: 200px; text-align: center; }
+.month-selector h2, .structure-heading h2 { font-size: clamp(26px, 3vw, 30px); min-width: 200px; text-align: center; }
+.structure-heading h2 { min-width: 0; text-align: left; }
 
 .budget-summary-bar {
   display: flex;
@@ -147,7 +186,7 @@ body {
   margin-bottom: 16px;
 }
 
-.section-header h3 { font-size: 16px; font-weight: 600; }
+.section-header h3, .monthly-review > h3 { font-size: clamp(18px, 2vw, 20px); font-weight: 600; }
 
 /* Paychecks Grid */
 .paychecks-grid {
@@ -219,13 +258,14 @@ body {
   cursor: pointer;
   user-select: none;
   margin-bottom: 4px;
+  transition: color .18s, background-color .18s, border-color .18s;
 }
 
 .category-header:hover { background: var(--border); }
 
 .category-name {
   font-weight: 600;
-  font-size: 14px;
+  font-size: 15px;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -236,7 +276,7 @@ body {
 .muted-text { color: var(--text-muted); font-size: 14px; }
 
 .category-toggle {
-  transition: transform 0.2s;
+  transition: transform .18s;
   font-size: 12px;
   color: var(--text-muted);
 }
@@ -400,7 +440,7 @@ body {
 /* Transfers */
 .transfers-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(360px, 100%), 1fr));
   gap: 16px;
 }
 
@@ -454,8 +494,8 @@ body {
 .keep-bank .transfer-action-amount { color: var(--green); }
 .send-savings .transfer-action-label { color: var(--blue); }
 .send-savings .transfer-action-amount { color: var(--blue); }
-.send-invest .transfer-action-label { color: #8b5cf6; }
-.send-invest .transfer-action-amount { color: #8b5cf6; }
+.send-invest .transfer-action-label { color: var(--color-info); }
+.send-invest .transfer-action-amount { color: var(--color-info); }
 .unassigned .transfer-action-label { color: var(--text-muted); }
 .unassigned .transfer-action-amount { color: var(--text-muted); }
 
@@ -501,7 +541,7 @@ body {
 .transfer-summary-table .row-cc .td-amt { color: var(--yellow); }
 .transfer-summary-table .row-bank .td-amt { color: var(--green); }
 .transfer-summary-table .row-savings .td-amt { color: var(--blue); }
-.transfer-summary-table .row-invest .td-amt { color: #8b5cf6; }
+.transfer-summary-table .row-invest .td-amt { color: var(--color-info); }
 
 .transfer-summary-table .row-total td {
   border-top: 2px solid var(--border);
@@ -527,16 +567,20 @@ body {
   padding: 0 24px;
   color: var(--text-muted);
   font-size: 12px;
+  border-top: 1px solid var(--color-divider);
+  padding-top: 12px;
 }
 
 .feedback-center {
   position: fixed;
-  bottom: 12px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: min(720px, calc(100vw - 24px));
+  right: 24px;
+  bottom: 24px;
+  left: auto;
+  transform: none;
+  width: min(420px, calc(100vw - 48px));
   z-index: 400;
   pointer-events: none;
+  filter: drop-shadow(var(--shadow-shell));
 }
 
 .live-message {
@@ -546,6 +590,7 @@ body {
   pointer-events: auto;
   background: var(--surface);
   border-radius: var(--radius);
+  border: 1px solid var(--color-divider);
 }
 .live-message:empty { display: none; }
 
@@ -553,7 +598,7 @@ body {
   padding: 12px 16px;
   border: 1px solid var(--red);
   border-radius: var(--radius);
-  background: rgba(239,68,68,0.12);
+  background: rgba(240, 138, 128, .12);
 }
 
 .recovery-panel {
@@ -562,7 +607,8 @@ body {
   padding: 24px;
   background: var(--surface);
   border: 1px solid var(--red);
-  border-radius: 12px;
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow-elevated);
 }
 
 .recovery-panel h1, .recovery-panel h2, .recovery-panel p { margin-bottom: 16px; }
@@ -575,14 +621,15 @@ body {
   color: var(--text);
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-panel);
   width: min(92vw, 520px);
   max-height: calc(100dvh - 2rem);
   padding: 24px;
   overflow: auto;
+  box-shadow: var(--shadow-elevated);
 }
 
-.restore-dialog::backdrop { background: rgba(0,0,0,0.7); }
+.restore-dialog::backdrop { background: rgba(10, 8, 6, .76); }
 .restore-dialog h2, .restore-dialog p { margin-bottom: 16px; }
 .restore-preview { display: grid; grid-template-columns: minmax(110px, auto) 1fr; gap: 8px 16px; margin: 20px 0; }
 .restore-preview dt { color: var(--text-muted); }
@@ -596,7 +643,7 @@ body {
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,0.6);
+  background: rgba(10, 8, 6, .76);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -606,7 +653,7 @@ body {
 .modal {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-panel);
   width: 90%;
   max-width: 480px;
   max-height: calc(100dvh - 2rem);
@@ -651,7 +698,7 @@ body {
   width: 100%;
   padding: 10px 12px;
   background: var(--bg);
-  border: 1px solid var(--border);
+  border: 1px solid var(--color-border-interactive);
   border-radius: var(--radius);
   color: var(--text);
   font-size: 14px;
@@ -694,7 +741,7 @@ body {
 .date-range input {
   padding: 8px 12px;
   background: var(--surface);
-  border: 1px solid var(--border);
+  border: 1px solid var(--color-border-interactive);
   border-radius: var(--radius);
   color: var(--text);
   font-size: 14px;
@@ -777,6 +824,7 @@ body {
 .monthly-review-states, .monthly-review-list { padding-left: 22px; display: grid; gap: 8px; }
 .monthly-review-states { margin: 0; }
 .monthly-review-group { min-width: 0; padding: 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); }
+.monthly-review-group { border-color: var(--color-divider); background: var(--color-surface); }
 .monthly-review-group h4 { margin-bottom: 10px; }
 .monthly-review-group p { line-height: 1.5; overflow-wrap: anywhere; }
 .monthly-review-details { display: grid; grid-template-columns: minmax(9rem, max-content) minmax(0, 1fr); gap: 7px 14px; }
@@ -808,18 +856,46 @@ body {
 .preview-list { padding-left: 22px; display: grid; gap: 6px; }
 .btn:disabled { opacity: .5; cursor: not-allowed; }
 
+/* Warm Ledger shared primitives */
+.budget-section, .dash-card, .transfer-card, .paycheck-card, .structure-card,
+.structure-subcard, .template-card, .monthly-review-group, .budget-summary-bar {
+  border-color: var(--color-divider);
+  border-radius: var(--radius-card);
+}
+
+input, select, textarea, .expense-table input[type="number"], .expense-table select,
+.allocation-item input {
+  border-color: var(--color-border-interactive);
+  border-radius: var(--radius-control);
+}
+
+.summary-value, .paycheck-amount, .paycheck-date, .paycheck-remaining-value,
+.transfer-date, .transfer-amount, .transfer-action-amount, .td-amt,
+.expense-table input, .allocation-item input, .date-range input,
+.table-scroll td:not(:first-child), .restore-preview dd {
+  font-variant-numeric: tabular-nums;
+}
+
+.expense-table tbody tr:hover td, .table-scroll tr:hover td { background: var(--color-surface-raised); }
+.modal-overlay, .restore-dialog::backdrop { background: rgba(10, 8, 6, .76); }
+.modal, .restore-dialog { border-color: var(--color-border-interactive); }
+.category-items, .table-scroll, #transfers-content { min-width: 0; }
+
 /* Responsive */
 @media (max-width: 768px) {
-  .topnav { flex-wrap: wrap; gap: 12px; }
-  .nav-actions { margin-left: 0; }
+  .topnav { flex-wrap: wrap; gap: 12px; padding: 12px 16px; }
+  .nav-brand { width: 100%; }
+  .nav-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+  .nav-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-left: 0; }
   .budget-summary-bar { flex-wrap: wrap; }
   .category-items { overflow-x: auto; }
   .dashboard-grid { grid-template-columns: 1fr; }
   .dash-card.wide { grid-column: span 1; }
   .paychecks-grid { grid-template-columns: 1fr; }
   .view { padding: 16px; }
-  .nav-tabs, .nav-actions { width: 100%; overflow-x: auto; }
-  .nav-tab, .nav-actions .btn { min-height: 44px; }
+  .nav-tabs, .nav-actions { width: 100%; }
+  .nav-tab { min-width: 0; min-height: 44px; padding: 8px 4px; font-size: 13px; white-space: normal; overflow-wrap: anywhere; }
+  .nav-actions .btn { min-width: 0; min-height: 44px; padding-inline: 6px; white-space: normal; }
   .form-row { grid-template-columns: 1fr; }
   .recovery-panel { margin: 16px; padding: 18px; }
   .recovery-snapshots li { align-items: stretch; flex-direction: column; }
@@ -841,6 +917,20 @@ body {
   .monthly-review-details dd { margin-bottom: 7px; }
   .modal { width: calc(100% - 16px); max-height: calc(100dvh - 16px); }
   .modal-header, .modal-body, .modal-footer { padding-left: 12px; padding-right: 12px; }
+  .btn-delete, .btn-move, .template-actions .btn, .monthly-review-action { min-width: 44px; min-height: 44px; }
+}
+
+@media (max-width: 1200px) {
+  #application-shell { padding-bottom: 0; }
+  .feedback-center { position: static; transform: none; width: auto; margin: 12px; filter: none; }
+}
+
+@media (max-width: 480px) {
+  #application-shell { padding-bottom: 0; }
+  .feedback-center { position: static; transform: none; width: auto; margin: 12px; filter: none; }
+  [tabindex="-1"], #current-month-label, #recovery-title, #monthly-review-heading,
+  #structure-categories-heading, #structure-earners-heading { scroll-margin-top: 270px; }
+  .storage-strip { margin-bottom: 16px; padding-inline: 12px; }
 }
 
 @media (max-width: 360px) {
@@ -853,13 +943,44 @@ body {
   .allocation-item { align-items: stretch; flex-direction: column; }
   .allocation-item label { min-width: 0; }
   .allocation-item input { min-height: 44px; width: 100%; }
+  .nav-tabs { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }
+  html { scroll-behavior: auto; }
+  .nav-tab, .btn, button, .category-header, .category-toggle, dialog, .restore-dialog,
+  .modal, .modal-overlay, .feedback-center, .live-message {
+    transition: none !important;
+    animation: none !important;
+  }
+  button:active:not(:disabled), .btn:active:not(:disabled), .category-toggle.open { transform: none; }
 }
 
 @media (forced-colors: active) {
-  .monthly-review-group { border-color: CanvasText; }
-  .monthly-review-action:focus-visible { outline: 3px solid Highlight; }
+  body, #application-shell { color: CanvasText; background: Canvas; }
+  .topnav, .budget-section, .budget-summary-bar, .paycheck-card, .transfer-card, .dash-card,
+  .structure-card, .structure-subcard, .template-card, .monthly-review-group,
+  .recovery-panel, .restore-dialog, .modal, .live-message, .category-header {
+    color: CanvasText; background: Canvas; border: 1px solid CanvasText; box-shadow: none; filter: none;
+  }
+  .nav-tab, .btn, button, input, select, textarea {
+    color: ButtonText; background: ButtonFace; border: 1px solid ButtonText;
+    forced-color-adjust: auto;
+  }
+  .nav-tab.active, .btn-primary {
+    color: HighlightText; background: Highlight; border-color: Highlight;
+  }
+  .btn-danger, .error-message { color: CanvasText; background: Canvas; border: 2px solid CanvasText; }
+  .btn:disabled, button:disabled, input:disabled, select:disabled,
+  .structure-status.is-archived, .template-status.state-disabled, .template-status.state-archived {
+    color: GrayText; border-color: GrayText; opacity: 1;
+  }
+  :focus-visible, .monthly-review-action:focus-visible { outline: 3px solid Highlight !important; outline-offset: 3px; }
+  .expense-table th, .expense-table td, .table-scroll th, .table-scroll td,
+  .transfer-detail-table td, .transfer-summary-table td, .paycheck-remaining,
+  .modal-header, .modal-footer { border-color: CanvasText; }
+  .category-header:hover, .expense-table tbody tr:hover td, .table-scroll tr:hover td { background: ButtonFace; }
+  .summary-value, .structure-status, .template-status, .muted-text, .storage-strip,
+  .summary-label, .category-count, .field-help, .preview-summary { color: CanvasText; }
+  .modal-overlay, .restore-dialog::backdrop { background: Canvas; }
 }
