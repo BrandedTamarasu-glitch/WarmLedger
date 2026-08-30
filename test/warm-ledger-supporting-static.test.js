@@ -110,7 +110,7 @@ test('Feedback becomes in-flow before narrow layouts and cannot obscure final co
 
 test('native and custom dialogs preserve action order, bounded scrolling, and narrow targets', () => {
   for (const [cancel, confirm] of [['restore-cancel', 'restore-confirm'], ['recurring-preview-cancel', 'recurring-preview-apply'],
-    ['unsuppress-cancel', 'unsuppress-confirm'], ['modal-cancel', 'modal-save']]) {
+    ['modal-cancel', 'modal-save']]) {
     assert.ok(html.indexOf(`id="${cancel}"`) < html.indexOf(`id="${confirm}"`), `${cancel} must precede ${confirm}`);
   }
   const actionRules = rulesFor('.dialog-actions') + rulesFor('.modal-footer');

@@ -15,9 +15,9 @@ See [ROADMAP.md](ROADMAP.md) for planned work and the boundaries of future phase
 - A **Structure** view for adding, renaming, archiving, restoring, and reordering categories, preset expense items, and earners.
 - A **Templates** view for recurring income and expenses with monthly, twice-monthly, weekly, and biweekly schedules.
 - Preview-first recurring generation that shows additions and skips before making one atomic change.
-- A write-free **Monthly Review** showing recurring work, missing actuals, expense funding, planned balance, and paycheck-assignment notes.
+- A compact, write-free **Monthly Review** dashboard showing recurring work, missing actuals, expense funding, and balance at a glance, with details available on demand.
 - A write-free **Data Health** view for incomplete or unusual ledger records and compare-only backup analysis.
-- Reversible recurring exceptions for deliberately removed generated occurrences.
+- Internal recurrence safeguards that keep deliberately removed generated occurrences from returning unexpectedly.
 - Stable structural IDs with historical labels preserved in existing monthly records.
 - Versioned JSON backup and restore with validation and preview.
 - Local safety snapshots and a startup recovery workflow.
@@ -82,6 +82,8 @@ Pay periods is a passive, read-only view of the selected month's paycheck fundin
 
 Planned paycheck income drives the funding plan. Actual income is displayed separately: **Not entered** means `null`, while an entered `$0.00` is a real actual value. Monthly remaining-funds allocations remain separate from paycheck-to-bill assignments and are summarized only at the month level. Recurring templates can create records through their explicit Preview and Apply workflow, but they do not automatically assign generated bills to a paycheck.
 
+**Planned payment guidance** shows how explicitly assigned bills are divided between keeping money in the bank and planning for credit card, savings, or investment-funded bills. It appears as a compact tile in Monthly Review and as a month total in Pay periods; the paycheck cards show when each portion is planned. These are planning totals only: they do not send money, pay a bill, or verify an account transfer.
+
 The view is not a calendar pay-period calculator, does not infer boundaries around paycheck dates, and does not move funding across months. A funding assignment is not evidence that a bill was paid, an account was reconciled, money reached a bank, or an account-to-account transfer occurred. This feature keeps data schema version 3 and backup/snapshot envelope version 1 unchanged.
 
 ## Data Health
@@ -100,13 +102,11 @@ Generation is idempotent: rerunning a month does not duplicate existing occurren
 
 Deleting a generated record creates a recurring exception (a tombstone) so that exact template occurrence does not unexpectedly return. Clearing a month and replacing a target month with **Copy from Previous Month** also preserve existing exceptions and add exceptions for generated records they remove. Copied records become manual records; Copy remains separate from recurring Preview.
 
-Monthly Review lists these exceptions. **Allow again** removes only the exact selected exception, including its occurrence ordinal when two occurrences share a date. It does not restore the deleted record, create a new record, or silently copy current template values. Cancelling the Allow confirmation leaves the exception unchanged. After allowing an occurrence again, use the normal **Preview recurring items** dialog to inspect current values and then choose **Add recurring items** to generate it. Cancelling that preview creates no record; the occurrence remains eligible for a later preview.
-
-An exception can be allowed again only while its template occurrence is currently eligible. Enable a disabled template, restore an archived template, adjust an out-of-range date range, or restore a changed schedule before retrying when Monthly Review identifies one of those states.
+These safeguards remain in saved data and backups but are intentionally omitted from the compact Monthly Review interface.
 
 ## Local and manual behavior
 
-Warm Ledger does not automatically generate recurring records, close months, reconcile accounts, or contact a bank or other service. Template generation and recurring-exception recovery always require explicit confirmation through the visible Preview and Apply flow. Passive navigation, Monthly Review, Data Health checks, and backup comparison do not write budget data.
+Warm Ledger does not automatically generate recurring records, close months, reconcile accounts, or contact a bank or other service. Template generation always requires explicit confirmation through the visible Preview and Apply flow. Passive navigation, Monthly Review, Data Health checks, and backup comparison do not write budget data.
 
 The application has no server component and makes no account or financial-data network connection. Active data, templates, exceptions, and safety snapshots remain in this browser's site-specific storage. Downloads occur only when you request a JSON backup or preserved recovery data.
 

@@ -2,7 +2,7 @@
 const App = {
   currentView: 'budget', viewsInitialized: false, restorePreview: null,
   restoreTrigger: null, modalTrigger: null, recurringPreview: null, recurringTrigger: null,
-  unsuppressContext: null, deleteContext: null, expenseUndo: null, templatesInitialized: false,
+  deleteContext: null, expenseUndo: null, templatesInitialized: false,
   shownWarnings: new Set(), MAX_IMPORT_BYTES: 5 * 1024 * 1024,
 
   init() {
@@ -28,7 +28,6 @@ const App = {
     document.getElementById('fresh-dialog').addEventListener('close', () => this.onFreshDialogClose());
     document.getElementById('btn-preview-recurring').addEventListener('click', event => this.openRecurringPreview(event.currentTarget));
     document.getElementById('recurring-preview-dialog').addEventListener('close', () => this.onRecurringPreviewClose());
-    document.getElementById('unsuppress-dialog').addEventListener('close', () => this.onUnsuppressDialogClose());
     document.getElementById('expense-delete-dialog').addEventListener('close', () => this.onExpenseDeleteClose());
     document.getElementById('expense-undo').addEventListener('click', () => this.undoExpenseDelete());
     document.getElementById('expense-undo-dismiss').addEventListener('click', () => this.clearExpenseUndo(true));
@@ -144,7 +143,7 @@ const App = {
     if (this.currentView === 'dashboard') requestAnimationFrame(() => DashboardView.render());
   },
 
-  openRecurringPreview(trigger, { afterUnsuppress = false } = {}) {
+  openRecurringPreview(trigger) {
     this.recurringTrigger = trigger;
     try {
       const preview = Store.previewRecurringMonth(BudgetView.currentMonth);
@@ -159,7 +158,7 @@ const App = {
       return true;
     } catch (error) {
       this.recurringPreview = null;
-      if (afterUnsuppress) this.showErrorCode('UNSUPPRESS_PREVIEW_FAILED'); else this.showError(error);
+      this.showError(error);
       trigger.focus(); return false;
     }
   },
@@ -175,58 +174,6 @@ const App = {
         requestAnimationFrame(() => this.recurringTrigger?.focus({ preventScroll: true }));
       },
       onFailure: () => this.recurringTrigger?.focus()
-    });
-  },
-
-  openUnsuppressDialog(entry, trigger) {
-    const dialog = document.getElementById('unsuppress-dialog');
-    if (this.unsuppressContext || dialog.open) { document.getElementById('unsuppress-cancel').focus(); return; }
-    const monthKey = BudgetView.currentMonth;
-    let current;
-    try {
-      current = Store.getSuppressedOccurrences(monthKey).find(item =>
-        item.sourceTemplateId === entry.sourceTemplateId && item.occurrenceKey === entry.occurrenceKey);
-    } catch (error) { this.showError(error); trigger.focus(); return; }
-    if (!current) { this.showErrorCode('SUPPRESSED_OCCURRENCE_NOT_FOUND'); trigger.focus(); return; }
-    if (!current.eligible) { this.showErrorCode('SUPPRESSED_OCCURRENCE_INELIGIBLE'); trigger.focus(); return; }
-    this.unsuppressContext = {
-      monthKey, sourceTemplateId: current.sourceTemplateId, occurrenceKey: current.occurrenceKey,
-      scheduledDate: current.scheduledDate, ordinal: current.ordinal, templateName: current.templateName, trigger
-    };
-    document.getElementById('unsuppress-summary').textContent =
-      `${current.templateName} — ${current.scheduledDate}, occurrence ${current.ordinal}.`;
-    dialog.returnValue = ''; dialog.showModal();
-  },
-
-  onUnsuppressDialogClose() {
-    const dialog = document.getElementById('unsuppress-dialog');
-    const context = this.unsuppressContext; this.unsuppressContext = null;
-    if (!context) return;
-    if (dialog.returnValue !== 'confirm') { this.restoreUnsuppressFocus(context); return; }
-    this.runMutation(() => Store.unsuppressOccurrence(context.monthKey, context.sourceTemplateId, context.occurrenceKey), {
-      onSuccess: () => {
-        const sameMonth = BudgetView.currentMonth === context.monthKey;
-        this.refreshAllViews();
-        this.announceStatus('This recurring occurrence can be generated again; no record was added.');
-        if (!sameMonth) { this.restoreUnsuppressFocus(context); return; }
-        requestAnimationFrame(() => {
-          if (BudgetView.currentMonth !== context.monthKey) { this.restoreUnsuppressFocus(context); return; }
-          const trigger = document.getElementById('btn-preview-recurring');
-          this.openRecurringPreview(trigger, { afterUnsuppress: true });
-        });
-      },
-      onFailure: () => this.restoreUnsuppressFocus(context)
-    });
-  },
-
-  restoreUnsuppressFocus(context) {
-    requestAnimationFrame(() => {
-      if (context.trigger && context.trigger.isConnected) { context.trigger.focus({ preventScroll: true }); return; }
-      const controls = [...document.querySelectorAll('[data-exception-action="allow-again"]')];
-      const target = controls.find(control => control.dataset.sourceTemplateId === context.sourceTemplateId &&
-        control.dataset.occurrenceKey === context.occurrenceKey);
-      (target || document.getElementById('monthly-review-exceptions-heading') ||
-        document.getElementById('monthly-review-recurring-heading'))?.focus({ preventScroll: true });
     });
   },
 
@@ -445,9 +392,6 @@ const App = {
       EARNER_ARCHIVED: 'Choose an active earner for this template.',
       CATEGORY_ARCHIVED: 'Choose an active category for this template.',
       CATEGORY_ITEM_ARCHIVED: 'Choose an active preset item, or use no preset item.',
-      SUPPRESSED_OCCURRENCE_NOT_FOUND: 'That recurring exception is no longer available. Review the current month and try again.',
-      SUPPRESSED_OCCURRENCE_INELIGIBLE: 'Update the recurring template as described before allowing this occurrence again.',
-      UNSUPPRESS_PREVIEW_FAILED: 'The exception was removed and can be generated again, but preview could not open. Use Preview recurring items to try again. No record was added.',
       STALE_DELETE_RECEIPT: 'Undo is no longer available because the budget changed. The expense remains deleted; nothing else was changed.',
       INVALID_DELETE_RECEIPT: 'This expense deletion can no longer be undone. Nothing else was changed.',
       INVALID_ACTUAL_RESOLUTIONS: 'Select at least one unresolved record and enter a valid actual amount. Nothing was changed.',

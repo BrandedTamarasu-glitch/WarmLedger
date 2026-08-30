@@ -123,6 +123,13 @@ const TransfersView = {
       : plan.paycheckCount === 1 ? '1 paycheck this month' : `${plan.paycheckCount} paychecks this month`;
     container.append(this.element('p', 'pay-period-count', countText));
     if (!plan.exists) container.append(this.element('p', 'pay-period-month-state', 'This month has no saved budget activity.'));
+    const summary = plan.summary;
+    container.append(this.summarySection('Monthly planned destinations', 'pay-period-destinations-heading', [
+      ['Keep in bank', this.fmt(summary.methodFundingTotals.bank), 'row-bank'],
+      ['Plan for credit card', this.fmt(summary.methodFundingTotals.credit_card), 'row-cc'],
+      ['Plan for savings', this.fmt(summary.methodFundingTotals.savings), 'row-savings'],
+      ['Plan for investments', this.fmt(summary.methodFundingTotals.investments), 'row-invest']
+    ], 'pay-period-destinations', 'These totals include only bills explicitly assigned to paychecks. The paycheck cards below show when each amount is planned.'));
     const grid = this.element('div', 'transfers-grid'); plan.periods.forEach(period => grid.append(this.renderPeriod(period))); container.append(grid);
     container.append(this.renderNeedsFunding(plan));
     const allocations = plan.monthlyAllocations;
@@ -130,7 +137,7 @@ const TransfersView = {
       ['Savings', this.fmt(allocations.savings)], ['Credit card debt', this.fmt(allocations.credit_card_debt)],
       ['Investments', this.fmt(allocations.investments)], ['Total monthly allocations', this.fmt(allocations.total), 'row-total']
     ], 'pay-period-allocations', 'These remaining-funds allocations apply to the whole month and are not assigned to a specific paycheck.'));
-    const summary = plan.summary; const actual = summary.actualIncomeComplete
+    const actual = summary.actualIncomeComplete
       ? this.fmt(summary.actualIncomeEntered)
       : `${this.fmt(summary.actualIncomeEntered)} entered · ${summary.actualIncomeMissingCount} not entered`;
     container.append(this.summarySection('Monthly funding summary', 'pay-period-summary-heading', [

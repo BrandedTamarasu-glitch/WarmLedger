@@ -129,20 +129,43 @@ const BudgetView = {
     return button;
   },
 
-  reviewGroup(wrapper, id, title) {
-    const section = this.element('section', 'monthly-review-group');
+  reviewPayPeriodsAction() {
+    const button = this.element('button', 'btn btn-sm monthly-review-action', 'View by paycheck'); button.type = 'button';
+    button.addEventListener('click', () => App.switchView('transfers')); return button;
+  },
+
+  reviewGroup(wrapper, id, title, kind = '') {
+    const section = this.element('section', `monthly-review-group${kind ? ` monthly-review-${kind}` : ''}`);
     const heading = this.element('h4', '', title); heading.id = id; heading.tabIndex = -1;
     section.setAttribute('aria-labelledby', id); section.append(heading); wrapper.append(section); return section;
+  },
+
+  reviewMetric(container, label, value, tone = '') {
+    const metric = this.element('div', `monthly-review-metric${tone ? ` ${tone}` : ''}`);
+    metric.append(this.element('span', 'monthly-review-metric-label', label), this.element('strong', 'monthly-review-metric-value', value));
+    container.append(metric);
+  },
+
+  reviewDestination(list, label, value, tone = '') {
+    const item = this.element('div', `monthly-review-destination${tone ? ` ${tone}` : ''}`);
+    item.append(this.element('dt', '', label), this.element('dd', '', value)); list.append(item);
+  },
+
+  reviewDrilldown(section, label) {
+    const details = this.element('details', 'monthly-review-drilldown');
+    details.append(this.element('summary', '', label)); section.append(details); return details;
   },
 
   renderMonthlyReview() {
     const container = document.getElementById('monthly-review-container');
     if (!container) return;
     const review = Store.getMonthReview(this.currentMonth);
-    const exceptions = Store.getSuppressedOccurrences(this.currentMonth);
     const wrapper = this.element('div', 'monthly-review');
     const heading = this.element('h3', '', 'Monthly Review'); heading.id = 'monthly-review-heading'; heading.tabIndex = -1;
-    wrapper.append(heading);
+    const header = this.element('div', 'monthly-review-header');
+    const statusText = review.empty ? 'Not started' : review.states.ready ? 'Ready' : 'Needs attention';
+    const statusTone = review.empty ? 'state-empty' : review.states.ready ? 'state-ready' : 'state-attention';
+    header.append(heading, this.element('span', `monthly-review-status ${statusTone}`, statusText)); wrapper.append(header);
 
     const states = this.element('ul', 'monthly-review-states');
     const stateText = [];
@@ -153,13 +176,16 @@ const BudgetView = {
     if (review.empty) stateText.push('This month is empty and is not ready.');
     stateText.forEach(text => states.append(this.element('li', '', text))); wrapper.append(states);
 
-    const recurring = this.reviewGroup(wrapper, 'monthly-review-recurring-heading', 'Recurring items');
-    recurring.append(this.element('p', '', `${review.recurring.pendingCount} pending, ${review.recurring.conflictCount} conflicts, ${review.recurring.suppressedCount} suppressed.`));
+    const grid = this.element('div', 'monthly-review-grid'); wrapper.append(grid);
+    const recurring = this.reviewGroup(grid, 'monthly-review-recurring-heading', 'Recurring items', 'tile-recurring');
+    const recurringMetrics = this.element('div', 'monthly-review-metrics');
+    this.reviewMetric(recurringMetrics, 'Pending', String(review.recurring.pendingCount), review.recurring.pendingCount ? 'metric-attention' : '');
+    this.reviewMetric(recurringMetrics, 'Conflicts', String(review.recurring.conflictCount), review.recurring.conflictCount ? 'metric-attention' : '');
+    recurring.append(recurringMetrics);
     if (review.recurring.pendingCount || review.recurring.conflictCount) recurring.append(this.reviewPreviewAction());
-    this.renderRecurringExceptions(recurring, exceptions);
 
     if (review.empty) {
-      const empty = this.reviewGroup(wrapper, 'monthly-review-empty-heading', 'Start this month');
+      const empty = this.reviewGroup(grid, 'monthly-review-empty-heading', 'Start this month', 'tile-start');
       empty.append(this.element('p', '', 'Add records or bring forward a prior plan before reviewing this month.'));
       const actions = this.element('div', 'monthly-review-actions');
       actions.append(
@@ -171,12 +197,31 @@ const BudgetView = {
       empty.append(actions); container.replaceChildren(wrapper); return;
     }
 
-    this.renderReviewActualGroup(wrapper, 'income', review.income);
-    this.renderReviewActualGroup(wrapper, 'expense', review.expenses);
+    const payPeriodPlan = Store.getPayPeriodPlan(this.currentMonth);
+    const destinations = this.reviewGroup(grid, 'monthly-review-destinations-heading', 'Planned payment guidance', 'tile-destinations');
+    const destinationList = this.element('dl', 'monthly-review-destination-list');
+    const methodTotals = payPeriodPlan.summary.methodFundingTotals;
+    this.reviewDestination(destinationList, 'Keep in bank for assigned bills', this.fmt(methodTotals.bank), 'destination-bank');
+    this.reviewDestination(destinationList, 'Plan for credit card bills', this.fmt(methodTotals.credit_card), 'destination-card');
+    this.reviewDestination(destinationList, 'Plan for savings-funded bills', this.fmt(methodTotals.savings));
+    this.reviewDestination(destinationList, 'Plan for investment-funded bills', this.fmt(methodTotals.investments));
+    destinations.append(destinationList);
+    if (payPeriodPlan.summary.billsNeedingFundingAmount > 0.009) destinations.append(this.element('p', 'monthly-review-compact-note',
+      `Bills still needing paycheck funding: ${this.fmt(payPeriodPlan.summary.billsNeedingFundingAmount)}.`));
+    destinations.append(this.element('p', 'monthly-review-compact-note',
+      'Assigned bills only. Monthly remaining-funds allocations are separate. No payment or transfer is performed.'));
+    destinations.append(this.reviewPayPeriodsAction());
 
-    const funding = this.reviewGroup(wrapper, 'monthly-review-funding-heading', 'Expense funding');
-    if (!review.funding.issueCount) funding.append(this.element('p', '', 'Every planned expense is fully assigned to paychecks.'));
+    this.renderReviewActualGroup(grid, 'income', review.income);
+    this.renderReviewActualGroup(grid, 'expense', review.expenses);
+
+    const funding = this.reviewGroup(grid, 'monthly-review-funding-heading', 'Expense funding', 'tile-funding');
+    const fundingMetrics = this.element('div', 'monthly-review-metrics');
+    this.reviewMetric(fundingMetrics, 'Needs attention', String(review.funding.issueCount), review.funding.issueCount ? 'metric-attention' : 'metric-positive');
+    funding.append(fundingMetrics);
+    if (!review.funding.issueCount) funding.append(this.element('p', 'monthly-review-compact-note', 'Every expense is funded.'));
     else {
+      const drilldown = this.reviewDrilldown(funding, `Review ${review.funding.issueCount} funding ${review.funding.issueCount === 1 ? 'issue' : 'issues'}`);
       const list = this.element('ul', 'monthly-review-list');
       review.funding.issues.forEach(issue => {
         const item = this.element('li', 'monthly-review-item');
@@ -187,65 +232,29 @@ const BudgetView = {
         button.addEventListener('click', () => this.openReviewEditor('expense', issue.expenseId, button, { kind: 'funding', id: issue.expenseId }));
         item.append(button); list.append(item);
       });
-      funding.append(list);
+      drilldown.append(list);
     }
 
-    const balance = this.reviewGroup(wrapper, 'monthly-review-balance-heading', 'Balance');
-    const balanceList = this.element('dl', 'monthly-review-details');
-    this.reviewDetail(balanceList, 'Allocations', this.fmt(review.balance.allocationsTotal));
-    this.reviewDetail(balanceList, 'Planned remainder', this.fmt(review.balance.plannedRemainder));
-    this.reviewDetail(balanceList, 'Actual cash flow', this.reviewCashFlowLabel(review.balance.actualCashFlow));
-    balance.append(balanceList);
+    const balance = this.reviewGroup(grid, 'monthly-review-balance-heading', 'Balance', 'tile-balance');
+    const balanceMetrics = this.element('div', 'monthly-review-metrics monthly-review-metrics-three');
+    this.reviewMetric(balanceMetrics, 'Planned remainder', this.fmt(review.balance.plannedRemainder), 'metric-primary');
+    this.reviewMetric(balanceMetrics, 'Actual cash flow', this.reviewCashFlowLabel(review.balance.actualCashFlow));
+    this.reviewMetric(balanceMetrics, 'Allocations', this.fmt(review.balance.allocationsTotal));
+    balance.append(balanceMetrics);
 
-    const assignments = this.reviewGroup(wrapper, 'monthly-review-paychecks-heading', 'Paycheck assignment notes');
-    if (!review.paycheckAssignments.length) assignments.append(this.element('p', '', 'No paychecks to summarize.'));
-    else {
-      const list = this.element('ul', 'monthly-review-list');
-      review.paycheckAssignments.forEach(note => list.append(this.element('li', '',
-        `${note.earner}: ${this.fmt(note.assignedAmount)} assigned of ${this.fmt(note.plannedAmount)}; ${this.fmt(note.remainingAmount)} remaining.`)));
-      assignments.append(list);
-    }
     container.replaceChildren(wrapper);
-  },
-
-  renderRecurringExceptions(recurringGroup, exceptions) {
-    if (!exceptions.length) return;
-    const section = this.element('section', 'monthly-review-exceptions');
-    const heading = this.element('h5', '', 'Recurring exceptions'); heading.id = 'monthly-review-exceptions-heading'; heading.tabIndex = -1;
-    section.setAttribute('aria-labelledby', heading.id); section.append(heading);
-    const list = this.element('ul', 'monthly-review-list');
-    const explanations = {
-      disabled: 'Enable the template before allowing this occurrence again.',
-      archived: 'Restore the template before allowing this occurrence again.',
-      'out-of-range': 'Adjust the template date range before allowing this occurrence again.',
-      'schedule-changed': 'Restore the matching template schedule before allowing this occurrence again.'
-    };
-    exceptions.forEach(entry => {
-      const item = this.element('li', 'monthly-review-item');
-      item.dataset.sourceTemplateId = entry.sourceTemplateId; item.dataset.occurrenceKey = entry.occurrenceKey;
-      item.append(this.element('span', '',
-        `${entry.templateName} — ${entry.scheduledDate}, occurrence ${entry.ordinal}. Current state: ${entry.templateState}.`));
-      if (entry.eligible) {
-        const label = `Allow ${entry.templateName} on ${entry.scheduledDate}, occurrence ${entry.ordinal} again`;
-        const button = this.element('button', 'btn btn-sm monthly-review-action', 'Allow again'); button.type = 'button';
-        button.dataset.exceptionAction = 'allow-again';
-        button.dataset.sourceTemplateId = entry.sourceTemplateId; button.dataset.occurrenceKey = entry.occurrenceKey;
-        button.setAttribute('aria-label', label);
-        button.addEventListener('click', () => App.openUnsuppressDialog(entry, button)); item.append(button);
-      } else item.append(this.element('p', 'muted-text', explanations[entry.templateState] || 'Update the template before allowing this occurrence again.'));
-      list.append(item);
-    });
-    section.append(list); recurringGroup.append(section);
   },
 
   renderReviewActualGroup(wrapper, kind, group) {
     const isIncome = kind === 'income';
     const title = isIncome ? 'Actual income' : 'Actual expenses';
-    const section = this.reviewGroup(wrapper, `monthly-review-${kind}-heading`, title);
-    const details = this.element('dl', 'monthly-review-details');
-    this.reviewDetail(details, 'Planned', this.fmt(group.plannedTotal));
-    this.reviewDetail(details, 'Actual', this.reviewActualLabel(group)); section.append(details);
-    if (!group.unresolvedCount) { section.append(this.element('p', '', 'All actual amounts are entered.')); return; }
+    const section = this.reviewGroup(wrapper, `monthly-review-${kind}-heading`, title, `tile-${kind}`);
+    const metrics = this.element('div', 'monthly-review-metrics');
+    this.reviewMetric(metrics, 'Planned', this.fmt(group.plannedTotal));
+    this.reviewMetric(metrics, 'Actual', this.reviewActualLabel(group), group.unresolvedCount ? 'metric-attention' : 'metric-positive');
+    section.append(metrics);
+    if (!group.unresolvedCount) { section.append(this.element('p', 'monthly-review-compact-note', 'All actuals entered.')); return; }
+    const drilldown = this.reviewDrilldown(section, `Enter ${group.unresolvedCount} missing ${isIncome ? 'income' : 'expense'} ${group.unresolvedCount === 1 ? 'actual' : 'actuals'}`);
     const list = this.element('ul', 'monthly-review-list');
     group.unresolved.forEach(record => {
       const item = this.element('li', 'monthly-review-item');
@@ -256,7 +265,7 @@ const BudgetView = {
       button.dataset.reviewKind = kind; button.dataset.recordId = record.id;
       button.addEventListener('click', () => this.openReviewEditor(kind, record.id, button)); item.append(button); list.append(item);
     });
-    section.append(list);
+    drilldown.append(list);
   },
 
   reviewDetail(list, term, value) {
@@ -499,7 +508,9 @@ const BudgetView = {
       input.min = '0';
       const assignedElsewhere = assigned - (amounts[paycheck.id] ?? 0);
       input.max = String(Math.max(0, expense.plannedAmount - assignedElsewhere));
-      input.addEventListener('change', () => input.reportValidity() ? this.updatePaycheckAmount(expense.id, paycheck.id, input.value) : this.rejectAmount()); cell.append(input);
+      input.addEventListener('change', () => input.checkValidity()
+        ? this.updatePaycheckAmount(expense.id, paycheck.id, input.value)
+        : this.rejectFundingAmount(input)); cell.append(input);
     });
     const total = row.insertCell(); total.className = 'col-total expense-total'; total.textContent = this.fmt(projected);
     const actualCell = row.insertCell(); actualCell.className = 'col-actual'; const actual = document.createElement('input');
@@ -581,9 +592,28 @@ const BudgetView = {
   updatePaycheckAmount(expenseId, paycheckId, value) {
     const amount = Number(value || 0);
     App.runMutation(() => Store.updateExpensePaycheckAmount(this.currentMonth, expenseId, paycheckId, amount), {
-      onSuccess: () => { this.refreshTotals(expenseId); this.renderPaychecks(); this.renderAllocation(); this.updateSummary(); },
+      onSuccess: () => { this.refreshFundingLimits(expenseId); this.refreshTotals(expenseId); this.renderPaychecks(); this.renderAllocation(); this.updateSummary(); },
       onFailure: () => this.render()
     });
+  },
+
+  refreshFundingLimits(expenseId) {
+    const expense = Store.getMonth(this.currentMonth).expenses.find(record => record.id === expenseId);
+    if (!expense) return;
+    const assigned = Object.values(expense.paycheckAmounts).reduce((sum, amount) => sum + amount, 0);
+    const controls = [...document.querySelectorAll('input[data-funding-expense-id][data-funding-paycheck-id]')]
+      .filter(input => input.dataset.fundingExpenseId === expenseId);
+    controls.forEach(input => {
+      const current = expense.paycheckAmounts[input.dataset.fundingPaycheckId] ?? 0;
+      input.max = String(Math.max(0, expense.plannedAmount - (assigned - current)));
+    });
+  },
+
+  rejectFundingAmount(input) {
+    const message = input.validity.rangeOverflow
+      ? `This bill can receive at most ${this.fmt(Number(input.max))} from this paycheck. Reduce another paycheck’s allocation first.`
+      : 'Enter a valid amount of 0 or more.';
+    input.setCustomValidity(message); input.reportValidity(); App.announceStatus(message); input.setCustomValidity('');
   },
 
   refreshTotals(expenseId) {

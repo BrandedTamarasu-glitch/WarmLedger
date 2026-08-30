@@ -40,14 +40,16 @@ test('Budget summary is a stable numeric grid with narrow fallbacks', () => {
   assert.match(phone, /\.budget-summary-bar\s*\{[^}]*grid-template-columns\s*:\s*(?:1fr|minmax\(0\s*,\s*1fr\))/is);
 });
 
-test('Monthly Review keeps semantics while using quiet, wrap-safe nesting', () => {
-  for (const selector of ['.monthly-review-group', '.monthly-review-details', '.monthly-review-list', '.monthly-review-action']) {
+test('Monthly Review uses a compact metric dashboard with wrap-safe drilldowns', () => {
+  for (const selector of ['.monthly-review-grid', '.monthly-review-group', '.monthly-review-metrics',
+    '.monthly-review-metric-value', '.monthly-review-drilldown', '.monthly-review-list', '.monthly-review-action']) {
     assert.match(css, new RegExp(selector.replace('.', '\\.')));
   }
+  assert.match(css, /\.monthly-review-grid\s*\{[^}]*repeat\(auto-fit/is);
   const group = css.match(/\.monthly-review-group\s*\{([^}]*)\}/is)?.[1] || '';
   assert.match(group, /min-width\s*:\s*0/i);
   assert.doesNotMatch(group, /box-shadow\s*:/i);
-  assert.match(group, /(?:border\s*:\s*0|border-width\s*:\s*0|border(?:-top|-bottom)?\s*:\s*1px)/i);
+  assert.match(group, /border\s*:\s*1px/i);
   assert.match(css, /(?:\.monthly-review-item[^,{]*|\.monthly-review-list\s+li)[^{]*\{[^}]*overflow-wrap\s*:\s*anywhere/is);
   assert.match(css, /\.monthly-review-action\s*\{[^}]*min-height\s*:\s*44px/is);
   assert.match(css, /\.monthly-review-action:focus-visible\s*\{[^}]*outline\s*:/is);

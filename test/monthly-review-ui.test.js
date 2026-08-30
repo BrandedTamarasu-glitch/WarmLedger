@@ -23,7 +23,12 @@ class FakeNode {
 function allNodes(node) { return [node, ...node.children.flatMap(child => child instanceof FakeNode ? allNodes(child) : [])]; }
 function allText(node) { return allNodes(node).map(item => item.textContent).filter(Boolean).join(' '); }
 
-function loadView(review, exceptions = []) {
+function loadView(review, payPeriodPlan = {
+  summary: {
+    methodFundingTotals: { bank: 625, credit_card: 275, savings: 75, investments: 25 },
+    billsNeedingFundingAmount: 100
+  }
+}) {
   const container = new FakeNode('div');
   const document = {
     createElement: tag => new FakeNode(tag),
@@ -32,24 +37,24 @@ function loadView(review, exceptions = []) {
       ? allNodes(container).filter(node => node.dataset.reviewKind && node.dataset.recordId) : []
   };
   let reviewReads = 0;
-  let exceptionReads = 0;
+  let planReads = 0;
   let previewTrigger = null;
-  let unsuppressCall = null;
+  let switchedView = null;
   const Store = {
     getMonthReview(monthKey) { reviewReads += 1; assert.equal(monthKey, '2026-03'); return review; },
-    getSuppressedOccurrences(monthKey) { exceptionReads += 1; assert.equal(monthKey, '2026-03'); return exceptions; },
+    getPayPeriodPlan(monthKey) { planReads += 1; assert.equal(monthKey, '2026-03'); return payPeriodPlan; },
     getMonth() { throw new Error('passive render must not read canonical month records'); }
   };
   const App = {
     openRecurringPreview(trigger) { previewTrigger = trigger; },
-    openUnsuppressDialog(entry, trigger) { unsuppressCall = { entry, trigger }; }
+    switchView(view) { switchedView = view; }
   };
   const context = vm.createContext({ document, Store, App, Intl, Math, Object, requestAnimationFrame(callback) { callback(); } });
   vm.runInContext(`${source}\n;globalThis.ExportedView = BudgetView;`, context, { filename: 'budget.js' });
   context.ExportedView.currentMonth = '2026-03';
   return {
-    view: context.ExportedView, container, reads: () => reviewReads, exceptionReads: () => exceptionReads,
-    previewTrigger: () => previewTrigger, unsuppressCall: () => unsuppressCall
+    view: context.ExportedView, container, reads: () => reviewReads, planReads: () => planReads,
+    previewTrigger: () => previewTrigger, switchedView: () => switchedView
   };
 }
 
@@ -68,11 +73,11 @@ function mixedReview() {
 }
 
 test('Monthly Review renders concurrent textual states and null versus explicit zero without writes', () => {
-  const { view, container, reads, exceptionReads } = loadView(mixedReview());
+  const { view, container, reads, planReads } = loadView(mixedReview());
   view.renderMonthlyReview();
   const text = allText(container);
   assert.equal(reads(), 1);
-  assert.equal(exceptionReads(), 1);
+  assert.equal(planReads(), 1);
   assert.match(text, /Recurring items need review\./);
   assert.match(text, /Actual amounts are not entered for every item\./);
   assert.match(text, /Some planned expenses need paycheck funding\./);
@@ -82,26 +87,26 @@ test('Monthly Review renders concurrent textual states and null versus explicit 
   assert.match(text, /<img src=x onerror=alert\(1\)>/);
 });
 
-test('recurring exceptions safely render twins and every state, delegating eligible identity to App', () => {
-  const hostile = '<b>Renamed & hostile</b>';
-  const activeOne = { kind: 'income', sourceTemplateId: 'template-twin', occurrenceKey: '2026-03-31#0001', scheduledDate: '2026-03-31', ordinal: 1,
-    templateName: hostile, templateState: 'active', eligible: true };
-  const activeTwo = { ...activeOne, occurrenceKey: '2026-03-31#0002', ordinal: 2 };
-  const exceptions = [activeOne, activeTwo,
-    ...['disabled', 'archived', 'out-of-range', 'schedule-changed'].map((state, index) => ({
-      kind: 'expense', sourceTemplateId: `template-${state}`, occurrenceKey: `2026-03-0${index + 1}#0001`,
-      scheduledDate: `2026-03-0${index + 1}`, ordinal: 1, templateName: `Template ${state}`, templateState: state, eligible: false
-    }))];
-  const { view, container, unsuppressCall } = loadView(mixedReview(), exceptions); view.renderMonthlyReview();
+test('planned payment guidance restores bank and credit-card amounts with honest scope', () => {
+  const { view, container, switchedView } = loadView(mixedReview()); view.renderMonthlyReview();
   const text = allText(container);
-  assert.match(text, /Recurring exceptions/); assert.match(text, /<b>Renamed & hostile<\/b>/);
-  assert.match(text, /occurrence 1\. Current state: active/); assert.match(text, /occurrence 2\. Current state: active/);
-  assert.match(text, /Enable the template/); assert.match(text, /Restore the template/);
-  assert.match(text, /Adjust the template date range/); assert.match(text, /Restore the matching template schedule/);
-  const buttons = allNodes(container).filter(node => node.dataset.exceptionAction === 'allow-again');
-  assert.equal(buttons.length, 2); assert.equal(buttons[1].dataset.occurrenceKey, '2026-03-31#0002');
-  buttons[1].onclick(); assert.equal(unsuppressCall().entry, activeTwo); assert.equal(unsuppressCall().trigger, buttons[1]);
-  assert.equal(allNodes(container).some(node => node.dataset.sourceTemplateId === 'template-disabled' && node.dataset.exceptionAction), false);
+  assert.match(text, /Planned payment guidance/);
+  assert.match(text, /Keep in bank for assigned bills \$625\.00/);
+  assert.match(text, /Plan for credit card bills \$275\.00/);
+  assert.match(text, /Plan for savings-funded bills \$75\.00/);
+  assert.match(text, /Plan for investment-funded bills \$25\.00/);
+  assert.match(text, /Bills still needing paycheck funding: \$100\.00/);
+  assert.match(text, /Assigned bills only.*No payment or transfer is performed/);
+  const button = allNodes(container).find(node => node.textContent === 'View by paycheck');
+  assert.ok(button); button.onclick(); assert.equal(switchedView(), 'transfers');
+});
+
+test('Recurring exceptions are omitted while recurring work remains visible', () => {
+  const { view, container } = loadView(mixedReview()); view.renderMonthlyReview();
+  const text = allText(container);
+  assert.match(text, /Recurring items Pending 2 Conflicts 1/);
+  assert.doesNotMatch(text, /Recurring exceptions|suppressed|Allow again|occurrence/);
+  assert.equal(allNodes(container).some(node => node.dataset.exceptionAction), false);
 });
 
 test('unresolved review actions carry stable IDs and uniquely identify type and date', () => {
@@ -137,26 +142,19 @@ test('Monthly Review recurring preview passes its own button as the focus trigge
 test('empty review routes through existing controls and never reports ready', () => {
   const review = mixedReview(); review.empty = true;
   review.states = { needsRecurringReview: false, needsActuals: false, needsAllocation: false, ready: false };
-  const { view, container } = loadView(review); view.renderMonthlyReview(); const text = allText(container);
+  const { view, container, planReads } = loadView(review); view.renderMonthlyReview(); const text = allText(container);
+  assert.equal(planReads(), 0);
   for (const label of ['Add paycheck', 'Add expense', 'Preview recurring items', 'Copy previous month']) assert.match(text, new RegExp(label));
   assert.match(text, /This month is empty and is not ready\./); assert.doesNotMatch(text, /Monthly review is ready\./);
 });
 
-test('empty review preserves Start actions while exposing eligible, ineligible, and twin exceptions', () => {
+test('empty review stays compact and never exposes recurring exceptions', () => {
   const review = mixedReview(); review.empty = true;
   review.states = { needsRecurringReview: false, needsActuals: false, needsAllocation: false, ready: false };
   review.recurring = { pendingCount: 0, conflictCount: 0, suppressedCount: 3 };
-  const twinOne = { kind: 'income', sourceTemplateId: 'twin', occurrenceKey: '2026-03-31#0001', scheduledDate: '2026-03-31', ordinal: 1,
-    templateName: 'Twins', templateState: 'active', eligible: true };
-  const exceptions = [twinOne, { ...twinOne, occurrenceKey: '2026-03-31#0002', ordinal: 2 }, {
-    kind: 'expense', sourceTemplateId: 'disabled', occurrenceKey: '2026-03-04#0001', scheduledDate: '2026-03-04', ordinal: 1,
-    templateName: 'Disabled item', templateState: 'disabled', eligible: false
-  }];
-  const { view, container } = loadView(review, exceptions); view.renderMonthlyReview(); const text = allText(container);
-  assert.match(text, /Recurring items/); assert.match(text, /Recurring exceptions/); assert.match(text, /Start this month/);
-  assert.match(text, /occurrence 1\. Current state: active/); assert.match(text, /occurrence 2\. Current state: active/);
-  assert.match(text, /Enable the template before allowing this occurrence again/);
-  assert.equal(allNodes(container).filter(node => node.dataset.exceptionAction === 'allow-again').length, 2);
+  const { view, container } = loadView(review); view.renderMonthlyReview(); const text = allText(container);
+  assert.match(text, /Recurring items/); assert.match(text, /Start this month/);
+  assert.doesNotMatch(text, /Recurring exceptions|suppressed|Allow again/);
   for (const label of ['Add paycheck', 'Add expense', 'Preview recurring items', 'Copy previous month']) assert.match(text, new RegExp(label));
   assert.doesNotMatch(text, /Monthly review is ready\./);
 });
@@ -164,14 +162,15 @@ test('empty review preserves Start actions while exposing eligible, ineligible, 
 test('implementation is safe DOM, capability-neutral, and restores review focus by stable data', () => {
   const reviewRenderer = source.slice(source.indexOf('  renderMonthlyReview()'), source.indexOf('  renderReviewActualGroup('));
   assert.equal((source.match(/Store\.getMonthReview\(/g) || []).length, 1);
-  assert.equal((source.match(/Store\.getSuppressedOccurrences\(/g) || []).length, 1);
+  assert.equal((source.match(/Store\.getPayPeriodPlan\(/g) || []).length, 1);
+  assert.equal((source.match(/Store\.getSuppressedOccurrences\(/g) || []).length, 0);
   assert.doesNotMatch(source, /previewRecurringMonth|applyRecurringPreview/);
   assert.doesNotMatch(reviewRenderer, /\.innerHTML\s*=/);
   assert.doesNotMatch(source, /querySelector\s*\(\s*`[^`]*\$\{/);
   assert.match(source, /records\.find\(item => item\.id === id\)/);
   assert.match(source, /button\.dataset\.reviewKind = 'funding'; button\.dataset\.recordId = issue\.expenseId/);
   assert.match(source, /App\.openRecurringPreview\(button\)/);
-  assert.match(source, /App\.openUnsuppressDialog\(entry, button\)/);
+  assert.doesNotMatch(source, /renderRecurringExceptions|App\.openUnsuppressDialog\(entry, button\)/);
   assert.match(source, /control\.dataset\.reviewKind === kind && control\.dataset\.recordId === id/);
   assert.match(source, /target \|\| document\.getElementById\(`monthly-review-\$\{kind\}-heading`\)/);
   assert.doesNotMatch(reviewRenderer, /announceStatus|runMutation/);

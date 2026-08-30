@@ -823,19 +823,50 @@ button:disabled, input:disabled, select:disabled, textarea:disabled { cursor: no
 
 /* Monthly Review */
 .monthly-review-container:empty { display: none; }
-.monthly-review { display: grid; gap: 14px; min-width: 0; }
-.monthly-review > h3 { font-size: 18px; }
-.monthly-review-states, .monthly-review-list { padding-left: 22px; display: grid; gap: 8px; }
-.monthly-review-states { margin: 0; }
-.monthly-review-group { min-width: 0; padding: 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); }
-.monthly-review-group { border-color: var(--color-divider); background: var(--color-surface); }
-.monthly-review-group h4 { margin-bottom: 10px; }
-.monthly-review-group p { line-height: 1.5; overflow-wrap: anywhere; }
-.monthly-review-details { display: grid; grid-template-columns: minmax(9rem, max-content) minmax(0, 1fr); gap: 7px 14px; }
-.monthly-review-details dt { color: var(--text-muted); }
-.monthly-review-details dd, .monthly-review-item span, .monthly-review-list li { min-width: 0; overflow-wrap: anywhere; }
+.monthly-review { display: grid; gap: 10px; min-width: 0; }
+.monthly-review-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.monthly-review-header h3 { font-size: 18px; }
+.monthly-review-status {
+  display: inline-flex; align-items: center; min-height: 28px; padding: 3px 10px; border: 1px solid currentColor;
+  border-radius: 999px; font-size: 12px; font-weight: 700; white-space: nowrap;
+}
+.monthly-review-status.state-ready { color: var(--color-positive); }
+.monthly-review-status.state-attention { color: var(--color-warning); }
+.monthly-review-status.state-empty { color: var(--color-text-muted); }
+.monthly-review-states { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.monthly-review-states li { padding: 4px 8px; border-radius: 999px; color: var(--color-text-muted); background: var(--color-surface); font-size: 12px; }
+.monthly-review-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(210px, 100%), 1fr)); gap: 10px; min-width: 0; }
+.monthly-review-group {
+  min-width: 0; padding: 12px; border: 1px solid var(--color-divider); border-top: 3px solid var(--color-accent);
+  border-radius: var(--radius-control); background: var(--color-surface);
+}
+.monthly-review-tile-funding { border-top-color: var(--color-warning); }
+.monthly-review-tile-destinations { border-top-color: var(--color-info); }
+.monthly-review-tile-balance { border-top-color: var(--color-positive); }
+.monthly-review-tile-start { grid-column: span 2; }
+.monthly-review-group h4 { margin-bottom: 8px; font-size: 14px; }
+.monthly-review-group p { line-height: 1.4; overflow-wrap: anywhere; }
+.monthly-review-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.monthly-review-metrics-three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.monthly-review-metric { min-width: 0; }
+.monthly-review-metric-label { display: block; color: var(--color-text-muted); font-size: 11px; line-height: 1.3; }
+.monthly-review-metric-value { display: block; margin-top: 2px; font-size: 16px; line-height: 1.25; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.monthly-review-metric.metric-attention .monthly-review-metric-value { color: var(--color-warning); }
+.monthly-review-metric.metric-positive .monthly-review-metric-value { color: var(--color-positive); }
+.monthly-review-metric.metric-primary .monthly-review-metric-value { color: var(--color-accent); }
+.monthly-review-destination-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.monthly-review-destination { min-width: 0; }
+.monthly-review-destination dt { color: var(--color-text-muted); font-size: 11px; line-height: 1.3; }
+.monthly-review-destination dd { margin-top: 2px; font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.monthly-review-destination-bank dd { color: var(--color-positive); }
+.monthly-review-destination-card dd { color: var(--color-warning); }
+.monthly-review-compact-note { margin-top: 7px; color: var(--color-text-muted); font-size: 12px; }
+.monthly-review-drilldown { margin-top: 9px; border-top: 1px solid var(--color-divider); padding-top: 8px; }
+.monthly-review-drilldown summary { min-height: 32px; color: var(--color-accent); font-size: 13px; font-weight: 650; cursor: pointer; }
+.monthly-review-list { padding-left: 20px; display: grid; gap: 8px; margin-top: 8px; }
+.monthly-review-item span, .monthly-review-list li { min-width: 0; overflow-wrap: anywhere; }
 .monthly-review-item { display: grid; gap: 8px; justify-items: start; }
-.monthly-review-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.monthly-review-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 9px; }
 .monthly-review-action { min-height: 44px; white-space: normal; }
 .monthly-review-action:focus-visible { outline: 3px solid var(--primary-hover); outline-offset: 3px; }
 
@@ -857,9 +888,6 @@ button:disabled, input:disabled, select:disabled, textarea:disabled { cursor: no
 #template-monthly-fields, #template-twice-fields, #template-anchor-fields { display: grid; gap: 6px; margin-bottom: 16px; }
 #template-monthly-fields input, #template-twice-fields input, #template-anchor-fields input { min-height: 44px; }
 .recurring-preview-dialog { width: min(94vw, 680px); }
-.unsuppress-dialog { width: min(94vw, 600px); }
-.unsuppress-dialog .btn { min-height: 44px; }
-.unsuppress-dialog p { overflow-wrap: anywhere; }
 .recurring-preview h4 { margin: 16px 0 8px; }
 .preview-list { padding-left: 22px; display: grid; gap: 6px; }
 .btn:disabled { opacity: .5; cursor: not-allowed; }
@@ -905,20 +933,7 @@ input, select, textarea, .expense-table input[type="number"], .expense-table sel
 .summary-item:last-child { padding-right: 0; }
 .summary-label { line-height: 1.35; overflow-wrap: anywhere; }
 
-.monthly-review-container { background: var(--color-surface-raised); }
-.monthly-review { gap: 18px; }
-.monthly-review-states { gap: 6px; color: var(--color-text-muted); }
-.monthly-review-group {
-  padding: 4px 0 4px 16px;
-  border: 0;
-  border-left: 2px solid var(--color-divider);
-  border-radius: 0;
-  background: transparent;
-}
-.monthly-review-group h4 { font-size: 15px; }
-.monthly-review-details dd { font-variant-numeric: tabular-nums; }
-.monthly-review-exceptions { min-width: 0; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--color-divider); }
-.monthly-review-exceptions h5 { margin-bottom: 8px; font-size: 14px; }
+.monthly-review-container { padding: 14px 16px; background: var(--color-surface-raised); }
 #monthly-review-empty-heading + p + .monthly-review-actions { padding-top: 4px; }
 
 .paychecks-grid { grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr)); gap: 16px; }
@@ -1171,7 +1186,7 @@ label:has(> #field-template-enabled) { display: flex; align-items: center; min-h
 .restore-dialog form { min-width: 0; }
 .restore-dialog h2, .modal-header h3 { line-height: 1.3; overflow-wrap: anywhere; }
 .restore-dialog p, .restore-preview dd, .recurring-preview, .preview-list li,
-.unsuppress-dialog p, .modal-body { overflow-wrap: anywhere; }
+.modal-body { overflow-wrap: anywhere; }
 .restore-preview { min-width: 0; }
 .restore-preview dd { min-width: 0; }
 .dialog-actions, .modal-footer { align-items: center; }
@@ -1299,6 +1314,7 @@ label:has(> #field-template-enabled) { display: flex; align-items: center; min-h
   .paychecks-grid { grid-template-columns: minmax(0, 1fr); }
   .btn-edit, .btn-move, .btn-delete { min-width: 44px; min-height: 44px; }
   .dashboard-controls { padding: 12px; }
+  .monthly-review-tile-start { grid-column: 1 / -1; }
   .date-range { flex-direction: column; }
   .date-range label { flex: 0 1 auto; align-items: stretch; flex-direction: column; }
   .date-range input { flex: 0 1 auto; width: 100%; }
@@ -1325,7 +1341,8 @@ label:has(> #field-template-enabled) { display: flex; align-items: center; min-h
   .summary-item:last-child { padding-bottom: 0; border-bottom: 0; }
   .category-header { align-items: stretch; flex-direction: column; gap: 6px; }
   .category-total { text-align: left; }
-  .monthly-review-group { padding-left: 12px; }
+  .monthly-review-header { align-items: flex-start; }
+  .monthly-review-group { padding: 12px; }
   .budget-actions { display: grid; grid-template-columns: minmax(0, 1fr); }
   .budget-actions .btn { width: 100%; min-height: 44px; }
   .budget-actions #btn-clear-month { margin-left: 0; }
@@ -1361,6 +1378,7 @@ label:has(> #field-template-enabled) { display: flex; align-items: center; min-h
   .budget-actions .btn, .template-actions .btn, .monthly-review-actions .btn { width: 100%; }
   .monthly-review-container { padding: 14px 10px; }
   .monthly-review-group { padding: 12px 10px; }
+  .monthly-review-metrics-three { grid-template-columns: minmax(0, 1fr); }
   .allocation-item { align-items: stretch; flex-direction: column; }
   .allocation-item label { min-width: 0; }
   .allocation-item input { min-height: 44px; width: 100%; }
@@ -1412,10 +1430,12 @@ label:has(> #field-template-enabled) { display: flex; align-items: center; min-h
   :focus-visible, .monthly-review-action:focus-visible { outline: 3px solid Highlight !important; outline-offset: 3px; }
   .expense-table th, .expense-table td, .table-scroll th, .table-scroll td,
   .transfer-detail-table td, .transfer-summary-table td, .paycheck-remaining,
-  .modal-header, .modal-footer, .summary-item, .monthly-review-exceptions,
+  .modal-header, .modal-footer, .summary-item, .monthly-review-drilldown,
   .category-header, .allocation-section, .allocation-footer, .budget-actions { border-color: CanvasText; }
-  .monthly-review-group { border: 0; border-left: 2px solid CanvasText; }
-  .monthly-review-states { color: CanvasText; }
+  .monthly-review-group { border: 1px solid CanvasText; border-top-width: 3px; }
+  .monthly-review-status, .monthly-review-states li, .monthly-review-metric-label,
+  .monthly-review-metric-value, .monthly-review-destination dt, .monthly-review-destination dd,
+  .monthly-review-drilldown summary { color: CanvasText; background: Canvas; }
   .expense-table { border-color: CanvasText; }
   .allocation-section { background: Canvas; }
   .category-header:hover, .expense-table tbody tr:hover td, .table-scroll tr:hover td { background: ButtonFace; }

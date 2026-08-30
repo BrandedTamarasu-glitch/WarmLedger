@@ -20,10 +20,13 @@ test('Budget contains one labelled Monthly Review integration region before deta
 
 test('Monthly Review styling is scoped, readable, touch-sized, and narrow-screen safe', () => {
   for (const selector of [
-    '.monthly-review-container:empty', '.monthly-review', '.monthly-review-states',
-    '.monthly-review-group', '.monthly-review-details', '.monthly-review-item',
-    '.monthly-review-actions', '.monthly-review-action'
+    '.monthly-review-container:empty', '.monthly-review', '.monthly-review-header', '.monthly-review-status',
+    '.monthly-review-states', '.monthly-review-grid', '.monthly-review-group', '.monthly-review-metrics',
+    '.monthly-review-metric-value', '.monthly-review-destination-list', '.monthly-review-destination',
+    '.monthly-review-drilldown', '.monthly-review-item', '.monthly-review-actions',
+    '.monthly-review-action'
   ]) assert.match(styles, new RegExp(selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.match(styles, /grid-template-columns: repeat\(auto-fit, minmax\(min\(210px, 100%\), 1fr\)\)/);
   assert.match(styles, /\.monthly-review-action \{[^}]*min-height: 44px/);
   assert.match(styles, /\.monthly-review-action:focus-visible/);
   assert.match(styles, /@media \(max-width: 360px\)[\s\S]*?\.monthly-review-container/);

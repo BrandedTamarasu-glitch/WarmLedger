@@ -208,25 +208,15 @@ const SCENARIO = `(async () => {
   assert(!globalThis.__hostileRan, 'A hostile record label executed markup.');
   App.announceStatus('Continuing browser evidence.'); BudgetView.render(); await settle();
 
-  const allow = document.querySelector('[data-exception-action="allow-again"]');
-  assert(allow, 'Allow-again control is missing after generated deletion.');
-  const allowPassive = localStorage.getItem(primaryKey); allow.click(); await settle();
-  const allowDialog = document.getElementById('unsuppress-dialog');
-  assert(allowDialog.open && document.activeElement.id === 'unsuppress-cancel', 'Allow-again dialog focus is incorrect.');
-  assert(localStorage.getItem(primaryKey) === allowPassive, 'Opening Allow-again changed storage bytes.');
-  allowDialog.close('cancel'); await settle(); assert(localStorage.getItem(primaryKey) === allowPassive, 'Allow-again Cancel changed bytes.');
-  document.querySelector('[data-exception-action="allow-again"]').click(); await settle(); allowDialog.close('confirm'); await settle();
-  assert(previewDialog.open, 'Confirmed Allow-again did not hand off to recurring preview.');
-  assert(document.activeElement.id === 'recurring-preview-cancel', 'Allow-again preview handoff did not focus Cancel.');
-  previewDialog.close('confirm'); await settle();
-
-  const currentGenerated = Store.getMonth(month).expenses.find(item => item.sourceTemplateId !== null);
-  assert(currentGenerated, 'Pay periods setup could not find its generated bill.');
   const secondIncome = Store.addPaycheck(month, { earnerId, plannedAmount: 200, actualAmount: null, date: '' });
-  Store.updateExpensePaycheckAmount(month, currentGenerated.id, income.id, 60);
-  Store.updateExpensePaycheckAmount(month, currentGenerated.id, secondIncome.id, 63);
   const hostile = Store.getMonth(month).expenses.find(item => item.name.includes('Hostile ledger label'));
+  const currentGenerated = hostile;
+  Store.updateExpensePaycheckAmount(month, currentGenerated.id, income.id, 4);
   Store.updateExpensePaycheckAmount(month, hostile.id, secondIncome.id, 3);
+  const partial = Store.addExpense(month, { categoryId: category.id, categoryItemId: null,
+    name: 'Synthetic partially funded bill', date: '', paycheckAmounts: {}, plannedAmount: 10,
+    actualAmount: null, paymentMethod: 'credit_card' });
+  Store.updateExpensePaycheckAmount(month, partial.id, secondIncome.id, 2);
   const unfunded = Store.addExpense(month, { categoryId: category.id, categoryItemId: null,
     name: '<img src=x onerror="globalThis.__payHostileRan=true"> ' + 'Synthetic long unfunded bill '.repeat(2).trim(),
     date: '', paycheckAmounts: {}, plannedAmount: 11, actualAmount: null, paymentMethod: 'savings' });
@@ -258,12 +248,21 @@ const SCENARIO = `(async () => {
 
   const reviewFunding = [...cards[1].querySelectorAll('.pay-period-funding-action')]
     .find(button => button.dataset.expenseId === currentGenerated.id);
+  Store.updateExpense(month, currentGenerated.id, { plannedAmount: 1076 });
   BudgetView.collapsedCategories.set(currentGenerated.category, true);
   reviewFunding.click(); await settle();
   assert(!BudgetView.collapsedCategories.get(currentGenerated.category), 'Funding route did not expand a collapsed category.');
   assert(document.activeElement.dataset.fundingExpenseId === currentGenerated.id &&
     document.activeElement.dataset.fundingPaycheckId === secondIncome.id,
     'Review funding did not focus the exact paycheck allocation.');
+  const firstFunding = [...document.querySelectorAll('input[data-funding-expense-id][data-funding-paycheck-id]')]
+    .find(input => input.dataset.fundingExpenseId === currentGenerated.id && input.dataset.fundingPaycheckId === income.id);
+  firstFunding.value = '0'; firstFunding.dispatchEvent(new Event('change', { bubbles: true })); await settle();
+  const fourDigitFunding = document.activeElement;
+  fourDigitFunding.value = '1076'; fourDigitFunding.dispatchEvent(new Event('change', { bubbles: true })); await settle();
+  assert(Store.getMonth(month).expenses.find(item => item.id === currentGenerated.id)
+    .paycheckAmounts[secondIncome.id] === 1076,
+  'A valid four-digit paycheck funding amount was rejected.');
 
   App.switchView('transfers'); await settle();
   const fundUnfunded = [...document.querySelectorAll('.pay-period-needs .pay-period-funding-action')]
@@ -361,10 +360,10 @@ const SCENARIO = `(async () => {
   App.switchView('data-health'); await settle();
   return { month, passiveActionsByteExact: true, monthlyReviewEdit: true, expenseDeleteCancelUndoStale: true,
     generatedTombstoneUndo: true, dataHealthPassiveRoutes: true, actualZeroPreviewCancelApply: true, actualApplyFailureAlertFocus: true,
-    compareOnlyNoWrite: true, hostileLabelsSafe: true, recoveryGating: true, restoreInvalidatesUndo: true, allowAgain: true,
+    compareOnlyNoWrite: true, hostileLabelsSafe: true, recoveryGating: true, restoreInvalidatesUndo: true,
     payPeriodsPassiveByteExact: true, payPeriodsCanonicalActualsFundingStates: true,
     payPeriodsAllocationsReconcileHostileSafe: true, payPeriodsExactCanonicalCollapsedRoutes: true,
-    payPeriodsStaleAndZeroPaycheckRoutes: true,
+    payPeriodsFourDigitFunding: true, payPeriodsStaleAndZeroPaycheckRoutes: true,
     previewCancelApply: true, backupRoundTrip: true, generatedIncome: Store.getMonth(month).paychecks.length,
     generatedExpenses: Store.getMonth(month).expenses.length };
 })()`;
@@ -410,6 +409,48 @@ async function run(options) {
     assertEvidence(escapeDelete.closed && escapeDelete.preserved && escapeDelete.byteExact && escapeDelete.focusReturned,
       `Expense delete Escape failed: ${JSON.stringify(escapeDelete)}`);
     scenario.expenseDeleteEscape = true;
+    await evaluate(cdp, `App.switchView('budget')`);
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width: 320, height: 900, deviceScaleFactor: 1, mobile: false });
+    const monthlyReviewNarrow = await evaluate(cdp, `(() => {
+      const review = document.getElementById('monthly-review-container'); const viewport = document.documentElement.clientWidth;
+      const overflowing = [...review.querySelectorAll('*')].filter(el => {
+        if (!el.getClientRects().length) return false; const rect = el.getBoundingClientRect();
+        return rect.left < -0.5 || rect.right > viewport + 0.5;
+      }).map(el => ({ tag: el.tagName, id: el.id, className: String(el.className || '') })).slice(0, 20);
+      return { visible: Boolean(review.getClientRects().length), cards: review.querySelectorAll('.monthly-review-group').length,
+        metrics: review.querySelectorAll('.monthly-review-metric').length, drilldowns: review.querySelectorAll('details').length,
+        exceptionsVisible: review.textContent.includes('Recurring exceptions') || Boolean(review.querySelector('[data-exception-action]')),
+        overflowing, pageWidth: document.documentElement.scrollWidth, viewport };
+    })()`);
+    assertEvidence(monthlyReviewNarrow.visible && monthlyReviewNarrow.cards >= 5 && monthlyReviewNarrow.metrics >= 8 &&
+      monthlyReviewNarrow.drilldowns >= 1 && !monthlyReviewNarrow.exceptionsVisible &&
+      monthlyReviewNarrow.overflowing.length === 0 && monthlyReviewNarrow.pageWidth <= monthlyReviewNarrow.viewport,
+      `Compact Monthly Review evidence failed: ${JSON.stringify(monthlyReviewNarrow)}`);
+    const monthlyPaymentGuidance = await evaluate(cdp, `(() => {
+      const plan = Store.getPayPeriodPlan(BudgetView.currentMonth); const guidance = document.querySelector('.monthly-review-tile-destinations');
+      const fmt = value => '$' + value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      const totals = plan.summary.methodFundingTotals; const text = guidance?.textContent || '';
+      return { visible: Boolean(guidance?.getClientRects().length), bank: text.includes(fmt(totals.bank)),
+        creditCard: text.includes(fmt(totals.credit_card)), savings: text.includes(fmt(totals.savings)),
+        investments: text.includes(fmt(totals.investments)), scope: text.includes('No payment or transfer is performed.') };
+    })()`);
+    assertEvidence(monthlyPaymentGuidance.visible && monthlyPaymentGuidance.bank && monthlyPaymentGuidance.creditCard &&
+      monthlyPaymentGuidance.savings && monthlyPaymentGuidance.investments && monthlyPaymentGuidance.scope,
+      `Monthly payment guidance did not match assigned funding: ${JSON.stringify(monthlyPaymentGuidance)}`);
+    await cdp.send('Emulation.setEmulatedMedia', { features: [{ name: 'forced-colors', value: 'active' }] });
+    const monthlyReviewForcedColors = await evaluate(cdp, `(() => {
+      const card = document.querySelector('.monthly-review-group'); const status = document.querySelector('.monthly-review-status');
+      const focus = document.querySelector('.monthly-review-drilldown summary') || document.getElementById('monthly-review-heading'); focus?.focus();
+      return { active: matchMedia('(forced-colors: active)').matches, cardVisible: Boolean(card?.getClientRects().length),
+        cardBorder: card ? getComputedStyle(card).borderColor : '', statusText: status?.textContent || '',
+        statusColor: status ? getComputedStyle(status).color : '', focusOutline: focus ? getComputedStyle(focus).outlineStyle : '' };
+    })()`);
+    assertEvidence(monthlyReviewForcedColors.active && monthlyReviewForcedColors.cardVisible && monthlyReviewForcedColors.cardBorder &&
+      monthlyReviewForcedColors.statusText && monthlyReviewForcedColors.statusColor &&
+      monthlyReviewForcedColors.focusOutline !== 'none' && monthlyReviewForcedColors.focusOutline !== 'hidden',
+      `Forced-colors Monthly Review evidence failed: ${JSON.stringify(monthlyReviewForcedColors)}`);
+    await cdp.send('Emulation.setEmulatedMedia', { features: [{ name: 'forced-colors', value: 'none' }] });
+    scenario.monthlyReviewCompactNarrowForcedColors = true; scenario.monthlyPaymentGuidance = true;
     await evaluate(cdp, `App.switchView('transfers')`);
     await cdp.send('Emulation.setDeviceMetricsOverride', { width: 320, height: 900, deviceScaleFactor: 1, mobile: false });
     const payPeriodNarrow = await evaluate(cdp, `(() => {
@@ -494,7 +535,7 @@ async function run(options) {
       (event.method === 'Runtime.consoleAPICalled' && event.params.type === 'error'));
     assertEvidence(errors.length === 0, 'Console or page exceptions were captured.');
     evidence = { passed: true, browser, disposableProfile: true, scenario, escapeDelete,
-      payPeriodNarrow, payPeriodForcedColors,
+      monthlyReviewNarrow, monthlyPaymentGuidance, monthlyReviewForcedColors, payPeriodNarrow, payPeriodForcedColors,
       payPeriodReflow200Percent: { ...payPeriodReflow200Percent, method: '1280px viewport halved to 640 CSS pixels' }, narrow, forcedColors,
       reflow200Percent: { ...reflow200Percent, method: '1280px viewport halved to 640 CSS pixels' }, reload, errors: [] };
   } finally {

@@ -37,9 +37,11 @@ test('v3 rendering exposes provenance, dates, allocation state, and explicit zer
   assert.match(source, /\$\{expense\.name\} actual amount/);
 });
 
-test('allocation inputs are bounded by the remaining planned amount', () => {
+test('paycheck funding limits refresh after reallocating a bill between pay periods', () => {
   assert.match(source, /assignedElsewhere = assigned - \(amounts\[paycheck\.id\] \?\? 0\)/);
-  assert.match(source, /expense\.plannedAmount - assignedElsewhere/);
+  assert.match(source, /refreshFundingLimits\(expenseId\)/);
+  assert.match(source, /expense\.plannedAmount - \(assigned - current\)/);
+  assert.match(source, /Reduce another paycheck’s allocation first/);
   assert.match(source, /plannedInput\.min = String\(assigned\)/);
 });
 
