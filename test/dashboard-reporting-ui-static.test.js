@@ -32,14 +32,34 @@ test('default report order is primary-first and secondary analysis is in closed 
   const positions = ids.map(id => html.indexOf(`id="${id}"`));
   assert.ok(positions.every(position => position >= 0));
   assert.deepEqual([...positions].sort((a, b) => a - b), positions);
-  const detailsStart = html.indexOf('id="dashboard-report-details"'); const detailsEnd = html.indexOf('</details>', detailsStart);
+  const detailsStart = html.indexOf('id="dashboard-report-details"');
+  const detailsEnd = html.indexOf('</details>\n      </div>', detailsStart);
   for (const id of ['chart-income-pct', 'chart-savings-rate', 'chart-yoy', 'summary-table-container']) {
     const position = html.indexOf(`id="${id}"`); assert.ok(position > detailsStart && position < detailsEnd);
   }
-  assert.match(html, /<h3>Planned spending and allocations<\/h3>/);
+  assert.match(html, /<h3 id="dashboard-income-pct-heading">Planned spending and allocations<\/h3>/);
   assert.match(html, /id="dashboard-composition-context"/);
-  assert.match(html, /<h3>Planned savings &amp; investment allocation rate<\/h3>/);
-  assert.match(html, /<h3>Planned bills by payment method<\/h3>/);
+  assert.match(html, /<h3 id="dashboard-savings-rate-heading">Planned savings &amp; investment allocation rate<\/h3>/);
+  assert.match(html, /<h3 id="dashboard-payment-method-heading">Planned bills by payment method<\/h3>/);
+});
+
+test('every supplementary canvas has an adjacent closed semantic-table disclosure', () => {
+  const reports = [
+    ['category-trend', 'dashboard-category-trend-heading'], ['proj-vs-actual', 'dashboard-proj-vs-actual-heading'],
+    ['payment-method', 'dashboard-payment-method-heading'], ['income-pct', 'dashboard-income-pct-heading'],
+    ['savings-rate', 'dashboard-savings-rate-heading'], ['yoy', 'dashboard-yoy-heading']
+  ];
+  for (const [report, heading] of reports) {
+    const pattern = new RegExp(`<canvas id="chart-${report}" aria-hidden="true"><\\/canvas>\\s*` +
+      `<details id="dashboard-${report}-table-disclosure" class="dashboard-table-disclosure">\\s*` +
+      `<summary>View data table<\\/summary>\\s*` +
+      `<div id="table-${report}" class="dashboard-data-table table-scroll" role="region" aria-labelledby="${heading}"><\\/div>\\s*<\\/details>`);
+    assert.match(html, pattern, `${report} must have an immediately adjacent table disclosure`);
+  }
+  assert.equal((html.match(/<summary>View data table<\/summary>/g) || []).length, 6);
+  assert.doesNotMatch(html, /dashboard-(?:category-trend|proj-vs-actual|payment-method|income-pct|savings-rate|yoy)-table-disclosure"[^>]*\sopen/);
+  assert.match(html, /id="dashboard-yoy-state" class="dashboard-yoy-state" role="status" hidden/);
+  assert.match(html, /id="dashboard-yoy-card" class="dash-card wide"/);
 });
 
 test('Dashboard shell is compact, responsive, focus-visible, and system-mode safe', () => {
@@ -53,5 +73,11 @@ test('Dashboard shell is compact, responsive, focus-visible, and system-mode saf
   assert.match(css, /\.dashboard-report-details > summary\s*\{[^}]*min-height:\s*44px/s);
   assert.match(css, /\.dashboard-report-details > summary:focus-visible\s*\{[^}]*outline:/s);
   assert.match(css, /@media \(forced-colors:\s*active\)[\s\S]*\.dashboard-report-details[\s\S]*border-color:\s*CanvasText/s);
+  assert.match(css, /\.dashboard-table-disclosure > summary\s*\{[^}]*min-height:\s*44px/s);
+  assert.match(css, /\.dashboard-table-disclosure > summary:focus-visible\s*\{[^}]*outline:/s);
+  assert.match(css, /\.dashboard-data-table\s*\{[^}]*overflow-x:\s*auto/s);
+  assert.match(css, /\.dashboard-data-table caption\s*\{[^}]*caption-side:\s*top[^}]*overflow-wrap:\s*anywhere/s);
+  assert.match(css, /\.dashboard-data-table th, \.dashboard-data-table td\s*\{[^}]*white-space:\s*normal[^}]*overflow-wrap:\s*anywhere/s);
+  assert.match(css, /@media \(prefers-reduced-motion:\s*reduce\)[\s\S]*\.dashboard-table-disclosure[\s\S]*transition:\s*none !important/s);
   assert.doesNotMatch(css, /(?:html|body|html\s*,\s*body)\s*\{[^}]*overflow-x\s*:\s*hidden/is);
 });

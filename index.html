@@ -145,33 +145,58 @@
       <section id="dashboard-overview" class="dashboard-overview" aria-label="Selected range overview"></section>
       <div class="dashboard-grid dashboard-primary-grid">
         <div class="dash-card wide">
-          <h3>Spending by Category (Month over Month)</h3>
-          <canvas id="chart-category-trend"></canvas>
+          <h3 id="dashboard-category-trend-heading">Spending by Category (Month over Month)</h3>
+          <canvas id="chart-category-trend" aria-hidden="true"></canvas>
+          <details id="dashboard-category-trend-table-disclosure" class="dashboard-table-disclosure">
+            <summary>View data table</summary>
+            <div id="table-category-trend" class="dashboard-data-table table-scroll" role="region" aria-labelledby="dashboard-category-trend-heading"></div>
+          </details>
         </div>
         <div class="dash-card">
-          <h3>Projected vs Actual</h3>
-          <canvas id="chart-proj-vs-actual"></canvas>
+          <h3 id="dashboard-proj-vs-actual-heading">Projected vs Actual</h3>
+          <canvas id="chart-proj-vs-actual" aria-hidden="true"></canvas>
+          <details id="dashboard-proj-vs-actual-table-disclosure" class="dashboard-table-disclosure">
+            <summary>View data table</summary>
+            <div id="table-proj-vs-actual" class="dashboard-data-table table-scroll" role="region" aria-labelledby="dashboard-proj-vs-actual-heading"></div>
+          </details>
         </div>
         <div class="dash-card">
-          <h3>Planned bills by payment method</h3>
-          <canvas id="chart-payment-method"></canvas>
+          <h3 id="dashboard-payment-method-heading">Planned bills by payment method</h3>
+          <canvas id="chart-payment-method" aria-hidden="true"></canvas>
+          <details id="dashboard-payment-method-table-disclosure" class="dashboard-table-disclosure">
+            <summary>View data table</summary>
+            <div id="table-payment-method" class="dashboard-data-table table-scroll" role="region" aria-labelledby="dashboard-payment-method-heading"></div>
+          </details>
         </div>
       </div>
       <details id="dashboard-report-details" class="dashboard-report-details">
         <summary>Report details</summary>
         <div class="dashboard-grid dashboard-details-grid">
           <div class="dash-card">
-            <h3>Planned spending and allocations</h3>
+            <h3 id="dashboard-income-pct-heading">Planned spending and allocations</h3>
             <p id="dashboard-composition-context" class="dash-card-note"></p>
-            <canvas id="chart-income-pct"></canvas>
+            <canvas id="chart-income-pct" aria-hidden="true"></canvas>
+            <details id="dashboard-income-pct-table-disclosure" class="dashboard-table-disclosure">
+              <summary>View data table</summary>
+              <div id="table-income-pct" class="dashboard-data-table table-scroll" role="region" aria-labelledby="dashboard-income-pct-heading"></div>
+            </details>
           </div>
           <div class="dash-card">
-            <h3>Planned savings &amp; investment allocation rate</h3>
-            <canvas id="chart-savings-rate"></canvas>
+            <h3 id="dashboard-savings-rate-heading">Planned savings &amp; investment allocation rate</h3>
+            <canvas id="chart-savings-rate" aria-hidden="true"></canvas>
+            <details id="dashboard-savings-rate-table-disclosure" class="dashboard-table-disclosure">
+              <summary>View data table</summary>
+              <div id="table-savings-rate" class="dashboard-data-table table-scroll" role="region" aria-labelledby="dashboard-savings-rate-heading"></div>
+            </details>
           </div>
-          <div class="dash-card wide">
-            <h3>Selected-year category comparison</h3>
-            <canvas id="chart-yoy"></canvas>
+          <p id="dashboard-yoy-state" class="dashboard-yoy-state" role="status" hidden></p>
+          <div id="dashboard-yoy-card" class="dash-card wide">
+            <h3 id="dashboard-yoy-heading">Selected-year category comparison</h3>
+            <canvas id="chart-yoy" aria-hidden="true"></canvas>
+            <details id="dashboard-yoy-table-disclosure" class="dashboard-table-disclosure">
+              <summary>View data table</summary>
+              <div id="table-yoy" class="dashboard-data-table table-scroll" role="region" aria-labelledby="dashboard-yoy-heading"></div>
+            </details>
           </div>
           <div class="dash-card wide">
             <h3>Monthly Summary Table</h3>

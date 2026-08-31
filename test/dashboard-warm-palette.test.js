@@ -43,11 +43,11 @@ function loadDashboard() {
     },
     Store: {
       getAllMonthKeys: () => ['2026-01', '2026-02'],
-      calcMonthSummary: month => summaries[month],
-      calcCategoryTotals: month => categoryTotals[month],
+      calcMonthSummary: month => summaries[month.replace('2025', '2026')],
+      calcCategoryTotals: month => categoryTotals[month.replace('2025', '2026')],
       getMonth: month => ({ paychecks: [], expenses: [],
-        allocations: month === '2026-01' ? { savings: 10, investments: 5 } : {} }),
-      calcPaymentMethodTotals: month => month === '2026-01'
+        allocations: month.endsWith('-01') ? { savings: 10, investments: 5 } : {} }),
+      calcPaymentMethodTotals: month => month.endsWith('-01')
         ? { bank: 25, credit_card: 15, savings: 10, investments: 5 }
         : { bank: 50, credit_card: 30, savings: 0, investments: 20 }
     },
@@ -80,7 +80,7 @@ test('chart configurations use frozen mappings without changing analytics intent
   dashboard.renderProjVsActual(months);
   dashboard.renderSavingsRate(months);
   dashboard.renderPaymentMethod(months);
-  dashboard.renderYoY(months);
+  dashboard.renderYoY(['2025-01', '2025-02', '2026-01', '2026-02']);
 
   const [trend, doughnut, projected, savings, payment, yoy] = configs;
   assert.equal(trend.type, 'line');

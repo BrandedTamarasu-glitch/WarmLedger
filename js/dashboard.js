@@ -65,7 +65,8 @@ const DashboardView = {
 
   clearRenderedOutput() {
     this.destroyAllCharts();
-    for (const id of ['summary-table-container', 'dashboard-overview']) {
+    for (const id of ['summary-table-container', 'dashboard-overview', 'table-category-trend',
+      'table-proj-vs-actual', 'table-payment-method', 'table-income-pct', 'table-savings-rate', 'table-yoy']) {
       const element = document.getElementById(id);
       if (element) element.replaceChildren();
     }
@@ -73,6 +74,127 @@ const DashboardView = {
     if (compositionContext) compositionContext.textContent = '';
     const results = document.getElementById('dashboard-results');
     if (results) results.hidden = true;
+    const yoyState = document.getElementById('dashboard-yoy-state');
+    if (yoyState) { yoyState.textContent = ''; yoyState.hidden = true; }
+    const yoyCard = document.getElementById('dashboard-yoy-card');
+    if (yoyCard) yoyCard.hidden = true;
+  },
+
+  renderDataTable(containerId, model) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    container.replaceChildren();
+    const table = document.createElement('table');
+    const caption = document.createElement('caption'); caption.textContent = model.caption; table.append(caption);
+    const thead = table.createTHead();
+    if (!thead || typeof thead.insertRow !== 'function' || typeof table.createTBody !== 'function') return;
+    const headRow = thead.insertRow();
+    for (const label of model.columns) {
+      const th = document.createElement('th'); th.scope = 'col'; th.textContent = label; headRow.append(th);
+    }
+    const tbody = table.createTBody();
+    for (const row of model.rows) {
+      const tr = tbody.insertRow(); const th = document.createElement('th'); th.scope = 'row';
+      th.textContent = row.header; tr.append(th);
+      for (const value of row.cells) { const td = tr.insertCell(); td.textContent = value; }
+    }
+    container.replaceChildren(table);
+  },
+
+  buildCategoryTrendModel(months) {
+    const allCategories = new Set(); const dataByMonth = {};
+    months.forEach(monthKey => {
+      const totals = Store.calcCategoryTotals(monthKey); dataByMonth[monthKey] = totals;
+      Object.keys(totals).forEach(category => allCategories.add(category));
+    });
+    const categories = [...allCategories]; const labels = months.map(month => this.formatMonthShort(month));
+    const datasets = categories.map(category => ({ label: category,
+      data: months.map(month => this.categoryActual(dataByMonth[month][category])) }));
+    return { labels, datasets, table: { caption: 'Actual spending by month and category',
+      columns: ['Month', 'Category', 'Actual spending'], rows: months.flatMap((month, monthIndex) =>
+        categories.map((category, categoryIndex) => ({ header: labels[monthIndex],
+          cells: [category, this.formatWholeAmount(datasets[categoryIndex].data[monthIndex])] }))) } };
+  },
+
+  buildCompositionModel(months) {
+    let targetMonth = months[months.length - 1];
+    for (let index = months.length - 1; index >= 0; index--) {
+      if (this.plannedIncome(Store.calcMonthSummary(months[index])) > 0) { targetMonth = months[index]; break; }
+    }
+    const summary = Store.calcMonthSummary(targetMonth); const plannedIncome = this.plannedIncome(summary);
+    const totals = Store.calcCategoryTotals(targetMonth); const labels = Object.keys(totals);
+    const data = labels.map(category => this.categoryPlanned(totals[category]));
+    const allocations = Store.getMonth(targetMonth).allocations || {};
+    ALLOCATION_TYPES.forEach(allocation => {
+      if (allocations[allocation.key] > 0) { labels.push(allocation.label); data.push(allocations[allocation.key]); }
+    });
+    return { targetMonth, plannedIncome, labels, data, table: {
+      caption: `Planned spending and allocations for ${this.formatMonthShort(targetMonth)}`,
+      columns: ['Category or allocation', 'Planned amount', 'Percent of planned income'],
+      rows: labels.map((label, index) => ({ header: label, cells: [this.formatWholeAmount(data[index]),
+        plannedIncome === 0 ? 'Unavailable' : `${((data[index] / plannedIncome) * 100).toFixed(1)}%`] }))
+    } };
+  },
+
+  buildProjectedActualModel(months) {
+    const labels = months.map(month => this.formatMonthShort(month));
+    const planned = months.map(month => this.plannedExpenses(Store.calcMonthSummary(month)));
+    const actual = months.map(month => this.actualExpenses(Store.calcMonthSummary(month)));
+    return { labels, planned, actual, table: { caption: 'Planned and actual expenses by month',
+      columns: ['Month', 'Planned expenses', 'Actual expenses'], rows: labels.map((label, index) =>
+        ({ header: label, cells: [this.formatWholeAmount(planned[index]), this.formatWholeAmount(actual[index])] })) } };
+  },
+
+  buildSavingsRateModel(months) {
+    const labels = months.map(month => this.formatMonthShort(month));
+    const rows = months.map(month => {
+      const summary = Store.calcMonthSummary(month); const allocation = Store.getMonth(month).allocations || {};
+      const plannedAllocation = (allocation.savings || 0) + (allocation.investments || 0);
+      const plannedIncome = this.plannedIncome(summary);
+      return { plannedAllocation, plannedIncome, chartRate: plannedIncome > 0 ? (plannedAllocation / plannedIncome) * 100 : 0 };
+    });
+    return { labels, rates: rows.map(row => row.chartRate), table: {
+      caption: 'Planned savings and investment allocation rate by month',
+      columns: ['Month', 'Planned savings and investments', 'Planned income', 'Allocation rate'],
+      rows: rows.map((row, index) => ({ header: labels[index], cells: [this.formatWholeAmount(row.plannedAllocation),
+        this.formatWholeAmount(row.plannedIncome), row.plannedIncome > 0 ? `${row.chartRate.toFixed(1)}%` : 'Unavailable'] }))
+    } };
+  },
+
+  buildPaymentMethodModel(months) {
+    const labels = months.map(month => this.formatMonthShort(month));
+    const totals = months.map(mk => Store.calcPaymentMethodTotals(mk, 'planned'));
+    const datasets = [
+      { label: 'Bank', key: 'bank' }, { label: 'Credit Card', key: 'credit_card' },
+      { label: 'Savings', key: 'savings' }, { label: 'Investments', key: 'investments' }
+    ].map(method => ({ label: method.label, data: totals.map(total => total[method.key] ?? 0) }));
+    return { labels, datasets, table: { caption: 'Planned bills by payment method and month',
+      columns: ['Month', ...datasets.map(dataset => dataset.label)], rows: labels.map((label, monthIndex) =>
+        ({ header: label, cells: datasets.map(dataset => this.formatWholeAmount(dataset.data[monthIndex])) })) } };
+  },
+
+  buildYoYModel(months) {
+    const years = {};
+    months.forEach(month => { const year = month.slice(0, 4); (years[year] ||= []).push(month); });
+    const yearKeys = Object.keys(years).sort();
+    const sequences = yearKeys.map(year => years[year].map(month => month.slice(5)));
+    const eligible = yearKeys.length >= 2 && sequences[0].length > 0 &&
+      sequences.every(sequence => JSON.stringify(sequence) === JSON.stringify(sequences[0]));
+    if (!eligible) return { eligible: false, reason: 'Select at least two years with the same calendar months to compare categories.' };
+    const categories = new Set(); months.forEach(month =>
+      Object.keys(Store.calcCategoryTotals(month)).forEach(category => categories.add(category)));
+    const labels = [...categories];
+    const datasets = yearKeys.map(year => ({ label: year, data: labels.map(category => {
+      let total = 0;
+      for (const month of years[year]) {
+        const value = this.categoryActual(Store.calcCategoryTotals(month)[category]);
+        if (value === null) return null; total += value;
+      }
+      return total;
+    }) }));
+    return { eligible: true, labels, datasets, table: { caption: 'Actual category spending by selected year',
+      columns: ['Category', ...yearKeys], rows: labels.map((label, categoryIndex) => ({ header: label,
+        cells: datasets.map(dataset => this.formatWholeAmount(dataset.data[categoryIndex])) })) } };
   },
 
   buildCoverageOverview(entries) {
@@ -232,21 +354,11 @@ const DashboardView = {
   // 1. Category spending trend (line chart)
   renderCategoryTrend(months) {
     this.destroyChart('categoryTrend');
-    const allCategories = new Set();
-    const dataByMonth = {};
-
-    months.forEach(mk => {
-      const totals = Store.calcCategoryTotals(mk);
-      dataByMonth[mk] = totals;
-      Object.keys(totals).forEach(c => allCategories.add(c));
-    });
-
-    const cats = [...allCategories];
-    const datasets = cats.map((cat, i) => ({
-      label: cat,
-      data: months.map(mk => this.categoryActual(dataByMonth[mk][cat])),
-      borderColor: this.COLORS[i % this.COLORS.length],
-      backgroundColor: this.COLORS[i % this.COLORS.length] + '33',
+    const model = this.buildCategoryTrendModel(months);
+    const datasets = model.datasets.map((dataset, index) => ({
+      label: dataset.label, data: dataset.data,
+      borderColor: this.COLORS[index % this.COLORS.length],
+      backgroundColor: this.COLORS[index % this.COLORS.length] + '33',
       tension: 0.3,
       fill: false
     }));
@@ -254,7 +366,7 @@ const DashboardView = {
     const ctx = document.getElementById('chart-category-trend').getContext('2d');
     this.charts.categoryTrend = new Chart(ctx, {
       type: 'line',
-      data: { labels: months.map(m => this.formatMonthShort(m)), datasets },
+      data: { labels: model.labels, datasets },
       options: {
         responsive: true,
         plugins: { legend: { position: 'bottom', labels: { color: DASHBOARD_THEME.text, boxWidth: 12 } } },
@@ -264,37 +376,19 @@ const DashboardView = {
         }
       }
     });
+    this.renderDataTable('table-category-trend', model.table);
   },
 
   // 2. % of income by category (doughnut - latest month with data)
   renderIncomePct(months) {
     this.destroyChart('incomePct');
-    // Use the most recent month that has data
-    let targetMonth = months[months.length - 1];
-    for (let i = months.length - 1; i >= 0; i--) {
-      const s = Store.calcMonthSummary(months[i]);
-      if (this.plannedIncome(s) > 0) { targetMonth = months[i]; break; }
-    }
-
-    const summary = Store.calcMonthSummary(targetMonth);
-    const catTotals = Store.calcCategoryTotals(targetMonth);
-    const plannedIncome = this.plannedIncome(summary);
+    const model = this.buildCompositionModel(months);
+    const { targetMonth, plannedIncome, labels, data } = model;
     const income = plannedIncome === 0 ? 1 : plannedIncome;
     const context = document.getElementById('dashboard-composition-context');
     if (context) context.textContent = plannedIncome > 0
       ? `${this.formatMonthShort(targetMonth)} composition: planned spending and allocations as a percentage of planned income.`
       : `${this.formatMonthShort(targetMonth)} composition: no planned income was entered, so percentages are not shown.`;
-
-    const labels = Object.keys(catTotals);
-    const data = labels.map(c => this.categoryPlanned(catTotals[c]));
-    const allocations = Store.getMonth(targetMonth).allocations || {};
-    // Add allocations as categories
-    ALLOCATION_TYPES.forEach(a => {
-      if (allocations[a.key] > 0) {
-        labels.push(a.label);
-        data.push(allocations[a.key]);
-      }
-    });
 
     const ctx = document.getElementById('chart-income-pct').getContext('2d');
     this.charts.incomePct = new Chart(ctx, {
@@ -323,22 +417,22 @@ const DashboardView = {
         }
       }
     });
+    this.renderDataTable('table-income-pct', model.table);
   },
 
   // 3. Projected vs Actual (grouped bar)
   renderProjVsActual(months) {
     this.destroyChart('projVsActual');
-    const projected = months.map(mk => this.plannedExpenses(Store.calcMonthSummary(mk)));
-    const actual = months.map(mk => this.actualExpenses(Store.calcMonthSummary(mk)));
+    const model = this.buildProjectedActualModel(months);
 
     const ctx = document.getElementById('chart-proj-vs-actual').getContext('2d');
     this.charts.projVsActual = new Chart(ctx, {
       type: 'bar',
       data: {
-        labels: months.map(m => this.formatMonthShort(m)),
+        labels: model.labels,
         datasets: [
-          { label: 'Planned expenses', data: projected, backgroundColor: DASHBOARD_THEME.accent },
-          { label: 'Actual expenses', data: actual, backgroundColor: DASHBOARD_THEME.positive }
+          { label: 'Planned expenses', data: model.planned, backgroundColor: DASHBOARD_THEME.accent },
+          { label: 'Actual expenses', data: model.actual, backgroundColor: DASHBOARD_THEME.positive }
         ]
       },
       options: {
@@ -350,27 +444,22 @@ const DashboardView = {
         }
       }
     });
+    this.renderDataTable('table-proj-vs-actual', model.table);
   },
 
   // 4. Savings rate over time (line)
   renderSavingsRate(months) {
     this.destroyChart('savingsRate');
-    const rates = months.map(mk => {
-      const summary = Store.calcMonthSummary(mk);
-      const alloc = Store.getMonth(mk).allocations || {};
-      const totalSaved = (alloc.savings || 0) + (alloc.investments || 0);
-      const income = this.plannedIncome(summary);
-      return income > 0 ? (totalSaved / income) * 100 : 0;
-    });
+    const model = this.buildSavingsRateModel(months);
 
     const ctx = document.getElementById('chart-savings-rate').getContext('2d');
     this.charts.savingsRate = new Chart(ctx, {
       type: 'line',
       data: {
-        labels: months.map(m => this.formatMonthShort(m)),
+        labels: model.labels,
         datasets: [{
           label: 'Planned savings & investment allocation rate',
-          data: rates,
+          data: model.rates,
           borderColor: DASHBOARD_THEME.positive,
           backgroundColor: DASHBOARD_THEME.positive + '33',
           tension: 0.3,
@@ -386,24 +475,21 @@ const DashboardView = {
         }
       }
     });
+    this.renderDataTable('table-savings-rate', model.table);
   },
 
   // 5. Payment method breakdown (bar)
   renderPaymentMethod(months) {
     this.destroyChart('paymentMethod');
-    const totals = months.map(mk => Store.calcPaymentMethodTotals(mk, 'planned'));
+    const model = this.buildPaymentMethodModel(months);
+    const colors = [DASHBOARD_THEME.info, DASHBOARD_THEME.warning, DASHBOARD_THEME.positive, DASHBOARD_THEME.accent];
 
     const ctx = document.getElementById('chart-payment-method').getContext('2d');
     this.charts.paymentMethod = new Chart(ctx, {
       type: 'bar',
       data: {
-        labels: months.map(m => this.formatMonthShort(m)),
-        datasets: [
-          { label: 'Bank', data: totals.map(item => item.bank ?? 0), backgroundColor: DASHBOARD_THEME.info },
-          { label: 'Credit Card', data: totals.map(item => item.credit_card ?? 0), backgroundColor: DASHBOARD_THEME.warning },
-          { label: 'Savings', data: totals.map(item => item.savings ?? 0), backgroundColor: DASHBOARD_THEME.positive },
-          { label: 'Investments', data: totals.map(item => item.investments ?? 0), backgroundColor: DASHBOARD_THEME.accent }
-        ]
+        labels: model.labels,
+        datasets: model.datasets.map((dataset, index) => ({ ...dataset, backgroundColor: colors[index] }))
       },
       options: {
         responsive: true,
@@ -414,52 +500,31 @@ const DashboardView = {
         }
       }
     });
+    this.renderDataTable('table-payment-method', model.table);
   },
 
   // 6. Year-over-Year comparison (grouped bar by category)
   renderYoY(months) {
     this.destroyChart('yoy');
-    // Group months by year
-    const years = {};
-    months.forEach(mk => {
-      const y = mk.split('-')[0];
-      if (!years[y]) years[y] = [];
-      years[y].push(mk);
-    });
-
-    const yearKeys = Object.keys(years).sort();
-    if (yearKeys.length < 1) return;
-
-    // Get all categories across all months
-    const allCats = new Set();
-    months.forEach(mk => {
-      const totals = Store.calcCategoryTotals(mk);
-      Object.keys(totals).forEach(c => allCats.add(c));
-    });
-    const cats = [...allCats];
-
-    const datasets = yearKeys.map((year, yi) => {
-      const yearMonths = years[year];
-      const catSums = {};
-      cats.forEach(c => { catSums[c] = 0; });
-      yearMonths.forEach(mk => {
-        const totals = Store.calcCategoryTotals(mk);
-        cats.forEach(c => {
-          const value = this.categoryActual(totals[c]);
-          if (catSums[c] !== null) catSums[c] = value === null ? null : catSums[c] + value;
-        });
-      });
-      return {
-        label: year,
-        data: cats.map(c => catSums[c]),
-        backgroundColor: this.COLORS[yi % this.COLORS.length]
-      };
-    });
+    const model = this.buildYoYModel(months);
+    const card = document.getElementById('dashboard-yoy-card'); const state = document.getElementById('dashboard-yoy-state');
+    if (!model.eligible) {
+      const table = document.getElementById('table-yoy'); if (table) table.replaceChildren();
+      if (card) card.hidden = true;
+      if (state) { state.textContent = model.reason; state.hidden = false; }
+      return;
+    }
+    if (card) card.hidden = false;
+    if (state) { state.textContent = ''; state.hidden = true; }
+    const datasets = model.datasets.map((dataset, index) => ({
+        label: dataset.label, data: dataset.data,
+        backgroundColor: this.COLORS[index % this.COLORS.length]
+      }));
 
     const ctx = document.getElementById('chart-yoy').getContext('2d');
     this.charts.yoy = new Chart(ctx, {
       type: 'bar',
-      data: { labels: cats, datasets },
+      data: { labels: model.labels, datasets },
       options: {
         responsive: true,
         plugins: { legend: { position: 'bottom', labels: { color: DASHBOARD_THEME.text, boxWidth: 12 } } },
@@ -469,6 +534,7 @@ const DashboardView = {
         }
       }
     });
+    this.renderDataTable('table-yoy', model.table);
   },
 
   // 7. Summary table
