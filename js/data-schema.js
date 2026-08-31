@@ -10,12 +10,14 @@
   const SCHEMA_VERSION = 3;
   const V2_SCHEMA_VERSION = 2;
   const V3_SCHEMA_VERSION = 3;
+  const V4_SCHEMA_VERSION = 4;
   const LEGACY_SCHEMA_VERSION = 1;
   const BACKUP_FORMAT = 'zerobudget-backup';
   const BACKUP_FORMAT_VERSION = 1;
   const SNAPSHOT_FORMAT = 'zerobudget-snapshot';
   const SNAPSHOT_FORMAT_VERSION = 1;
   const MAX_MONEY = 1_000_000_000_000;
+  const MAX_MONEY_CENTS = MAX_MONEY * 100;
   const BLOCKED_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
   const PAYMENT_METHODS = new Set(['bank', 'credit_card', 'savings', 'investments']);
   const ALLOCATION_KEYS = ['savings', 'credit_card_debt', 'investments'];
@@ -163,6 +165,37 @@
   function expectMoney(value, path, positive = false) {
     if (typeof value !== 'number' || !Number.isFinite(value)) fail('INVALID_AMOUNT', path);
     if (value < 0 || value > MAX_MONEY || (positive && value === 0)) fail('AMOUNT_OUT_OF_RANGE', path);
+  }
+
+  function expectMoneyCents(value, path, positive = false) {
+    if (typeof value !== 'number' || !Number.isSafeInteger(value)) fail('INVALID_CENTS', path);
+    if (value < 0 || value > MAX_MONEY_CENTS || (positive && value === 0)) fail('CENTS_OUT_OF_RANGE', path);
+  }
+
+  function decimalMoneyToCents(value, path = '$') {
+    expectMoney(value, path);
+    const match = /^(\d+)(?:\.(\d+))?(?:e([+-]?\d+))?$/i.exec(String(value));
+    if (!match) fail('INVALID_AMOUNT', path);
+    const fraction = match[2] || '';
+    const exponent = match[3] === undefined ? 0 : Number(match[3]);
+    if (!Number.isSafeInteger(exponent)) fail('INVALID_AMOUNT', path);
+    const coefficient = BigInt(`${match[1]}${fraction}`);
+    const centsScale = fraction.length - exponent - 2;
+    let cents;
+    if (centsScale <= 0) {
+      cents = coefficient * (10n ** BigInt(-centsScale));
+    } else {
+      const divisor = 10n ** BigInt(centsScale);
+      if (coefficient % divisor !== 0n) fail('SUB_CENT_AMOUNT', path);
+      cents = coefficient / divisor;
+    }
+    if (cents > BigInt(MAX_MONEY_CENTS)) fail('CENTS_OUT_OF_RANGE', path);
+    return Number(cents);
+  }
+
+  function centsToDecimalMoney(value, path = '$') {
+    expectMoneyCents(value, path);
+    return value / 100;
   }
 
   function isLeapYear(year) {
@@ -626,6 +659,77 @@
     return true;
   }
 
+  function transformV3Money(input, transform, schemaVersion) {
+    const output = clone(input);
+    expectExactKeys(output, ['schemaVersion', 'categories', 'settings', 'templates', 'months'], '$');
+    expectObject(output.templates, '$.templates');
+    expectArray(output.templates.income, '$.templates.income', 500);
+    expectArray(output.templates.expenses, '$.templates.expenses', 5000);
+    expectObject(output.months, '$.months');
+    output.schemaVersion = schemaVersion;
+    output.templates.income.forEach((template, index) => {
+      template.plannedAmount = transform(template.plannedAmount, `$.templates.income[${index}].plannedAmount`);
+    });
+    output.templates.expenses.forEach((template, index) => {
+      template.plannedAmount = transform(template.plannedAmount, `$.templates.expenses[${index}].plannedAmount`);
+    });
+    for (const [monthKey, month] of Object.entries(output.months)) {
+      const monthPath = childPath('$.months', monthKey);
+      expectObject(month, monthPath);
+      expectArray(month.paychecks, `${monthPath}.paychecks`, 500);
+      expectArray(month.expenses, `${monthPath}.expenses`, 5000);
+      expectObject(month.allocations, `${monthPath}.allocations`);
+      month.paychecks.forEach((paycheck, index) => {
+        const path = `${monthPath}.paychecks[${index}]`;
+        paycheck.plannedAmount = transform(paycheck.plannedAmount, `${path}.plannedAmount`);
+        if (paycheck.actualAmount !== null) {
+          paycheck.actualAmount = transform(paycheck.actualAmount, `${path}.actualAmount`);
+        }
+      });
+      month.expenses.forEach((expense, index) => {
+        const path = `${monthPath}.expenses[${index}]`;
+        for (const paycheckId of Object.keys(expense.paycheckAmounts)) {
+          const amountPath = childPath(`${path}.paycheckAmounts`, paycheckId);
+          expense.paycheckAmounts[paycheckId] = transform(expense.paycheckAmounts[paycheckId], amountPath);
+        }
+        expense.plannedAmount = transform(expense.plannedAmount, `${path}.plannedAmount`);
+        if (expense.actualAmount !== null) {
+          expense.actualAmount = transform(expense.actualAmount, `${path}.actualAmount`);
+        }
+      });
+      for (const key of ALLOCATION_KEYS) {
+        month.allocations[key] = transform(month.allocations[key], `${monthPath}.allocations.${key}`);
+      }
+    }
+    return output;
+  }
+
+  function hydrateV4ExactMoney(input) {
+    clone(input);
+    if (!isPlainObject(input) || input.schemaVersion !== V4_SCHEMA_VERSION) {
+      fail('UNSUPPORTED_SCHEMA_VERSION', '$.schemaVersion');
+    }
+    const hydrated = transformV3Money(input, centsToDecimalMoney, V3_SCHEMA_VERSION);
+    validateV3(hydrated);
+    return clone(hydrated);
+  }
+
+  function validateV4(input) {
+    hydrateV4ExactMoney(input);
+    return true;
+  }
+
+  function dehydrateV4ExactMoney(input) {
+    validateV3(input);
+    const persisted = transformV3Money(input, decimalMoneyToCents, V4_SCHEMA_VERSION);
+    validateV4(persisted);
+    return clone(persisted);
+  }
+
+  function migrateV3ToV4ExactMoney(input) {
+    return dehydrateV4ExactMoney(input);
+  }
+
   function migrateToV1(input) {
     const migrated = clone(input);
     if (!isPlainObject(migrated)) fail('EXPECTED_OBJECT', '$');
@@ -877,6 +981,53 @@
   function buildV3Snapshot(data, metadata) { return buildCanonicalSnapshot(data, metadata, migrateToV3); }
   function parseV3Snapshot(text) { return parseCanonicalSnapshot(text, migrateToV3); }
 
+  function canonicalizeV4(input) {
+    if (isPlainObject(input) && input.schemaVersion === V4_SCHEMA_VERSION) {
+      validateV4(input);
+      return clone(input);
+    }
+    return dehydrateV4ExactMoney(input);
+  }
+
+  function parseV4Active(text) {
+    const persisted = parseJson(text, '$');
+    validateV4(persisted);
+    return hydrateV4ExactMoney(persisted);
+  }
+
+  function buildV4Backup(data, exportedAt) {
+    return buildCanonicalBackup(data, exportedAt, canonicalizeV4);
+  }
+
+  function parseV4Backup(text) {
+    const envelope = parseCanonicalBackup(text, canonicalizeV4);
+    return { ...envelope, data: hydrateV4ExactMoney(envelope.data) };
+  }
+
+  function buildV4Snapshot(data, metadata) {
+    return buildCanonicalSnapshot(data, metadata, canonicalizeV4);
+  }
+
+  function parseV4Snapshot(text) {
+    const envelope = parseCanonicalSnapshot(text, canonicalizeV4);
+    return { ...envelope, data: hydrateV4ExactMoney(envelope.data) };
+  }
+
+  function parseActiveData(text) {
+    const parsed = parseJson(text, '$');
+    if (isPlainObject(parsed) && parsed.schemaVersion === V4_SCHEMA_VERSION) {
+      validateV4(parsed);
+      return hydrateV4ExactMoney(parsed);
+    }
+    return migrateToV3(parsed);
+  }
+
+  function buildActiveData(data, residentSchemaVersion) {
+    if (residentSchemaVersion === V3_SCHEMA_VERSION) return migrateToV3(data);
+    if (residentSchemaVersion === V4_SCHEMA_VERSION) return canonicalizeV4(data);
+    fail('UNSUPPORTED_SCHEMA_VERSION', '$.schemaVersion');
+  }
+
   const ACTIVE_SCHEMA_POLICY = Object.freeze({
     SCHEMA_VERSION,
     clone,
@@ -901,25 +1052,52 @@
     buildSnapshot: buildV3Snapshot,
     parseSnapshot: parseV3Snapshot
   });
+  const V4_SCHEMA_POLICY = Object.freeze({
+    SCHEMA_VERSION: V4_SCHEMA_VERSION,
+    clone,
+    DataError,
+    migrateActive: canonicalizeV4,
+    validateActive: validateV4,
+    parseActive: parseV4Active,
+    buildBackup: buildV4Backup,
+    parseBackup: parseV4Backup,
+    buildSnapshot: buildV4Snapshot,
+    parseSnapshot: parseV4Snapshot
+  });
 
   return Object.freeze({
     SCHEMA_VERSION,
     V2_SCHEMA_VERSION,
     V3_SCHEMA_VERSION,
+    V4_SCHEMA_VERSION,
     BACKUP_FORMAT,
     BACKUP_FORMAT_VERSION,
     SNAPSHOT_FORMAT,
     SNAPSHOT_FORMAT_VERSION,
     ACTIVE_SCHEMA_POLICY,
     V3_SCHEMA_POLICY,
+    V4_SCHEMA_POLICY,
     DataError,
     clone,
     migrateActive,
     migrateToV2,
     migrateToV3,
+    migrateV3ToV4ExactMoney,
+    hydrateV4ExactMoney,
+    dehydrateV4ExactMoney,
+    decimalMoneyToCents,
+    centsToDecimalMoney,
     validateActive,
     validateV2,
     validateV3,
+    validateV4,
+    parseActiveData,
+    buildActiveData,
+    parseV4Active,
+    buildV4Backup,
+    parseV4Backup,
+    buildV4Snapshot,
+    parseV4Snapshot,
     parseActive,
     buildBackup,
     parseBackup,

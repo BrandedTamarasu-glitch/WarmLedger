@@ -163,3 +163,186 @@ test('existing module exports and Store read APIs remain available', () => {
     'getPayPeriodPlan', 'buildExport', 'exportData']) assert.equal(typeof store[name], 'function', name);
   assert.ok(new StoreError('EXAMPLE') instanceof Error);
 });
+
+test('resident v3 and v4 ordinary edits preserve their persisted schema representation', () => {
+  const v3 = makeV3Budget();
+  const first = readyStore(v3, { now: () => new Date('2026-08-30T12:00:00Z'), uuid: () => 'daily-v3' });
+  first.store.updateAllocation('2026-01', 'savings', 401);
+  assert.equal(JSON.parse(first.storage.getItem(STORAGE_KEY)).schemaVersion, 3);
+
+  const v4 = Schema.migrateV3ToV4ExactMoney(v3);
+  const storage = new MemoryStorage({ [STORAGE_KEY]: JSON.stringify(v4) });
+  const store = createStore({ storage, now: () => new Date('2026-08-30T12:00:00Z'), uuid: () => 'daily-v4' });
+  assert.equal(store.load().state, 'ready');
+  assert.equal(store.getStatus().residentSchemaVersion, 4);
+  store.updateAllocation('2026-01', 'savings', 401);
+  const persisted = JSON.parse(storage.getItem(STORAGE_KEY));
+  assert.equal(persisted.schemaVersion, 4);
+  assert.equal(persisted.months['2026-01'].allocations.savings, 40100);
+  assert.equal(store.getData().months['2026-01'].allocations.savings, 401);
+});
+
+test('canonical resident v3 load is not reported as migrated', () => {
+  const budget = makeV3Budget();
+  const storage = new MemoryStorage({ [STORAGE_KEY]: JSON.stringify(budget) });
+  const store = createStore({ storage });
+  assert.equal(store.load().migrated, false);
+  assert.equal(store.getStatus().residentSchemaVersion, 3);
+});
+
+test('migration summary and preview are aggregate-only, frozen, identity-bound, and write-free', () => {
+  const { store, storage, raw } = readyStore(makeV3Budget());
+  const generation = store.getStatus().generation;
+  const summary = store.getExactMoneyMigrationSummary();
+  const preview = store.previewExactMoneyMigration();
+  assert.deepEqual(summary, { state: 'eligible', subCentValueCount: 0, affectedMonthCount: 0, affectedTemplateCount: 0 });
+  assert.equal(Object.isFrozen(preview), true);
+  assert.equal(Object.hasOwn(preview, 'data'), false);
+  assert.equal(storage.getItem(STORAGE_KEY), raw);
+  assert.equal(store.getStatus().generation, generation);
+  assert.equal(storage.operations.some(item => item.op === 'setItem' || item.op === 'removeItem'), false);
+  expectCode('INVALID_EXACT_MONEY_MIGRATION_PREVIEW', () => store.commitExactMoneyMigration({ ...preview }));
+});
+
+test('sub-cent ledgers are blocked while null and entered zero remain migration eligible', () => {
+  const blockedData = makeV3Budget();
+  blockedData.months['2026-01'].expenses[0].plannedAmount = 1200.001;
+  const blocked = readyStore(blockedData);
+  assert.equal(blocked.store.getExactMoneyMigrationSummary().state, 'blocked');
+  expectCode('EXACT_MONEY_MIGRATION_BLOCKED', () => blocked.store.previewExactMoneyMigration());
+
+  const exact = makeV3Budget();
+  exact.months['2026-01'].paychecks[0].actualAmount = null;
+  exact.months['2026-01'].expenses[0].actualAmount = 0;
+  const storage = new MemoryStorage({ [STORAGE_KEY]: JSON.stringify(exact) });
+  const store = createStore({ storage, now: () => new Date('2026-08-30T12:00:00Z'), uuid: () => 'migration-snapshot' });
+  store.load();
+  store.commitExactMoneyMigration(store.previewExactMoneyMigration());
+  const persisted = JSON.parse(storage.getItem(STORAGE_KEY));
+  assert.equal(persisted.months['2026-01'].paychecks[0].actualAmount, null);
+  assert.equal(persisted.months['2026-01'].expenses[0].actualAmount, 0);
+  assert.equal(store.getExactMoneyMigrationSummary().state, 'already-migrated');
+});
+
+test('migration rejects stale previews and snapshot or primary failures preserve active bytes and memory', () => {
+  const clock = () => new Date('2026-08-30T12:00:00Z');
+  let id = 0;
+  const storage = new MemoryStorage({ [STORAGE_KEY]: JSON.stringify(makeV3Budget()) });
+  const store = createStore({ storage, now: clock, uuid: () => `migration-${++id}` });
+  store.load();
+  const stale = store.previewExactMoneyMigration();
+  store.updateAllocation('2026-01', 'savings', 401);
+  expectCode('STALE_EXACT_MONEY_MIGRATION_PREVIEW', () => store.commitExactMoneyMigration(stale));
+
+  const beforeRaw = storage.getItem(STORAGE_KEY); const beforeData = store.getData(); const beforeStatus = store.getStatus();
+  storage.fail({ op: 'setItem', prefix: SNAPSHOT_PREFIX, once: true });
+  expectCode('SNAPSHOT_WRITE_FAILED', () => store.commitExactMoneyMigration(store.previewExactMoneyMigration()));
+  assert.equal(storage.getItem(STORAGE_KEY), beforeRaw);
+  assert.deepEqual(store.getData(), beforeData); assert.deepEqual(store.getStatus(), beforeStatus);
+
+  storage.fail({ op: 'setItem', key: STORAGE_KEY, once: true });
+  expectCode('PRIMARY_WRITE_FAILED', () => store.commitExactMoneyMigration(store.previewExactMoneyMigration()));
+  assert.equal(storage.getItem(STORAGE_KEY), beforeRaw);
+  assert.deepEqual(store.getData(), beforeData); assert.deepEqual(store.getStatus(), beforeStatus);
+
+  store.commitExactMoneyMigration(store.previewExactMoneyMigration());
+  assert.equal(JSON.parse(storage.getItem(STORAGE_KEY)).schemaVersion, 4);
+});
+
+test('v4 backup export/import and snapshot recovery retain envelope v1 and integer cents', () => {
+  const v4 = Schema.migrateV3ToV4ExactMoney(makeV3Budget());
+  const sourceStorage = new MemoryStorage({ [STORAGE_KEY]: JSON.stringify(v4) });
+  const source = createStore({ storage: sourceStorage, now: () => new Date('2026-08-30T12:00:00Z'), uuid: () => 'unused' });
+  source.load();
+  const backup = JSON.parse(source.exportData());
+  assert.equal(backup.formatVersion, 1); assert.equal(backup.data.schemaVersion, 4);
+  assert.equal(backup.data.months['2026-01'].paychecks[0].plannedAmount, 250000);
+
+  const targetStorage = new MemoryStorage({ [STORAGE_KEY]: JSON.stringify(makeV3Budget()) });
+  const target = createStore({ storage: targetStorage, now: () => new Date('2026-08-30T12:00:00Z'), uuid: () => 'pre-import-v3' });
+  target.load(); target.importData(JSON.stringify(backup));
+  assert.equal(target.getStatus().residentSchemaVersion, 4);
+  assert.equal(JSON.parse(targetStorage.getItem(STORAGE_KEY)).schemaVersion, 4);
+});
+
+test('v4 backups participate in additive comparison through their embedded schema', () => {
+  const data = makeV3Budget();
+  const { store } = readyStore(data);
+  const backup = Schema.buildV4Backup(data, '2026-08-30T12:00:00.000Z');
+  const comparison = store.compareAdditiveBackup(JSON.stringify(backup));
+  assert.equal(comparison.months.identical.length, 1);
+  assert.equal(comparison.months.conflicting.length, 0);
+  assert.equal(comparison.structure.categories, 'identical');
+});
+
+test('v4 snapshots list and restore in ready and recovery-required stores with decimal runtime data', () => {
+  const data = makeV3Budget();
+  const v4Snapshot = Schema.buildV4Snapshot(data, {
+    createdAt: '2026-08-30T12:00:00.000Z', localDate: '2026-08-30', reason: 'daily'
+  });
+  const snapshotKey = `${SNAPSHOT_PREFIX}v4-known`;
+  const current = makeV3Budget(); current.months['2026-01'].allocations.savings = 999;
+  const storage = new MemoryStorage({ [STORAGE_KEY]: JSON.stringify(current), [snapshotKey]: JSON.stringify(v4Snapshot) });
+  const store = createStore({ storage, now: () => new Date('2026-08-31T12:00:00Z'), uuid: () => 'protect-current' });
+  store.load();
+  assert.equal(store.listSnapshots()[0].data.months['2026-01'].allocations.savings, 400);
+  store.restoreSnapshot('v4-known');
+  assert.equal(store.getStatus().residentSchemaVersion, 4);
+  assert.equal(store.getData().months['2026-01'].allocations.savings, 400);
+  assert.equal(JSON.parse(storage.getItem(STORAGE_KEY)).months['2026-01'].allocations.savings, 40000);
+
+  const recoveryStorage = new MemoryStorage({ [STORAGE_KEY]: '{damaged', [snapshotKey]: JSON.stringify(v4Snapshot) });
+  const recovery = createStore({ storage: recoveryStorage });
+  assert.equal(recovery.load().state, 'recovery-required');
+  recovery.restoreSnapshot('v4-known');
+  assert.equal(recovery.getStatus().state, 'ready');
+  assert.equal(recovery.getStatus().residentSchemaVersion, 4);
+  assert.equal(recovery.getData().months['2026-01'].allocations.savings, 400);
+  assert.equal(JSON.parse(recoveryStorage.getItem(STORAGE_KEY)).schemaVersion, 4);
+});
+
+test('migration clock, UUID, snapshot verification, and serialization failures preserve active bytes and memory', () => {
+  const cases = [
+    { code: 'CLOCK_FAILED', adapters: { now: () => { throw new Error('clock'); }, uuid: () => 'unused' } },
+    { code: 'IDENTIFIER_GENERATION_FAILED', adapters: { now: () => new Date('2026-08-30T12:00:00Z'), uuid: () => { throw new Error('uuid'); } } },
+    { code: 'SNAPSHOT_READ_FAILED', adapters: { now: () => new Date('2026-08-30T12:00:00Z'), uuid: () => 'verify-fail' },
+      fault: storage => storage.fail({ op: 'getItem', prefix: SNAPSHOT_PREFIX, once: true }) }
+  ];
+  for (const item of cases) {
+    const raw = JSON.stringify(makeV3Budget()); const storage = new MemoryStorage({ [STORAGE_KEY]: raw });
+    const store = createStore({ storage, ...item.adapters }); store.load(); storage.operations.length = 0;
+    const beforeData = store.getData(); const beforeStatus = store.getStatus(); item.fault?.(storage);
+    expectCode(item.code, () => store.commitExactMoneyMigration(store.previewExactMoneyMigration()));
+    assert.equal(storage.getItem(STORAGE_KEY), raw, item.code);
+    assert.deepEqual(store.getData(), beforeData, item.code); assert.deepEqual(store.getStatus(), beforeStatus, item.code);
+    assert.equal(storage.operations.some(op => op.op === 'setItem' && op.key === STORAGE_KEY), false, item.code);
+  }
+
+  const raw = JSON.stringify(makeV3Budget()); const storage = new MemoryStorage({ [STORAGE_KEY]: raw });
+  const store = createStore({ storage, now: () => new Date('2026-08-30T12:00:00Z'), uuid: () => 'serialize-snapshot' });
+  store.load(); const beforeData = store.getData(); const beforeStatus = store.getStatus(); storage.operations.length = 0;
+  const originalStringify = JSON.stringify;
+  JSON.stringify = value => {
+    if (value && value.schemaVersion === 4) throw new TypeError('injected serialization failure');
+    return originalStringify(value);
+  };
+  try { assert.throws(() => store.commitExactMoneyMigration(store.previewExactMoneyMigration()), TypeError); }
+  finally { JSON.stringify = originalStringify; }
+  assert.equal(storage.getItem(STORAGE_KEY), raw);
+  assert.deepEqual(store.getData(), beforeData); assert.deepEqual(store.getStatus(), beforeStatus);
+  assert.equal(storage.operations.some(op => op.op === 'setItem' && op.key === STORAGE_KEY), false);
+});
+
+test('successful migration verifies its safety snapshot before exactly one active write', () => {
+  const storage = new MemoryStorage({ [STORAGE_KEY]: JSON.stringify(makeV3Budget()) });
+  const store = createStore({ storage, now: () => new Date('2026-08-30T12:00:00Z'), uuid: () => 'ordered-snapshot' });
+  store.load(); storage.operations.length = 0;
+  store.commitExactMoneyMigration(store.previewExactMoneyMigration());
+  const writes = storage.operations.filter(op => op.op === 'setItem');
+  const snapshotWrite = storage.operations.findIndex(op => op.op === 'setItem' && op.key.startsWith(SNAPSHOT_PREFIX));
+  const snapshotRead = storage.operations.findIndex(op => op.op === 'getItem' && op.key.startsWith(SNAPSHOT_PREFIX));
+  const activeWrites = writes.filter(op => op.key === STORAGE_KEY);
+  const activeWrite = storage.operations.findIndex(op => op.op === 'setItem' && op.key === STORAGE_KEY);
+  assert.equal(activeWrites.length, 1);
+  assert.ok(snapshotWrite >= 0 && snapshotRead > snapshotWrite && activeWrite > snapshotRead);
+});

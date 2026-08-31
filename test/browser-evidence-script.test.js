@@ -53,6 +53,21 @@ test('browser evidence exercises Data Health and reversible expense deletion beh
   assert.match(source, /scenario\.expenseDeleteEscape = true/);
 });
 
+test('browser evidence proves exact-money migration states and v4 recovery paths', () => {
+  for (const marker of ['exactMoneyEligiblePreviewCancelConfirm', 'exactMoneyV4BackupImportSnapshotRoundTrip',
+    'exactMoneyBlockedSubCentWriteFreeUsable']) assert.match(source, new RegExp(marker));
+  assert.match(source, /localStorage\.getItem\(primaryKey\) === eligibleV3Bytes/);
+  assert.match(source, /migratedPersisted\.schemaVersion === 4/);
+  assert.match(source, /Number\.isInteger\(migratedPersisted\.months\[month\]\.paychecks\[0\]\.plannedAmount\)/);
+  assert.match(source, /Store\.commitImport\(Store\.previewImport\(v4Backup\)\)/);
+  assert.match(source, /Store\.restoreSnapshot\(v4SnapshotKey\.slice/);
+  assert.match(source, /blocked\.state === 'blocked'/);
+  assert.match(source, /blocked\.actionAbsent/);
+  assert.match(source, /blocked\.byteExact/);
+  assert.match(source, /blocked\.plannedAmount === 321\.001/);
+  assert.match(source, /reload\.schemaVersion === 4/);
+});
+
 test('browser evidence dynamically covers Pay periods semantics, routes, safety, and reflow', () => {
   for (const marker of ['payPeriodsPassiveByteExact', 'payPeriodsCanonicalActualsFundingStates',
     'payPeriodsAllocationsReconcileHostileSafe', 'payPeriodsExactCanonicalCollapsedRoutes',

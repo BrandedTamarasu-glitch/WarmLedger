@@ -2,10 +2,13 @@
 const DataHealthView = {
   preview: null,
   datePreview: null,
+  exactMoneyPreview: null,
+  exactMoneyTrigger: null,
 
   init() {
     document.getElementById('actual-resolution-dialog').addEventListener('close', () => this.onActualDialogClose());
     document.getElementById('date-resolution-dialog').addEventListener('close', () => this.onDateDialogClose());
+    document.getElementById('exact-money-migration-dialog').addEventListener('close', () => this.onExactMoneyDialogClose());
     this.render();
   },
 
@@ -18,8 +21,11 @@ const DataHealthView = {
 
   render() {
     const container = document.getElementById('data-health-content'); container.replaceChildren();
-    let health; let moneyAudit;
-    try { health = Store.getDataHealth(); moneyAudit = Store.getExactMoneyAudit(); }
+    let health; let moneyAudit; let migration;
+    try {
+      health = Store.getDataHealth(); moneyAudit = Store.getExactMoneyAudit();
+      migration = ZeroBudgetDataHealth.buildExactMoneyMigration(Store.getExactMoneyMigrationSummary());
+    }
     catch (error) { App.showError(error); return; }
 
     const primaryCount = health.counts.missingActuals + health.counts.missingDates + health.counts.fundingMismatches;
@@ -38,6 +44,7 @@ const DataHealthView = {
       overview.append(counts);
     }
     container.append(overview);
+    container.append(this.exactMoneyMigrationSection(migration));
     container.append(this.moneyPrecisionDisclosure(moneyAudit));
 
     if (health.missingActuals.length) container.append(this.actualsSection(health.missingActuals));
@@ -47,6 +54,50 @@ const DataHealthView = {
   },
 
   totalIssues(health) { return Object.values(health.counts).reduce((sum, count) => sum + count, 0); },
+
+  exactMoneyMigrationSection(migration) {
+    const section = this.node('section', `budget-section data-health-section exact-money-migration state-${migration.state}`);
+    section.setAttribute('aria-labelledby', 'exact-money-migration-heading');
+    const heading = this.node('h3', '', migration.title); heading.id = 'exact-money-migration-heading'; heading.tabIndex = -1;
+    section.append(heading, this.node('p', '', migration.description));
+    if (migration.state === 'eligible') {
+      section.append(this.node('p', 'muted-text',
+        'Download a JSON backup first. When you confirm, Warm Ledger also creates a local safety snapshot before changing storage.'));
+      const actions = this.node('div', 'exact-money-actions');
+      const backup = this.node('button', 'btn', 'Download JSON backup'); backup.type = 'button';
+      backup.addEventListener('click', () => App.downloadBackup());
+      const review = this.node('button', 'btn btn-primary', 'Review exact-money migration'); review.type = 'button';
+      review.id = 'review-exact-money-migration';
+      review.addEventListener('click', () => this.previewExactMoneyMigration(review));
+      actions.append(backup, review); section.append(actions);
+    }
+    return section;
+  },
+
+  previewExactMoneyMigration(trigger) {
+    try {
+      this.exactMoneyPreview = Store.previewExactMoneyMigration(); this.exactMoneyTrigger = trigger;
+      const dialog = document.getElementById('exact-money-migration-dialog'); dialog.returnValue = ''; dialog.showModal();
+      document.getElementById('exact-money-migration-cancel').focus({ preventScroll: true });
+    } catch (error) { this.exactMoneyPreview = null; this.exactMoneyTrigger = null; App.showError(error); }
+  },
+
+  onExactMoneyDialogClose() {
+    const dialog = document.getElementById('exact-money-migration-dialog');
+    const preview = this.exactMoneyPreview; const trigger = this.exactMoneyTrigger;
+    this.exactMoneyPreview = null; this.exactMoneyTrigger = null;
+    if (dialog.returnValue !== 'confirm' || !preview) {
+      trigger?.focus({ preventScroll: true }); return;
+    }
+    App.runMutation(() => Store.commitExactMoneyMigration(preview), {
+      onSuccess: () => {
+        App.refreshAllViews(); App.switchView('data-health');
+        App.announceStatus('Exact-money storage is active. Ledger values were unchanged.');
+        requestAnimationFrame(() => document.getElementById('exact-money-migration-heading').focus({ preventScroll: true }));
+      },
+      onFailure: () => { this.render(); }
+    });
+  },
 
   moneyPrecisionDisclosure(audit) {
     const flagged = audit.subCentValueCount > 0;

@@ -44,12 +44,14 @@ Deferred: automatic suggestion creation, select-all, persisted selections or tar
 
 ## Phase 4 — Exact-money foundation
 
-Status: Phase 4A read-only precision audit published; storage migration remains deferred.
+Status: Phase 4B explicit exact-money migration published.
 
 - Audit only the approved stored money families and report aggregate exact-cent and sub-cent counts without exposing ledger details.
 - Keep compatible schema-version-3 ledgers valid and editable; the audit never rounds, repairs, rejects, or writes data.
-- Establish integer cents or an equivalent exact two-decimal persistence contract in a separately reviewed phase.
-- Defer conversion until an atomic migration, rollback, before/after aggregate equality, and allocations/templates/imports/backups/charts/formatting coverage are explicitly authorized.
+- Persist migrated ledgers as schema-version-4 integer cents while keeping runtime and interface values decimal-facing.
+- Require an eligible, generation-bound preview, verified safety snapshot, and one active-data write; failures leave active bytes and live state unchanged.
+- Keep ordinary schema-version-3 edits on version 3, preserve `null` separately from entered zero, and block rather than round sub-cent ledgers.
+- Keep backup and snapshot envelope format version 1 compatible with both schema versions 3 and 4.
 
 ## Phase 5 — Reconciliation and month close
 

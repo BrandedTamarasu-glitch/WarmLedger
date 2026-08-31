@@ -1367,6 +1367,11 @@ label:has(> #field-template-enabled) { display: flex; align-items: center; min-h
 }
 .money-precision-content { min-width: 0; display: grid; gap: 10px; padding: 0 14px 14px; }
 .money-precision-content p { min-width: 0; line-height: 1.55; overflow-wrap: anywhere; }
+.exact-money-migration { border-inline-start: 4px solid var(--color-accent); }
+.exact-money-migration h3 { overflow-wrap: anywhere; }
+.exact-money-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+.exact-money-actions .btn { min-height: 44px; }
+.exact-money-migration-dialog { width: min(92vw, 600px); }
 .template-shortcut { display: flex; align-items: center; gap: 8px; margin-top: 4px; font-weight: 700; }
 .data-health-overview > p, .data-health-section > p { margin-top: 6px; line-height: 1.55; }
 .health-counts, .health-issue-list { list-style: none; margin-top: 16px; }
@@ -1438,6 +1443,8 @@ label:has(> #field-template-enabled) { display: flex; align-items: center; min-h
   .recovery-actions { flex-direction: column; }
   .recovery-actions .btn { min-height: 44px; }
   .dialog-actions .btn { min-height: 44px; }
+  .exact-money-actions { align-items: stretch; flex-direction: column; }
+  .exact-money-actions .btn { width: 100%; }
   .modal-footer .btn { min-height: 44px; }
   .restore-preview { grid-template-columns: 1fr; gap: 4px; }
   .restore-preview dd { margin-bottom: 10px; }
@@ -1691,7 +1698,8 @@ label:has(> #field-template-enabled) { display: flex; align-items: center; min-h
   .dashboard-forecast-controls .btn.is-selected { color: HighlightText; background: Highlight; border-color: Highlight; }
   .dashboard-data-table caption, .dashboard-data-table th, .dashboard-data-table tbody th { color: CanvasText; }
   .data-health-overview, .data-health-section, .health-counts li, .actual-resolution-row,
-  .backup-comparison, .undo-notice, .money-precision-audit, .money-precision-content {
+  .backup-comparison, .undo-notice, .money-precision-audit, .money-precision-content,
+  .exact-money-migration, .exact-money-actions, .exact-money-migration-dialog {
     color: CanvasText; background: Canvas; border-color: CanvasText; box-shadow: none;
   }
   .money-precision-audit > summary, .money-precision-content p { color: CanvasText; }

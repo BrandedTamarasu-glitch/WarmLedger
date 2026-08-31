@@ -24,7 +24,7 @@ test('exact-money helper loads before Store and Data Health uses aggregate audit
 });
 
 test('precision audit is a closed native disclosure with exact passive copy and no action or live region', () => {
-  const method = view.slice(view.indexOf('moneyPrecisionDisclosure'), view.indexOf('record(reference)'));
+  const method = view.slice(view.indexOf('moneyPrecisionDisclosure(audit)'), view.indexOf('record(reference)'));
   assert.match(method, /this\.node\('details', 'money-precision-audit'\)/);
   assert.doesNotMatch(method, /\.open\s*=|setAttribute\(['"]open|button|role|aria-live|addEventListener/);
   assert.match(method, /Money precision needs review/);
@@ -41,12 +41,24 @@ test('precision disclosure is responsive and retained in forced colors', () => {
   assert.match(css, /@media \(forced-colors:\s*active\)[\s\S]*\.money-precision-audit[\s\S]*\.money-precision-content p/s);
 });
 
-test('documentation preserves the aggregate-only audit and migration boundary', () => {
-  for (const phrase of ['read-only, aggregate-only audit', 'never displays amounts, record labels, identifiers, month keys',
-    'does not round, reject, migrate, or change the ledger', 'separately reviewed conversion and rollback workflow']) {
+test('Data Health presents all explicit migration states without record-level details', () => {
+  const health = require('../js/data-health.js');
+  assert.equal(health.buildExactMoneyMigration({ state: 'eligible' }).canPreview, true);
+  assert.equal(health.buildExactMoneyMigration({ state: 'already-migrated' }).canPreview, false);
+  const blocked = health.buildExactMoneyMigration({ state: 'blocked', subCentValueCount: 2,
+    affectedMonthCount: 1, affectedTemplateCount: 1 });
+  assert.equal(blocked.canPreview, false);
+  assert.match(blocked.description, /2 stored money values/);
+  assert.doesNotMatch(blocked.description, /fix|repair|round|correct/i);
+  assert.throws(() => health.buildExactMoneyMigration({ state: 'unknown' }), TypeError);
+});
+
+test('documentation preserves the aggregate-only audit and explicit migration boundary', () => {
+  for (const phrase of ['read-only, aggregate-only audit', 'never displays amounts, record labels, identifiers, or month keys',
+    'does not round, repair, or change ledger values', 'must create and verify a local safety snapshot']) {
     assert.match(readme, new RegExp(phrase));
   }
-  assert.match(roadmap, /Phase 4A read-only precision audit published/);
-  assert.match(roadmap, /storage migration remains deferred/);
+  assert.match(roadmap, /Phase 4B explicit exact-money migration published/);
+  assert.match(roadmap, /schema-version-4 integer cents/);
   assert.match(roadmap, /audit never rounds, repairs, rejects, or writes data/);
 });

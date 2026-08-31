@@ -251,6 +251,76 @@ test('rejects malformed snapshot metadata and future versions', () => {
   expectCode('UNSUPPORTED_SNAPSHOT_VERSION', () => Schema.parseSnapshot(JSON.stringify(envelope)));
 });
 
+test('schema v4 persists every money family as integer cents and hydrates losslessly', () => {
+  const v3 = makeV3WithTemplates();
+  const monthKey = Object.keys(v3.months)[0];
+  const month = v3.months[monthKey];
+  v3.templates.income[0].plannedAmount = 2400.29;
+  v3.templates.expenses[0].plannedAmount = 975.01;
+  month.paychecks[0].plannedAmount = 2000.02;
+  month.paychecks[0].actualAmount = null;
+  month.expenses[0].plannedAmount = 1200.03;
+  month.expenses[0].actualAmount = 0;
+  month.expenses[0].paycheckAmounts[month.paychecks[0].id] = 1199.99;
+  month.allocations = { savings: 100.01, credit_card_debt: 0, investments: 50.5 };
+
+  const persisted = Schema.migrateV3ToV4ExactMoney(v3);
+  assert.equal(persisted.schemaVersion, 4);
+  assert.equal(persisted.templates.income[0].plannedAmount, 240029);
+  assert.equal(persisted.templates.expenses[0].plannedAmount, 97501);
+  assert.equal(persisted.months[monthKey].paychecks[0].plannedAmount, 200002);
+  assert.equal(persisted.months[monthKey].paychecks[0].actualAmount, null);
+  assert.equal(persisted.months[monthKey].expenses[0].plannedAmount, 120003);
+  assert.equal(persisted.months[monthKey].expenses[0].actualAmount, 0);
+  assert.equal(persisted.months[monthKey].expenses[0].paycheckAmounts[month.paychecks[0].id], 119999);
+  assert.deepEqual(persisted.months[monthKey].allocations,
+    { savings: 10001, credit_card_debt: 0, investments: 5050 });
+  assert.equal(Schema.validateV4(persisted), true);
+  assert.deepEqual(Schema.hydrateV4ExactMoney(persisted), v3);
+});
+
+test('schema v4 conversion rejects sub-cent values without rounding or mutating input', () => {
+  const v3 = makeV3WithTemplates();
+  v3.months[Object.keys(v3.months)[0]].expenses[0].actualAmount = 12.345;
+  const before = JSON.stringify(v3);
+  expectCode('SUB_CENT_AMOUNT', () => Schema.dehydrateV4ExactMoney(v3));
+  assert.equal(JSON.stringify(v3), before);
+  assert.equal(Schema.decimalMoneyToCents(0.29), 29);
+  assert.equal(Schema.centsToDecimalMoney(29), 0.29);
+});
+
+test('schema v4 rejects malformed, negative, unsafe, and out-of-range cents', () => {
+  const persisted = Schema.dehydrateV4ExactMoney(makeV3WithTemplates());
+  const expense = persisted.months[Object.keys(persisted.months)[0]].expenses[0];
+  expense.plannedAmount = 1.5;
+  expectCode('INVALID_CENTS', () => Schema.validateV4(persisted));
+  expense.plannedAmount = -1;
+  expectCode('CENTS_OUT_OF_RANGE', () => Schema.validateV4(persisted));
+  expense.plannedAmount = Number.MAX_SAFE_INTEGER;
+  expectCode('CENTS_OUT_OF_RANGE', () => Schema.validateV4(persisted));
+  expense.plannedAmount = Number.MAX_SAFE_INTEGER + 1;
+  expectCode('INVALID_CENTS', () => Schema.validateV4(persisted));
+});
+
+test('schema v4 active, backup, and snapshot codecs preserve envelope version 1', () => {
+  const v3 = makeV3WithTemplates();
+  const persisted = Schema.buildActiveData(v3, Schema.V4_SCHEMA_VERSION);
+  assert.equal(persisted.schemaVersion, 4);
+  assert.deepEqual(Schema.parseActiveData(JSON.stringify(persisted)), v3);
+
+  const backup = Schema.buildV4Backup(v3, '2026-01-15T12:00:00.000Z');
+  assert.equal(backup.formatVersion, 1);
+  assert.equal(backup.data.schemaVersion, 4);
+  assert.deepEqual(Schema.parseV4Backup(JSON.stringify(backup)).data, v3);
+
+  const snapshot = Schema.buildV4Snapshot(v3, {
+    createdAt: '2026-01-15T12:00:00.000Z', localDate: '2026-01-15', reason: 'pre-import'
+  });
+  assert.equal(snapshot.formatVersion, 1);
+  assert.equal(snapshot.data.schemaVersion, 4);
+  assert.deepEqual(Schema.parseV4Snapshot(JSON.stringify(snapshot)).data, v3);
+});
+
 test('legacy migration rejects missing months and backfills missing month collections', () => {
   expectCode('MISSING_FIELD', () => Schema.migrateActive({ categories: [], settings: { earners: [] } }));
   const legacy = {
@@ -448,9 +518,12 @@ test('classic-script and CommonJS expose the exact same public API and behavior'
   const browserApi = context.ZeroBudgetSchema;
   const expectedKeys = [
     'ACTIVE_SCHEMA_POLICY', 'BACKUP_FORMAT', 'BACKUP_FORMAT_VERSION', 'DataError', 'SCHEMA_VERSION', 'SNAPSHOT_FORMAT',
-    'SNAPSHOT_FORMAT_VERSION', 'V2_SCHEMA_VERSION', 'V3_SCHEMA_POLICY', 'V3_SCHEMA_VERSION', 'buildBackup', 'buildSnapshot', 'clone', 'migrateActive',
-    'migrateToV2', 'migrateToV3', 'parseActive', 'parseBackup', 'parseSnapshot', 'validateActive', 'validateV2', 'validateV3'
-  ];
+    'SNAPSHOT_FORMAT_VERSION', 'V2_SCHEMA_VERSION', 'V3_SCHEMA_POLICY', 'V3_SCHEMA_VERSION', 'V4_SCHEMA_POLICY', 'V4_SCHEMA_VERSION',
+    'buildActiveData', 'buildBackup', 'buildSnapshot', 'buildV4Backup', 'buildV4Snapshot', 'centsToDecimalMoney', 'clone',
+    'decimalMoneyToCents', 'dehydrateV4ExactMoney', 'hydrateV4ExactMoney', 'migrateActive', 'migrateToV2', 'migrateToV3',
+    'migrateV3ToV4ExactMoney', 'parseActive', 'parseActiveData', 'parseBackup', 'parseSnapshot', 'parseV4Active', 'parseV4Backup',
+    'parseV4Snapshot', 'validateActive', 'validateV2', 'validateV3', 'validateV4'
+  ].sort();
   assert.deepEqual(Object.keys(Schema).sort(), expectedKeys);
   assert.deepEqual(Array.from(Object.keys(browserApi).sort()), expectedKeys);
   const text = JSON.stringify(makeBudget());

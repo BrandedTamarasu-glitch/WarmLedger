@@ -302,6 +302,48 @@ const SCENARIO = `(async () => {
   assert(localStorage.getItem(primaryKey) === healthBefore, 'Passive Data Health render changed bytes.');
   assert(document.getElementById('data-health-content').textContent.includes('Hostile ledger label'), 'Hostile label was not rendered as text.');
   assert(!document.querySelector('#data-health-content img'), 'Hostile Data Health label created markup.');
+  const eligibleV3Bytes = localStorage.getItem(primaryKey);
+  const blockedLedger = JSON.parse(eligibleV3Bytes);
+  blockedLedger.months[month].paychecks[0].plannedAmount = 321.001;
+  const blockedV3Bytes = JSON.stringify(blockedLedger);
+  const migrationTrigger = document.getElementById('review-exact-money-migration');
+  assert(Store.getExactMoneyMigrationSummary().state === 'eligible' && migrationTrigger,
+    'Cent-exact v3 ledger did not expose the migration action.');
+  migrationTrigger.click(); await settle();
+  const migrationDialog = document.getElementById('exact-money-migration-dialog');
+  assert(migrationDialog.open && document.activeElement.id === 'exact-money-migration-cancel',
+    'Exact-money preview did not open on Cancel.');
+  assert(localStorage.getItem(primaryKey) === eligibleV3Bytes, 'Exact-money preview changed v3 bytes.');
+  document.getElementById('exact-money-migration-cancel').click(); await settle();
+  assert(localStorage.getItem(primaryKey) === eligibleV3Bytes && document.activeElement === migrationTrigger,
+    'Exact-money Cancel did not preserve byte-exact v3 storage and restore focus.');
+  migrationTrigger.click(); await settle(); document.getElementById('exact-money-migration-confirm').click(); await settle();
+  const migratedBytes = localStorage.getItem(primaryKey); const migratedPersisted = JSON.parse(migratedBytes);
+  assert(migratedPersisted.schemaVersion === 4 && Number.isInteger(migratedPersisted.months[month].paychecks[0].plannedAmount) &&
+    migratedPersisted.months[month].paychecks[0].plannedAmount === 32100,
+  'Confirmed exact-money migration did not persist integer cents.');
+  assert(Store.getExactMoneyMigrationSummary().state === 'already-migrated' &&
+    !document.getElementById('review-exact-money-migration'), 'Migrated ledger did not render the already-active state.');
+
+  const v4Backup = Store.exportData(); const v4Envelope = JSON.parse(v4Backup);
+  assert(v4Envelope.data.schemaVersion === 4 && Number.isInteger(v4Envelope.data.months[month].paychecks[0].plannedAmount),
+    'v4 backup did not preserve integer-cent persistence.');
+  const v4RoundTrip = Store.addPaycheck(month, { earnerId, plannedAmount: 19.99, actualAmount: null, date: '' });
+  const snapshotKeysBeforeV4Import = new Set(Object.keys(localStorage).filter(key => key.startsWith('zeroBudget_snapshot:')));
+  Store.commitImport(Store.previewImport(v4Backup));
+  assert(!Store.getMonth(month).paychecks.some(item => item.id === v4RoundTrip.id) &&
+    JSON.parse(localStorage.getItem(primaryKey)).schemaVersion === 4, 'v4 backup import did not restore its exact ledger.');
+  const v4SnapshotKey = Object.keys(localStorage).find(key => key.startsWith('zeroBudget_snapshot:') &&
+    !snapshotKeysBeforeV4Import.has(key));
+  const v4SnapshotEnvelope = v4SnapshotKey ? JSON.parse(localStorage.getItem(v4SnapshotKey)) : null;
+  assert(v4SnapshotEnvelope?.data.schemaVersion === 4 &&
+    v4SnapshotEnvelope.data.months[month].paychecks.some(record => record.id === v4RoundTrip.id),
+  'v4 backup replacement did not create a restorable integer-cent v4 safety snapshot.');
+  Store.restoreSnapshot(v4SnapshotKey.slice('zeroBudget_snapshot:'.length));
+  assert(Store.getMonth(month).paychecks.some(item => item.id === v4RoundTrip.id) &&
+    JSON.parse(localStorage.getItem(primaryKey)).schemaVersion === 4, 'v4 snapshot did not round-trip through active storage.');
+  Store.commitImport(Store.previewImport(v4Backup)); DataHealthView.render(); await settle();
+  const resolutionBefore = localStorage.getItem(primaryKey);
   const healthCheck = [...document.querySelectorAll('.actual-resolution-row input[type="checkbox"]')]
     .find(input => input.dataset.recordId === hostile.id);
   assert(healthCheck && !healthCheck.checked, 'Missing-actual choice was not default-unselected.');
@@ -309,10 +351,10 @@ const SCENARIO = `(async () => {
   amount.value = '0'; const resolutionForm = healthCheck.closest('form'); resolutionForm.requestSubmit(); await settle();
   const resolutionDialog = document.getElementById('actual-resolution-dialog');
   assert(resolutionDialog.open && document.activeElement.id === 'actual-resolution-cancel', 'Actual preview did not focus Cancel.');
-  assert(localStorage.getItem(primaryKey) === healthBefore, 'Actual preview changed bytes.');
+  assert(localStorage.getItem(primaryKey) === resolutionBefore, 'Actual preview changed bytes.');
   document.getElementById('actual-resolution-cancel').click(); await settle();
   assert(Store.getMonth(month).expenses.find(item => item.id === hostile.id).actualAmount === null, 'Actual preview Cancel applied a value.');
-  assert(localStorage.getItem(primaryKey) === healthBefore, 'Actual preview Cancel changed bytes.');
+  assert(localStorage.getItem(primaryKey) === resolutionBefore, 'Actual preview Cancel changed bytes.');
   resolutionForm.requestSubmit(); await settle(); document.getElementById('actual-resolution-confirm').click(); await settle();
   assert(Store.getMonth(month).expenses.find(item => item.id === hostile.id).actualAmount === 0, 'Selected actual zero was not applied.');
 
@@ -402,7 +444,8 @@ const SCENARIO = `(async () => {
     payPeriodsAllocationsReconcileHostileSafe: true, payPeriodsExactCanonicalCollapsedRoutes: true,
     payPeriodsFourDigitFunding: true, payPeriodsStaleAndZeroPaycheckRoutes: true,
     previewCancelApply: true, backupRoundTrip: true, dashboardBasisCsvPrintPassive: true,
-    dashboardSavedMonthForecastPassive: true,
+    dashboardSavedMonthForecastPassive: true, exactMoneyEligiblePreviewCancelConfirm: true,
+    exactMoneyV4BackupImportSnapshotRoundTrip: true, blockedV3Bytes,
     generatedIncome: Store.getMonth(month).paychecks.length,
     generatedExpenses: Store.getMonth(month).expenses.length };
 })()`;
@@ -571,16 +614,34 @@ async function run(options) {
       `Forced-colors Data Health evidence failed: ${JSON.stringify(forcedColors)}`);
     await cdp.send('Emulation.setEmulatedMedia', { features: [{ name: 'forced-colors', value: 'none' }] });
     await cdp.send('Page.reload', { ignoreCache: true }); await new Promise(resolve => setTimeout(resolve, 700));
-    const reload = await evaluate(cdp, `({ schemaVersion: Store.getData().schemaVersion,
+    const reload = await evaluate(cdp, `({ schemaVersion: Store.getStatus().residentSchemaVersion,
       additions: Store.previewRecurringMonth(BudgetView.currentMonth).counts.additions })`);
-    assertEvidence(reload.schemaVersion === 3 && reload.additions === 0, 'Reload did not preserve canonical/idempotent state.');
+    assertEvidence(reload.schemaVersion === 4 && reload.additions === 0, 'Reload did not preserve v4 canonical/idempotent state.');
+    await evaluate(cdp, `localStorage.setItem(ZeroBudgetStore.STORAGE_KEY, ${JSON.stringify(scenario.blockedV3Bytes)})`);
+    await cdp.send('Page.reload', { ignoreCache: true }); await new Promise(resolve => setTimeout(resolve, 700));
+    const blocked = await evaluate(cdp, `(() => {
+      App.switchView('data-health'); const before = localStorage.getItem(ZeroBudgetStore.STORAGE_KEY); DataHealthView.render();
+      const section = document.querySelector('.exact-money-migration');
+      const result = { state: Store.getExactMoneyMigrationSummary().state,
+        residentSchemaVersion: Store.getStatus().residentSchemaVersion,
+        actionAbsent: !document.getElementById('review-exact-money-migration'),
+        usable: document.getElementById('application-shell').hidden === false && section?.textContent.includes('remains usable'),
+        byteExact: localStorage.getItem(ZeroBudgetStore.STORAGE_KEY) === before,
+        plannedAmount: Store.getMonth(${JSON.stringify(scenario.month)}).paychecks[0].plannedAmount };
+      Store.getDataHealth(); result.byteExact = result.byteExact && localStorage.getItem(ZeroBudgetStore.STORAGE_KEY) === before; return result;
+    })()`);
+    assertEvidence(blocked.state === 'blocked' && blocked.residentSchemaVersion === 3 && blocked.actionAbsent &&
+      blocked.usable && blocked.byteExact && blocked.plannedAmount === 321.001,
+      `Blocked sub-cent v3 evidence failed: ${JSON.stringify(blocked)}`);
+    scenario.exactMoneyBlockedSubCentWriteFreeUsable = true;
+    delete scenario.blockedV3Bytes;
     const errors = cdp.events.filter(event => event.method === 'Runtime.exceptionThrown' ||
       (event.method === 'Runtime.consoleAPICalled' && event.params.type === 'error'));
     assertEvidence(errors.length === 0, 'Console or page exceptions were captured.');
     evidence = { passed: true, browser, disposableProfile: true, scenario, escapeDelete,
       monthlyReviewNarrow, monthlyPaymentGuidance, monthlyReviewForcedColors, payPeriodNarrow, payPeriodForcedColors,
       payPeriodReflow200Percent: { ...payPeriodReflow200Percent, method: '1280px viewport halved to 640 CSS pixels' }, narrow, forcedColors,
-      reflow200Percent: { ...reflow200Percent, method: '1280px viewport halved to 640 CSS pixels' }, reload, errors: [] };
+      reflow200Percent: { ...reflow200Percent, method: '1280px viewport halved to 640 CSS pixels' }, reload, blocked, errors: [] };
   } finally {
     cdp?.close();
     await stopBrowser(child);

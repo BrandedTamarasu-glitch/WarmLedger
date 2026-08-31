@@ -21,7 +21,7 @@ test('Data Health scripts and sixth view load in dependency order', () => {
 });
 
 test('health workflows use frozen Store APIs without unsafe persisted-content sinks', () => {
-  for (const api of ['getDataHealth', 'previewActualResolutions', 'applyActualResolutions', 'previewDefaultDateResolutions', 'applyDefaultDateResolutions', 'compareAdditiveBackup']) {
+  for (const api of ['getDataHealth', 'getExactMoneyMigrationSummary', 'previewExactMoneyMigration', 'commitExactMoneyMigration', 'previewActualResolutions', 'applyActualResolutions', 'previewDefaultDateResolutions', 'applyDefaultDateResolutions', 'compareAdditiveBackup']) {
     assert.match(view, new RegExp(`Store\\.${api}\\(`));
   }
   assert.doesNotMatch(view, /\.innerHTML\s*=|insertAdjacentHTML\s*\(/);
@@ -36,6 +36,19 @@ test('health workflows use frozen Store APIs without unsafe persisted-content si
   assert.match(view, /openPatternTemplate\(pattern, trigger\)/);
   assert.match(view, /Store\.getDataHealth\(\)\.repeatedManualPatterns\.find/);
   assert.match(view, /TemplatesView\.showTemplateModal/);
+});
+
+test('exact-money migration is preview-first, Cancel-first, and offers a durable backup', () => {
+  const cancel = html.indexOf('id="exact-money-migration-cancel"');
+  const confirm = html.indexOf('id="exact-money-migration-confirm"');
+  assert.ok(cancel >= 0 && cancel < confirm);
+  assert.match(html, /exact-money-migration-dialog[^>]*aria-labelledby="exact-money-migration-title"[^>]*aria-describedby="exact-money-migration-description"/);
+  assert.match(view, /App\.downloadBackup\(\)/);
+  assert.match(view, /Store\.previewExactMoneyMigration\(\)/);
+  assert.match(view, /Store\.commitExactMoneyMigration\(preview\)/);
+  assert.match(view, /dialog\.returnValue\s*!==\s*'confirm'/);
+  assert.match(css, /\.exact-money-actions \.btn\s*\{[^}]*min-height:\s*44px/s);
+  assert.match(css, /@media \(forced-colors:\s*active\)[\s\S]*\.exact-money-migration/s);
 });
 
 test('expense deletion is Cancel-first and offers receipt-based session Undo', () => {

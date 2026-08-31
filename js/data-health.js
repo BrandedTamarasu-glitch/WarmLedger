@@ -184,5 +184,27 @@
         repeatedManualPatterns: repeatedManualPatterns.length } });
   }
 
-  return Object.freeze({ analyze, buildTemplateReadiness });
+  function buildExactMoneyMigration(summary) {
+    if (!summary || typeof summary !== 'object' || Array.isArray(summary) ||
+        !['eligible', 'blocked', 'already-migrated'].includes(summary.state)) {
+      throw new TypeError('Invalid exact-money migration summary');
+    }
+    if (summary.state === 'eligible') return result({
+      state: 'eligible', title: 'Exact-money storage is ready',
+      description: 'This ledger uses whole-cent precision and can move to integer-cent storage without changing its values.',
+      canPreview: true
+    });
+    if (summary.state === 'blocked') return result({
+      state: 'blocked', title: 'Exact-money storage is unavailable for this ledger',
+      description: `${summary.subCentValueCount} stored money values include digits smaller than one cent across ${summary.affectedMonthCount} months and ${summary.affectedTemplateCount} templates. They remain unchanged and the ledger remains usable.`,
+      canPreview: false
+    });
+    return result({
+      state: 'already-migrated', title: 'Exact-money storage is active',
+      description: 'This ledger already stores money as integer cents. No migration action is needed.',
+      canPreview: false
+    });
+  }
+
+  return Object.freeze({ analyze, buildTemplateReadiness, buildExactMoneyMigration });
 });

@@ -120,7 +120,7 @@
   function normalizeMonthlyDate(monthKey, date) { return date === '' ? firstDayOfMonth(monthKey) : date; }
 
   function createStore({ storage, now = () => new Date(), uuid = () => crypto.randomUUID(), schemaPolicy = Schema.ACTIVE_SCHEMA_POLICY } = {}) {
-    if (schemaPolicy !== Schema.ACTIVE_SCHEMA_POLICY && schemaPolicy !== Schema.V3_SCHEMA_POLICY) {
+    if (schemaPolicy !== Schema.ACTIVE_SCHEMA_POLICY && schemaPolicy !== Schema.V3_SCHEMA_POLICY && schemaPolicy !== Schema.V4_SCHEMA_POLICY) {
       throw new StoreError('INVALID_SCHEMA_POLICY');
     }
     if (!storage || typeof storage.getItem !== 'function' || typeof storage.setItem !== 'function') {
@@ -132,6 +132,7 @@
     const deleteReceipts = new WeakMap();
     const actualResolutionCapabilities = new WeakMap();
     const defaultDateResolutionCapabilities = new WeakMap();
+    const exactMoneyMigrationCapabilities = new WeakMap();
 
     let data = null;
     let committedRaw = null;
@@ -140,6 +141,22 @@
     let generation = 0;
     let snapshotSequence = 0;
     let warnings = [];
+    let residentSchemaVersion = Schema.V3_SCHEMA_VERSION;
+
+    function policyForVersion(version) {
+      if (schemaPolicy !== Schema.ACTIVE_SCHEMA_POLICY) return schemaPolicy;
+      return version === Schema.V4_SCHEMA_VERSION ? Schema.V4_SCHEMA_POLICY : Schema.V3_SCHEMA_POLICY;
+    }
+
+    function versionFromJson(text, fallback = Schema.V3_SCHEMA_VERSION) {
+      try {
+        const parsed = JSON.parse(text);
+        const embedded = parsed && parsed.data ? parsed.data.schemaVersion : parsed && parsed.schemaVersion;
+        return embedded === Schema.V4_SCHEMA_VERSION ? Schema.V4_SCHEMA_VERSION : fallback;
+      } catch { return fallback; }
+    }
+
+    function canonicalizeForWrite(version, runtimeData) { return Schema.buildActiveData(runtimeData, version); }
 
     function warn(code) {
       if (!warnings.includes(code)) warnings.push(code);
@@ -210,11 +227,12 @@
         try {
           const raw = read(key, 'SNAPSHOT_READ_FAILED');
           if (raw === null) continue;
-          const envelope = schemaPolicy.parseSnapshot(raw);
+          const version = versionFromJson(raw);
+          const envelope = policyForVersion(version).parseSnapshot(raw);
           records.push({
             id: key.slice(SNAPSHOT_PREFIX.length), key,
             createdAt: envelope.createdAt, localDate: envelope.localDate,
-            reason: envelope.reason, data: envelope.data
+            reason: envelope.reason, data: envelope.data, residentSchemaVersion: version
           });
         } catch (error) {
           if (error instanceof StoreError) {
@@ -234,7 +252,7 @@
       const instant = instantNow();
       let envelope;
       try {
-        envelope = schemaPolicy.buildSnapshot(priorData, {
+        envelope = policyForVersion(residentSchemaVersion).buildSnapshot(priorData, {
           createdAt: instant.toISOString(), localDate: localDate(instant), reason
         });
       } catch (error) {
@@ -244,7 +262,7 @@
       const key = SNAPSHOT_PREFIX + safeSnapshotId();
       try {
         write(key, JSON.stringify(envelope), 'SNAPSHOT_WRITE_FAILED');
-        schemaPolicy.parseSnapshot(read(key, 'SNAPSHOT_READ_FAILED'));
+        policyForVersion(residentSchemaVersion).parseSnapshot(read(key, 'SNAPSHOT_READ_FAILED'));
       } catch (error) {
         try { remove(key, 'SNAPSHOT_CLEANUP_FAILED'); } catch { warn('SNAPSHOT_CLEANUP_FAILED'); }
         if (required) throw error;
@@ -271,12 +289,15 @@
       }
     }
 
-    function commitCandidate(candidate, { snapshotReason = null, requiredSnapshot = false, daily = true, prune = true } = {}) {
+    function commitCandidate(candidate, { snapshotReason = null, requiredSnapshot = false, daily = true, prune = true,
+      targetSchemaVersion = residentSchemaVersion } = {}) {
       requireReady();
-      const canonical = schemaPolicy.migrateActive(candidate);
-      const nextRaw = JSON.stringify(canonical);
+      const persisted = canonicalizeForWrite(targetSchemaVersion, candidate);
+      const canonical = targetSchemaVersion === Schema.V4_SCHEMA_VERSION
+        ? Schema.hydrateV4ExactMoney(persisted) : policyForVersion(targetSchemaVersion).migrateActive(candidate);
+      const nextRaw = JSON.stringify(persisted);
       const priorData = schemaPolicy.clone(data);
-      if (nextRaw === JSON.stringify(data)) return schemaPolicy.clone(data);
+      if (nextRaw === committedRaw) return schemaPolicy.clone(data);
       if (snapshotReason && committedRaw !== null) {
         createSnapshot(priorData, snapshotReason, { required: requiredSnapshot });
       } else if (daily) {
@@ -284,6 +305,7 @@
       }
       write(STORAGE_KEY, nextRaw, 'PRIMARY_WRITE_FAILED');
       data = canonical;
+      residentSchemaVersion = targetSchemaVersion;
       committedRaw = nextRaw;
       loadState = 'ready';
       corruptEvidence = null;
@@ -317,14 +339,18 @@
       }
       if (raw === null) {
         data = defaultData(); committedRaw = null; corruptEvidence = null;
+        residentSchemaVersion = Schema.V3_SCHEMA_VERSION;
         loadState = 'empty'; generation += 1;
         return { state: loadState, warnings: [], migrated: false };
       }
       try {
-        const parsed = schemaPolicy.parseActive(raw);
+        residentSchemaVersion = versionFromJson(raw);
+        const parsed = policyForVersion(residentSchemaVersion).parseActive(raw);
         data = parsed; committedRaw = raw; corruptEvidence = null;
         loadState = 'ready'; generation += 1;
-        return { state: loadState, warnings: [], migrated: raw !== JSON.stringify(parsed) };
+        const sourceSchemaVersion = JSON.parse(raw).schemaVersion;
+        return { state: loadState, warnings: [],
+          migrated: !Number.isInteger(sourceSchemaVersion) || sourceSchemaVersion < Schema.V3_SCHEMA_VERSION };
       } catch {
         data = null; committedRaw = null; loadState = 'recovery-required'; generation += 1;
         preserveEvidence(raw);
@@ -1390,6 +1416,43 @@
       return freezeDetached(ExactMoney.audit(schemaPolicy.clone(data)));
     }
 
+    function getExactMoneyMigrationSummary() {
+      requireReady();
+      if (residentSchemaVersion === Schema.V4_SCHEMA_VERSION) return freezeDetached({ state: 'already-migrated', subCentValueCount: 0, affectedMonthCount: 0, affectedTemplateCount: 0 });
+      const audit = getExactMoneyAudit();
+      return freezeDetached({ state: audit.subCentValueCount === 0 ? 'eligible' : 'blocked', subCentValueCount: audit.subCentValueCount,
+        affectedMonthCount: audit.affectedMonthCount, affectedTemplateCount: audit.affectedTemplateCount });
+    }
+
+    function previewExactMoneyMigration() {
+      const summary = getExactMoneyMigrationSummary();
+      if (summary.state === 'blocked') throw new StoreError('EXACT_MONEY_MIGRATION_BLOCKED');
+      if (summary.state === 'already-migrated') throw new StoreError('EXACT_MONEY_ALREADY_MIGRATED');
+      const preview = freezeDetached({ ...summary, generation });
+      exactMoneyMigrationCapabilities.set(preview, { generation });
+      return preview;
+    }
+
+    function commitExactMoneyMigration(preview) {
+      requireReady();
+      const capability = preview && typeof preview === 'object' ? exactMoneyMigrationCapabilities.get(preview) : null;
+      if (preview && typeof preview === 'object') exactMoneyMigrationCapabilities.delete(preview);
+      if (!capability) throw new StoreError('INVALID_EXACT_MONEY_MIGRATION_PREVIEW');
+      if (capability.generation !== generation) throw new StoreError('STALE_EXACT_MONEY_MIGRATION_PREVIEW');
+      if (residentSchemaVersion !== Schema.V3_SCHEMA_VERSION) throw new StoreError('EXACT_MONEY_ALREADY_MIGRATED');
+      if (getExactMoneyMigrationSummary().state !== 'eligible') throw new StoreError('EXACT_MONEY_MIGRATION_BLOCKED');
+      let hydrated;
+      try {
+        Schema.validateV3(data);
+        const persisted = Schema.migrateV3ToV4ExactMoney(data);
+        Schema.validateV4(persisted);
+        hydrated = Schema.hydrateV4ExactMoney(persisted);
+        if (!semanticEqual(data, hydrated)) throw new Error('aggregate mismatch');
+      } catch { throw new StoreError('EXACT_MONEY_MIGRATION_VALIDATION_FAILED'); }
+      return commitCandidate(hydrated, { snapshotReason: 'pre-import', requiredSnapshot: true,
+        daily: false, prune: false, targetSchemaVersion: Schema.V4_SCHEMA_VERSION });
+    }
+
     function getTemplateReadiness(options) {
       requireReady();
       if (!DataHealth || typeof DataHealth.buildTemplateReadiness !== 'function') {
@@ -1484,7 +1547,7 @@
     function compareAdditiveBackup(text) {
       requireReady();
       let incoming;
-      try { incoming = schemaPolicy.parseBackup(text).data; }
+      try { incoming = policyForVersion(versionFromJson(text)).parseBackup(text).data; }
       catch { throw new StoreError('INVALID_COMPARISON_BACKUP'); }
       const classifications = { identical: [], addable: [], conflicting: [] };
       for (const monthKey of Object.keys(incoming.months).sort()) {
@@ -1514,18 +1577,19 @@
       } });
     }
 
-    function buildExport() { requireReady(); return schemaPolicy.buildBackup(data, instantNow().toISOString()); }
+    function buildExport() { requireReady(); return policyForVersion(residentSchemaVersion).buildBackup(data, instantNow().toISOString()); }
     function exportData() { return JSON.stringify(buildExport(), null, 2); }
     function previewImport(text) {
       requireReady();
       let envelope;
-      try { envelope = schemaPolicy.parseBackup(text); }
+      const incomingSchemaVersion = versionFromJson(text);
+      try { envelope = policyForVersion(incomingSchemaVersion).parseBackup(text); }
       catch { throw new StoreError('INVALID_IMPORT'); }
       const monthKeys = Object.keys(envelope.data.months).sort();
       return {
         generation, exportedAt: envelope.exportedAt, formatVersion: envelope.formatVersion,
         monthCount: monthKeys.length, firstMonth: monthKeys[0] || null,
-        lastMonth: monthKeys.at(-1) || null, data: schemaPolicy.clone(envelope.data)
+        lastMonth: monthKeys.at(-1) || null, data: schemaPolicy.clone(envelope.data), residentSchemaVersion: incomingSchemaVersion
       };
     }
     function commitImport(preview) {
@@ -1535,7 +1599,8 @@
       try { candidate = schemaPolicy.migrateActive(preview.data); }
       catch { throw new StoreError('INVALID_IMPORT'); }
       return commitCandidate(candidate, {
-        snapshotReason: 'pre-import', requiredSnapshot: committedRaw !== null, daily: false
+        snapshotReason: 'pre-import', requiredSnapshot: committedRaw !== null, daily: false,
+        targetSchemaVersion: preview.residentSchemaVersion || Schema.V3_SCHEMA_VERSION
       });
     }
     function importData(text) { return commitImport(previewImport(text)); }
@@ -1556,23 +1621,27 @@
       try {
         const raw = read(key, 'SNAPSHOT_READ_FAILED');
         if (raw === null) throw new StoreError('SNAPSHOT_NOT_FOUND');
-        const envelope = schemaPolicy.parseSnapshot(raw);
-        record = { data: envelope.data };
+        const restoredSchemaVersion = versionFromJson(raw);
+        const envelope = policyForVersion(restoredSchemaVersion).parseSnapshot(raw);
+        record = { data: envelope.data, residentSchemaVersion: restoredSchemaVersion };
       } catch (error) {
         if (error instanceof StoreError) throw error;
         throw new StoreError('SNAPSHOT_NOT_FOUND');
       }
       if (loadState === 'recovery-required') {
-        const canonical = schemaPolicy.migrateActive(record.data);
-        const nextRaw = JSON.stringify(canonical);
+        const persisted = canonicalizeForWrite(record.residentSchemaVersion, record.data);
+        const canonical = record.residentSchemaVersion === Schema.V4_SCHEMA_VERSION
+          ? Schema.hydrateV4ExactMoney(persisted) : policyForVersion(record.residentSchemaVersion).migrateActive(record.data);
+        const nextRaw = JSON.stringify(persisted);
         write(STORAGE_KEY, nextRaw, 'PRIMARY_WRITE_FAILED');
-        data = canonical; committedRaw = nextRaw; corruptEvidence = null;
+        data = canonical; committedRaw = nextRaw; corruptEvidence = null; residentSchemaVersion = record.residentSchemaVersion;
         loadState = 'ready'; generation += 1;
         return schemaPolicy.clone(data);
       }
       requireReady();
       return commitCandidate(record.data, {
-        snapshotReason: 'pre-import', requiredSnapshot: committedRaw !== null, daily: false
+        snapshotReason: 'pre-import', requiredSnapshot: committedRaw !== null, daily: false,
+        targetSchemaVersion: record.residentSchemaVersion
       });
     }
     function startFresh() {
@@ -1591,7 +1660,7 @@
     }
     function getCorruptEvidence() { return corruptEvidence; }
     function getStatus() {
-      return { state: loadState, generation, hasEvidence: corruptEvidence !== null, warnings: [...warnings] };
+      return { state: loadState, generation, residentSchemaVersion, hasEvidence: corruptEvidence !== null, warnings: [...warnings] };
     }
 
     return Object.freeze({
@@ -1613,7 +1682,8 @@
       previewTemplateActivation, applyTemplateActivationPreview,
       getMonthReview, getPayPeriodPlan, getSuppressedOccurrences, unsuppressOccurrence,
       fundingDirection,
-      getDataHealth, getExactMoneyAudit, getTemplateReadiness, previewActualResolutions, applyActualResolutions, previewDefaultDateResolutions, applyDefaultDateResolutions, compareAdditiveBackup,
+      getDataHealth, getExactMoneyAudit, getExactMoneyMigrationSummary, previewExactMoneyMigration, commitExactMoneyMigration,
+      getTemplateReadiness, previewActualResolutions, applyActualResolutions, previewDefaultDateResolutions, applyDefaultDateResolutions, compareAdditiveBackup,
       calcMonthSummary, calcPaycheckRemaining, calcCategoryTotals, calcPaymentMethodTotals,
       buildExport, exportData, previewImport, commitImport, importData, listSnapshots,
       listSnapshotMetadata, restoreSnapshot, startFresh, getCorruptEvidence

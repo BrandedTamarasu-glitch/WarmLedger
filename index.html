@@ -372,6 +372,20 @@
     </form>
   </dialog>
 
+  <dialog id="exact-money-migration-dialog" class="restore-dialog exact-money-migration-dialog" aria-labelledby="exact-money-migration-title" aria-describedby="exact-money-migration-description">
+    <form method="dialog">
+      <h2 id="exact-money-migration-title">Move this ledger to exact-money storage?</h2>
+      <div id="exact-money-migration-description">
+        <p>This changes only the saved representation to integer cents. Ledger values and budget behavior stay the same.</p>
+        <p>Warm Ledger creates a local safety snapshot before saving. A downloaded JSON backup is the durable copy to keep outside this browser.</p>
+      </div>
+      <div class="dialog-actions">
+        <button id="exact-money-migration-cancel" class="btn" value="cancel" autofocus>Cancel</button>
+        <button id="exact-money-migration-confirm" class="btn btn-primary" value="confirm">Move to exact-money storage</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="restore-dialog" class="restore-dialog" aria-labelledby="restore-title" aria-describedby="restore-warning">
     <form method="dialog">
       <h2 id="restore-title">Restore this backup?</h2>
