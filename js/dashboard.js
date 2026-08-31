@@ -69,6 +69,8 @@ const DashboardView = {
       const element = document.getElementById(id);
       if (element) element.replaceChildren();
     }
+    const compositionContext = document.getElementById('dashboard-composition-context');
+    if (compositionContext) compositionContext.textContent = '';
     const results = document.getElementById('dashboard-results');
     if (results) results.hidden = true;
   },
@@ -278,6 +280,10 @@ const DashboardView = {
     const catTotals = Store.calcCategoryTotals(targetMonth);
     const plannedIncome = this.plannedIncome(summary);
     const income = plannedIncome === 0 ? 1 : plannedIncome;
+    const context = document.getElementById('dashboard-composition-context');
+    if (context) context.textContent = plannedIncome > 0
+      ? `${this.formatMonthShort(targetMonth)} composition: planned spending and allocations as a percentage of planned income.`
+      : `${this.formatMonthShort(targetMonth)} composition: no planned income was entered, so percentages are not shown.`;
 
     const labels = Object.keys(catTotals);
     const data = labels.map(c => this.categoryPlanned(catTotals[c]));
@@ -308,6 +314,7 @@ const DashboardView = {
           tooltip: {
             callbacks: {
               label: (ctx) => {
+                if (plannedIncome === 0) return `${ctx.label}: $${ctx.raw.toLocaleString()} (percentage unavailable)`;
                 const pct = ((ctx.raw / income) * 100).toFixed(1);
                 return `${ctx.label}: $${ctx.raw.toLocaleString()} (${pct}%)`;
               }
@@ -330,8 +337,8 @@ const DashboardView = {
       data: {
         labels: months.map(m => this.formatMonthShort(m)),
         datasets: [
-          { label: 'Projected', data: projected, backgroundColor: DASHBOARD_THEME.accent },
-          { label: 'Actual', data: actual, backgroundColor: DASHBOARD_THEME.positive }
+          { label: 'Planned expenses', data: projected, backgroundColor: DASHBOARD_THEME.accent },
+          { label: 'Actual expenses', data: actual, backgroundColor: DASHBOARD_THEME.positive }
         ]
       },
       options: {
@@ -362,7 +369,7 @@ const DashboardView = {
       data: {
         labels: months.map(m => this.formatMonthShort(m)),
         datasets: [{
-          label: 'Savings Rate %',
+          label: 'Planned savings & investment allocation rate',
           data: rates,
           borderColor: DASHBOARD_THEME.positive,
           backgroundColor: DASHBOARD_THEME.positive + '33',
@@ -384,8 +391,7 @@ const DashboardView = {
   // 5. Payment method breakdown (bar)
   renderPaymentMethod(months) {
     this.destroyChart('paymentMethod');
-    const bank = months.map(mk => Store.calcPaymentMethodTotals(mk, 'planned').bank ?? 0);
-    const cc = months.map(mk => Store.calcPaymentMethodTotals(mk, 'planned').credit_card ?? 0);
+    const totals = months.map(mk => Store.calcPaymentMethodTotals(mk, 'planned'));
 
     const ctx = document.getElementById('chart-payment-method').getContext('2d');
     this.charts.paymentMethod = new Chart(ctx, {
@@ -393,8 +399,10 @@ const DashboardView = {
       data: {
         labels: months.map(m => this.formatMonthShort(m)),
         datasets: [
-          { label: 'Bank', data: bank, backgroundColor: DASHBOARD_THEME.info },
-          { label: 'Credit Card', data: cc, backgroundColor: DASHBOARD_THEME.warning }
+          { label: 'Bank', data: totals.map(item => item.bank ?? 0), backgroundColor: DASHBOARD_THEME.info },
+          { label: 'Credit Card', data: totals.map(item => item.credit_card ?? 0), backgroundColor: DASHBOARD_THEME.warning },
+          { label: 'Savings', data: totals.map(item => item.savings ?? 0), backgroundColor: DASHBOARD_THEME.positive },
+          { label: 'Investments', data: totals.map(item => item.investments ?? 0), backgroundColor: DASHBOARD_THEME.accent }
         ]
       },
       options: {
@@ -518,7 +526,7 @@ const DashboardView = {
     cell = totalRow.insertCell(); strong = document.createElement('strong');
     strong.textContent = `$${grandAvg.toLocaleString(undefined, { maximumFractionDigits: 0 })}`; cell.append(strong);
     const incomeRow = tbody.insertRow(); cell = incomeRow.insertCell(); strong = document.createElement('strong');
-    strong.textContent = 'Income'; cell.append(strong);
+    strong.textContent = 'Planned income'; cell.append(strong);
     months.forEach(mk => {
       const s = Store.calcMonthSummary(mk);
       incomeRow.insertCell().textContent = this.formatWholeAmount(this.plannedIncome(s));

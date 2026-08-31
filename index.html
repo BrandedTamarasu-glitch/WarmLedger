@@ -143,36 +143,42 @@
       <div id="dashboard-state" class="dashboard-range-status dashboard-empty" role="status" aria-live="polite" aria-atomic="true" tabindex="-1" hidden></div>
       <div id="dashboard-results" hidden>
       <section id="dashboard-overview" class="dashboard-overview" aria-label="Selected range overview"></section>
-      <div class="dashboard-grid">
+      <div class="dashboard-grid dashboard-primary-grid">
         <div class="dash-card wide">
           <h3>Spending by Category (Month over Month)</h3>
           <canvas id="chart-category-trend"></canvas>
-        </div>
-        <div class="dash-card">
-          <h3>% of Income by Category</h3>
-          <canvas id="chart-income-pct"></canvas>
         </div>
         <div class="dash-card">
           <h3>Projected vs Actual</h3>
           <canvas id="chart-proj-vs-actual"></canvas>
         </div>
         <div class="dash-card">
-          <h3>Savings Rate Over Time</h3>
-          <canvas id="chart-savings-rate"></canvas>
-        </div>
-        <div class="dash-card">
-          <h3>Payment Method Breakdown</h3>
+          <h3>Planned bills by payment method</h3>
           <canvas id="chart-payment-method"></canvas>
         </div>
-        <div class="dash-card wide">
-          <h3>Year-over-Year Comparison</h3>
-          <canvas id="chart-yoy"></canvas>
-        </div>
-        <div class="dash-card wide">
-          <h3>Monthly Summary Table</h3>
-          <div id="summary-table-container" class="table-scroll"></div>
-        </div>
       </div>
+      <details id="dashboard-report-details" class="dashboard-report-details">
+        <summary>Report details</summary>
+        <div class="dashboard-grid dashboard-details-grid">
+          <div class="dash-card">
+            <h3>Planned spending and allocations</h3>
+            <p id="dashboard-composition-context" class="dash-card-note"></p>
+            <canvas id="chart-income-pct"></canvas>
+          </div>
+          <div class="dash-card">
+            <h3>Planned savings &amp; investment allocation rate</h3>
+            <canvas id="chart-savings-rate"></canvas>
+          </div>
+          <div class="dash-card wide">
+            <h3>Selected-year category comparison</h3>
+            <canvas id="chart-yoy"></canvas>
+          </div>
+          <div class="dash-card wide">
+            <h3>Monthly Summary Table</h3>
+            <div id="summary-table-container" class="table-scroll"></div>
+          </div>
+        </div>
+      </details>
       </div>
     </div>
 

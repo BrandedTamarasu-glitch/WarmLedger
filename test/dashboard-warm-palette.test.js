@@ -47,7 +47,9 @@ function loadDashboard() {
       calcCategoryTotals: month => categoryTotals[month],
       getMonth: month => ({ paychecks: [], expenses: [],
         allocations: month === '2026-01' ? { savings: 10, investments: 5 } : {} }),
-      calcPaymentMethodTotals: month => month === '2026-01' ? { bank: 25, credit_card: 15 } : { bank: 50, credit_card: 30 }
+      calcPaymentMethodTotals: month => month === '2026-01'
+        ? { bank: 25, credit_card: 15, savings: 10, investments: 5 }
+        : { bank: 50, credit_card: 30, savings: 0, investments: 20 }
     },
     ALLOCATION_TYPES: [{ key: 'savings', label: 'Savings' }],
     console
@@ -93,7 +95,7 @@ test('chart configurations use frozen mappings without changing analytics intent
   assert.equal(doughnut.options.plugins.tooltip.callbacks.label({ raw: 20, label: 'Home' }), 'Home: $20 (10.0%)');
 
   assert.equal(projected.type, 'bar');
-  assert.deepEqual(plain(projected.data.datasets.map(item => item.label)), ['Projected', 'Actual']);
+  assert.deepEqual(plain(projected.data.datasets.map(item => item.label)), ['Planned expenses', 'Actual expenses']);
   assert.deepEqual(plain(projected.data.datasets.map(item => item.backgroundColor)), ['#e09a72', '#8fc89a']);
   assert.deepEqual(plain(projected.data.datasets[1].data), [35, null]);
 
@@ -102,7 +104,9 @@ test('chart configurations use frozen mappings without changing analytics intent
   assert.equal(savings.data.datasets[0].tension, 0.3); assert.equal(savings.data.datasets[0].fill, true);
 
   assert.equal(payment.type, 'bar');
-  assert.deepEqual(plain(payment.data.datasets.map(item => item.backgroundColor)), ['#8eb7c7', '#e7bd75']);
+  assert.deepEqual(plain(payment.data.datasets.map(item => item.label)), ['Bank', 'Credit Card', 'Savings', 'Investments']);
+  assert.deepEqual(plain(payment.data.datasets.map(item => item.data)), [[25, 50], [15, 30], [10, 0], [5, 20]]);
+  assert.deepEqual(plain(payment.data.datasets.map(item => item.backgroundColor)), ['#8eb7c7', '#e7bd75', '#8fc89a', '#e09a72']);
   assert.equal(payment.options.scales.y.stacked, true);
   assert.equal(yoy.type, 'bar'); assert.equal(yoy.data.datasets[0].backgroundColor, sequence[0]);
 
