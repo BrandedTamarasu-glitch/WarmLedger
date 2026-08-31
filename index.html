@@ -128,12 +128,21 @@
 
     <!-- Dashboard View -->
     <div id="view-dashboard" class="view">
-      <div class="dashboard-controls">
+      <header class="dashboard-heading">
+        <h2 id="dashboard-heading" tabindex="-1">Dashboard</h2>
+        <p>Review trends and totals across a selected range of months. Reports are read-only and do not change your budget.</p>
+      </header>
+      <fieldset class="dashboard-controls" aria-describedby="dashboard-range-help dashboard-state">
+        <legend>Reporting range</legend>
         <div class="date-range">
-          <label>From: <input type="month" id="dash-from"></label>
-          <label>To: <input type="month" id="dash-to"></label>
+          <label for="dash-from"><span>From month</span><input type="month" id="dash-from"></label>
+          <label for="dash-to"><span>To month</span><input type="month" id="dash-to"></label>
         </div>
-      </div>
+        <p id="dashboard-range-help" class="field-help">Choose a start and end month. The range can include up to 600 months.</p>
+      </fieldset>
+      <div id="dashboard-state" class="dashboard-range-status dashboard-empty" role="status" aria-live="polite" aria-atomic="true" tabindex="-1" hidden></div>
+      <div id="dashboard-results" hidden>
+      <section id="dashboard-overview" class="dashboard-overview" aria-label="Selected range overview"></section>
       <div class="dashboard-grid">
         <div class="dash-card wide">
           <h3>Spending by Category (Month over Month)</h3>
@@ -163,6 +172,7 @@
           <h3>Monthly Summary Table</h3>
           <div id="summary-table-container" class="table-scroll"></div>
         </div>
+      </div>
       </div>
     </div>
 

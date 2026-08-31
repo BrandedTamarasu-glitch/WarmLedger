@@ -19,7 +19,7 @@ function loadDashboard() {
   const elements = new Map();
   const element = id => {
     if (!elements.has(id)) elements.set(id, {
-      id, value: '', getContext: () => ({ canvasId: id }), addEventListener() {}, replaceChildren() {}, append() {}
+      id, value: '', classList: { toggle() {} }, getContext: () => ({ canvasId: id }), addEventListener() {}, replaceChildren() {}, append() {}
     });
     return elements.get(id);
   };
@@ -42,9 +42,11 @@ function loadDashboard() {
       createElement: tag => ({ tag, className: '', textContent: '', append() {}, createTHead() {}, createTBody() {} })
     },
     Store: {
+      getAllMonthKeys: () => ['2026-01', '2026-02'],
       calcMonthSummary: month => summaries[month],
       calcCategoryTotals: month => categoryTotals[month],
-      getMonth: month => ({ allocations: month === '2026-01' ? { savings: 10, investments: 5 } : {} }),
+      getMonth: month => ({ paychecks: [], expenses: [],
+        allocations: month === '2026-01' ? { savings: 10, investments: 5 } : {} }),
       calcPaymentMethodTotals: month => month === '2026-01' ? { bank: 25, credit_card: 15 } : { bank: 50, credit_card: 30 }
     },
     ALLOCATION_TYPES: [{ key: 'savings', label: 'Savings' }],
@@ -120,7 +122,7 @@ test('palette wave preserves render and destruction lifecycle boundaries', () =>
   const calls = [];
   for (const method of ['renderCategoryTrend', 'renderIncomePct', 'renderProjVsActual', 'renderSavingsRate',
     'renderPaymentMethod', 'renderYoY', 'renderSummaryTable']) dashboard[method] = months => calls.push([method, months]);
-  dashboard.getMonthsInRange = () => ['2026-01']; dashboard.render();
+  dashboard.getDateRange = () => ({ from: '2026-01', to: '2026-01' }); dashboard.render();
   assert.deepEqual(calls.map(call => call[0]), ['renderCategoryTrend', 'renderIncomePct', 'renderProjVsActual',
     'renderSavingsRate', 'renderPaymentMethod', 'renderYoY', 'renderSummaryTable']);
   assert.ok(calls.every(call => call[1][0] === '2026-01'));
@@ -130,6 +132,7 @@ test('palette wave preserves render and destruction lifecycle boundaries', () =>
   dashboard.destroyAllCharts(); assert.equal(destroyed, 2);
   assert.equal(dashboard.charts.first, null); assert.equal(dashboard.charts.second, null);
 
-  assert.equal((source.match(/addEventListener\s*\(/g) || []).length, 2);
+  assert.equal((source.match(/addEventListener\s*\(/g) || []).length, 4,
+    'two range listeners plus the reporting-only Budget and Data Health actions');
   assert.doesNotMatch(source, /MutationObserver|ResizeObserver|localStorage|sessionStorage|fetch\s*\(|XMLHttpRequest|WebSocket|setTimeout|setInterval/);
 });

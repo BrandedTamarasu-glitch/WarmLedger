@@ -38,22 +38,117 @@ const DashboardView = {
     };
   },
 
-  getMonthsInRange() {
-    const { from, to } = this.getDateRange();
-    if (!from || !to) return [];
-
-    const months = [];
-    const [fy, fm] = from.split('-').map(Number);
-    const [ty, tm] = to.split('-').map(Number);
-    let d = new Date(fy, fm - 1, 1);
-    const end = new Date(ty, tm - 1, 1);
-
-    while (d <= end) {
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-      months.push(key);
-      d.setMonth(d.getMonth() + 1);
+  validateDateRange({ from, to } = {}) {
+    const validMonth = value => typeof value === 'string' && /^(\d{4})-(0[1-9]|1[0-2])$/.test(value);
+    if (from === '' || to === '' || from === undefined || to === undefined) {
+      return Object.freeze({ status: 'incomplete', from: from || '', to: to || '', months: Object.freeze([]) });
     }
-    return months;
+    if (!validMonth(from) || !validMonth(to)) {
+      return Object.freeze({ status: 'invalid', from, to, months: Object.freeze([]) });
+    }
+    const ordinal = value => Number(value.slice(0, 4)) * 12 + Number(value.slice(5)) - 1;
+    const start = ordinal(from); const end = ordinal(to);
+    if (start > end) return Object.freeze({ status: 'reversed', from, to, months: Object.freeze([]) });
+    const monthCount = end - start + 1;
+    if (monthCount > 600) return Object.freeze({ status: 'too-wide', from, to, monthCount, months: Object.freeze([]) });
+    const months = [];
+    for (let current = start; current <= end; current++) {
+      const year = Math.floor(current / 12); const month = current % 12 + 1;
+      months.push(`${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}`);
+    }
+    return Object.freeze({ status: 'ready', from, to, monthCount, months: Object.freeze(months) });
+  },
+
+  getMonthsInRange() {
+    return [...this.validateDateRange(this.getDateRange()).months];
+  },
+
+  clearRenderedOutput() {
+    this.destroyAllCharts();
+    for (const id of ['summary-table-container', 'dashboard-overview']) {
+      const element = document.getElementById(id);
+      if (element) element.replaceChildren();
+    }
+    const results = document.getElementById('dashboard-results');
+    if (results) results.hidden = true;
+  },
+
+  buildCoverageOverview(entries) {
+    const snapshot = entries.map(entry => ({ monthKey: entry.monthKey, exists: entry.exists, month: entry.month }));
+    let financialActivityMonths = 0; let plannedIncome = 0; let plannedExpenses = 0;
+    let actualEnteredCount = 0; let actualMissingCount = 0;
+    for (const entry of snapshot) {
+      const allocationTotal = Object.values(entry.month.allocations).reduce((sum, amount) => sum + amount, 0);
+      if (entry.month.paychecks.length || entry.month.expenses.length || allocationTotal !== 0) financialActivityMonths++;
+      for (const paycheck of entry.month.paychecks) {
+        plannedIncome += paycheck.plannedAmount;
+        if (paycheck.actualAmount === null) actualMissingCount++; else actualEnteredCount++;
+      }
+      for (const expense of entry.month.expenses) {
+        plannedExpenses += expense.plannedAmount;
+        if (expense.actualAmount === null) actualMissingCount++; else actualEnteredCount++;
+      }
+    }
+    const overview = {
+      coverage: { selectedMonths: snapshot.length, financialActivityMonths },
+      actualEntries: { enteredCount: actualEnteredCount, missingCount: actualMissingCount,
+        complete: actualMissingCount === 0 },
+      plannedTotals: { income: plannedIncome, expenses: plannedExpenses }
+    };
+    Object.values(overview).forEach(Object.freeze);
+    return Object.freeze(overview);
+  },
+
+  renderOverview(entries) {
+    const overview = this.buildCoverageOverview(entries);
+    const container = document.getElementById('dashboard-overview');
+    if (!container) return overview;
+    const cards = [
+      ['Coverage', `${overview.coverage.financialActivityMonths} of ${overview.coverage.selectedMonths} selected months have financial activity.`],
+      ['Actual entries', overview.actualEntries.complete
+        ? `${overview.actualEntries.enteredCount} entered; none missing.`
+        : `${overview.actualEntries.enteredCount} entered; ${overview.actualEntries.missingCount} missing. Data Health reviews the full budget.`],
+      ['Planned totals', `${this.formatWholeAmount(overview.plannedTotals.income)} income; ${this.formatWholeAmount(overview.plannedTotals.expenses)} expenses.`]
+    ];
+    for (const [heading, copy] of cards) {
+      const section = document.createElement('section'); section.className = 'dashboard-overview-card';
+      const title = document.createElement('h3'); title.textContent = heading;
+      const text = document.createElement('p'); text.textContent = copy; section.append(title, text);
+      if (heading === 'Actual entries' && !overview.actualEntries.complete) {
+        const button = document.createElement('button'); button.type = 'button'; button.className = 'btn btn-secondary';
+        button.textContent = 'Review missing actuals in Data Health';
+        button.addEventListener('click', () => this.openDataHealth()); section.append(button);
+      }
+      container.append(section);
+    }
+    return overview;
+  },
+
+  renderState(state) {
+    const container = document.getElementById('dashboard-state');
+    if (!container) return;
+    container.replaceChildren();
+    container.classList.toggle('is-error', ['incomplete', 'invalid', 'reversed', 'too-wide'].includes(state.status));
+    if (state.status === 'ready') { container.hidden = true; return; }
+    const messages = {
+      incomplete: 'Choose both a From and To month.',
+      invalid: 'Enter valid From and To months.',
+      reversed: 'The From month must not be after the To month.',
+      'too-wide': 'Choose a range of 600 months or fewer.',
+      empty: 'This range has no financial activity.'
+    };
+    const text = document.createElement('p'); text.textContent = messages[state.status] || 'Dashboard unavailable.';
+    container.append(text); container.hidden = false;
+    if (state.status === 'empty') {
+      const button = document.createElement('button'); button.type = 'button'; button.className = 'btn btn-secondary';
+      button.textContent = 'Go to Budget'; button.addEventListener('click', () => App.switchView('budget')); container.append(button);
+    }
+  },
+
+  openDataHealth() {
+    App.switchView('data-health');
+    const heading = document.getElementById('data-health-heading');
+    if (heading) heading.focus();
   },
 
   formatMonthShort(key) {
@@ -90,8 +185,21 @@ const DashboardView = {
   },
 
   render() {
-    const months = this.getMonthsInRange();
-    if (months.length === 0) return;
+    this.clearRenderedOutput();
+    const range = this.validateDateRange(this.getDateRange());
+    if (range.status !== 'ready') { this.renderState(range); return; }
+    const storedMonths = new Set(Store.getAllMonthKeys());
+    const entries = range.months.map(monthKey => ({
+      monthKey, exists: storedMonths.has(monthKey), month: Store.getMonth(monthKey)
+    }));
+    const overview = this.buildCoverageOverview(entries);
+    if (overview.coverage.financialActivityMonths === 0) {
+      this.renderState({ ...range, status: 'empty' }); return;
+    }
+    this.renderState(range); this.renderOverview(entries);
+    const results = document.getElementById('dashboard-results');
+    if (results) results.hidden = false;
+    const months = [...range.months];
 
     this.renderCategoryTrend(months);
     this.renderIncomePct(months);
