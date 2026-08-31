@@ -4,7 +4,7 @@ This roadmap turns the August 2026 ForgeFlow product audit into sequenced, testa
 
 ## Phase 1 — Data safety fixes
 
-Status: complete locally; awaiting publication.
+Status: published.
 
 - Reset copied paycheck actual amounts to **Not entered**, matching copied expenses.
 - Require accessible confirmation before deleting an expense.
@@ -16,7 +16,7 @@ Success means Copy from Previous Month never carries financial outcomes into a n
 
 ## Phase 2 — Data Health center
 
-Status: complete locally; awaiting publication.
+Status: published.
 
 - Add deterministic, write-free whole-ledger checks for missing actuals, dates not entered, funding mismatches, interior month gaps, and conservative repeated patterns.
 - Add an accessible Data Health view with overview counts and routes to the existing Budget and Templates workflows.
@@ -29,7 +29,7 @@ Deferred within this phase: automatic date inference, automatic template creatio
 
 ## Phase 3 — Template readiness
 
-Status: readiness and selected enable-only activation complete locally; awaiting publication.
+Status: readiness and selected enable-only activation published.
 
 - Review disabled templates and conservative repeated-manual-record suggestions in separate, clearly labeled lists.
 - Use an explicit local civil reference date, a three-calendar-month horizon, and at most three upcoming occurrences per disabled template.
@@ -44,7 +44,7 @@ Deferred: automatic suggestion creation, select-all, persisted selections or tar
 
 ## Phase 4 — Exact-money foundation
 
-Status: Phase 4A read-only precision audit complete locally; storage migration remains deferred.
+Status: Phase 4A read-only precision audit published; storage migration remains deferred.
 
 - Audit only the approved stored money families and report aggregate exact-cent and sub-cent counts without exposing ledger details.
 - Keep compatible schema-version-3 ledgers valid and editable; the audit never rounds, repairs, rejects, or writes data.
