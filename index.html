@@ -138,7 +138,16 @@
           <label for="dash-from"><span>From month</span><input type="month" id="dash-from"></label>
           <label for="dash-to"><span>To month</span><input type="month" id="dash-to"></label>
         </div>
-        <p id="dashboard-range-help" class="field-help">Choose a start and end month. The range can include up to 600 months.</p>
+        <div class="dashboard-quick-ranges" role="group" aria-labelledby="dashboard-quick-ranges-label">
+          <span id="dashboard-quick-ranges-label">Quick ranges</span>
+          <div class="dashboard-quick-range-actions">
+            <button class="btn" type="button" data-dashboard-quick-range="current">Current month</button>
+            <button class="btn" type="button" data-dashboard-quick-range="last-3">Last 3 months</button>
+            <button class="btn" type="button" data-dashboard-quick-range="last-6">Last 6 months</button>
+            <button class="btn" type="button" data-dashboard-quick-range="ytd">Year to date</button>
+          </div>
+        </div>
+        <p id="dashboard-range-help" class="field-help">Choose a start and end month or use a quick range. The range can include up to 600 months.</p>
       </fieldset>
       <div id="dashboard-state" class="dashboard-range-status dashboard-empty" role="status" aria-live="polite" aria-atomic="true" tabindex="-1" hidden></div>
       <div id="dashboard-results" hidden>

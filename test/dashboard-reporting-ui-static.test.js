@@ -15,7 +15,7 @@ test('Dashboard exposes a deterministic heading and accessible reporting-range g
   assert.match(html, /<legend>Reporting range<\/legend>/);
   assert.match(html, /<label for="dash-from"><span>From month<\/span><input type="month" id="dash-from"><\/label>/);
   assert.match(html, /<label for="dash-to"><span>To month<\/span><input type="month" id="dash-to"><\/label>/);
-  assert.match(html, /id="dashboard-range-help"[^>]*>Choose a start and end month\. The range can include up to 600 months\./);
+  assert.match(html, /id="dashboard-range-help"[^>]*>Choose a start and end month or use a quick range\. The range can include up to 600 months\./);
 });
 
 test('Dashboard has explicit live state, empty-state surface, and results/overview containers', () => {

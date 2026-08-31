@@ -11,6 +11,21 @@ const DASHBOARD_THEME = Object.freeze({
   info: '#8eb7c7'
 });
 
+function dashboardQuickRange(command, civilDate) {
+  if (!civilDate || !Number.isInteger(civilDate.year) || !Number.isInteger(civilDate.month) ||
+      civilDate.year < 0 || civilDate.year > 9999 || civilDate.month < 1 || civilDate.month > 12) return null;
+  const widths = { current: 1, 'last-3': 3, 'last-6': 6 };
+  if (command !== 'ytd' && !Object.hasOwn(widths, command)) return null;
+  const format = ordinal => {
+    const year = Math.floor(ordinal / 12); const month = ordinal % 12 + 1;
+    return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}`;
+  };
+  const end = civilDate.year * 12 + civilDate.month - 1;
+  const start = command === 'ytd' ? civilDate.year * 12 : end - widths[command] + 1;
+  if (start < 0) return null;
+  return Object.freeze({ from: format(start), to: format(end) });
+}
+
 const DashboardView = {
   charts: {},
 
@@ -22,6 +37,21 @@ const DashboardView = {
   bindEvents() {
     document.getElementById('dash-from').addEventListener('change', () => this.render());
     document.getElementById('dash-to').addEventListener('change', () => this.render());
+    if (typeof document.querySelectorAll === 'function') {
+      document.querySelectorAll('[data-dashboard-quick-range]').forEach(button => {
+        button.onclick = () => this.applyQuickRange(button.dataset.dashboardQuickRange);
+      });
+    }
+  },
+
+  applyQuickRange(command) {
+    const now = new Date();
+    const range = dashboardQuickRange(command, { year: now.getFullYear(), month: now.getMonth() + 1 });
+    if (!range) return false;
+    document.getElementById('dash-from').value = range.from;
+    document.getElementById('dash-to').value = range.to;
+    this.render();
+    return true;
   },
 
   setDefaultDateRange() {
