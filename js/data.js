@@ -38,6 +38,7 @@
   const GENERIC_EARNER_NAMES = Object.freeze(['Primary', 'Secondary']);
   const FUNDING_TOLERANCE = 0.009;
   const FUNDING_EPSILON = Number.EPSILON * 64;
+  const TEMPLATE_ACTIVATION_SELECTION_LIMIT = 500;
 
   function fundingDirection(value) {
     if (value > FUNDING_TOLERANCE + FUNDING_EPSILON) return 1;
@@ -125,6 +126,7 @@
     }
     if (typeof now !== 'function' || typeof uuid !== 'function') throw new StoreError('INVALID_ADAPTER');
     const previewCapabilities = new WeakMap();
+    const templateActivationCapabilities = new WeakMap();
     const deleteReceipts = new WeakMap();
     const actualResolutionCapabilities = new WeakMap();
     const defaultDateResolutionCapabilities = new WeakMap();
@@ -1017,6 +1019,100 @@
       return result;
     }
 
+    function exactObject(value, keys) {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+      const actual = Object.keys(value).sort();
+      const expected = [...keys].sort();
+      return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
+    }
+
+    function activationSelections(request) {
+      if (!exactObject(request, ['targetMonth', 'selections']) || typeof request.targetMonth !== 'string' ||
+          !Array.isArray(request.selections) || request.selections.length === 0 ||
+          request.selections.length > TEMPLATE_ACTIVATION_SELECTION_LIMIT) {
+        throw new StoreError('INVALID_TEMPLATE_ACTIVATION_REQUEST');
+      }
+      const seen = new Set();
+      const selections = request.selections.map(selection => {
+        if (!exactObject(selection, ['kind', 'templateId']) ||
+            (selection.kind !== 'income' && selection.kind !== 'expense') ||
+            typeof selection.templateId !== 'string' || selection.templateId.length === 0) {
+          throw new StoreError('INVALID_TEMPLATE_ACTIVATION_REQUEST');
+        }
+        const key = `${selection.kind}\u0000${selection.templateId}`;
+        if (seen.has(key)) throw new StoreError('DUPLICATE_TEMPLATE_ACTIVATION_SELECTION');
+        seen.add(key);
+        return { kind: selection.kind, templateId: selection.templateId };
+      });
+      return { targetMonth: request.targetMonth, selections };
+    }
+
+    function selectedTemplate(canonical, selection) {
+      const list = selection.kind === 'income' ? canonical.templates.income : canonical.templates.expenses;
+      const template = list.find(item => item.id === selection.templateId);
+      if (!template) throw new StoreError(selection.kind === 'income' ? 'INCOME_TEMPLATE_NOT_FOUND' : 'EXPENSE_TEMPLATE_NOT_FOUND');
+      if (template.archived) throw new StoreError('TEMPLATE_ARCHIVED');
+      if (template.enabled) throw new StoreError('TEMPLATE_ALREADY_ENABLED');
+      return template;
+    }
+
+    function templateActivationModel(canonical, targetMonth, selections) {
+      const hypothetical = schemaPolicy.clone(canonical);
+      const selectedIds = new Set();
+      const selected = selections.map(selection => {
+        const template = selectedTemplate(hypothetical, selection);
+        template.enabled = true;
+        selectedIds.add(`${selection.kind === 'expense' ? 'expenses' : 'income'}\u0000${selection.templateId}`);
+        return { kind: selection.kind, templateId: selection.templateId, name: template.name };
+      });
+      const recurring = classifyRecurring(hypothetical, targetMonth);
+      const additions = {
+        income: recurring.additions.income.filter(item => selectedIds.has(`income\u0000${item.templateId}`)),
+        expenses: recurring.additions.expenses.filter(item => selectedIds.has(`expenses\u0000${item.templateId}`))
+      };
+      const skips = recurring.skips.filter(item => selectedIds.has(`${item.kind}\u0000${item.templateId}`));
+      const templateIds = new Set(selections.map(item => item.templateId));
+      const conflicts = recurring.conflicts.filter(item => templateIds.has(item.templateId));
+      return freezeDetached({
+        targetMonth, selected, additions, skips, conflicts,
+        counts: {
+          selected: selected.length,
+          additions: additions.income.length + additions.expenses.length,
+          skips: skips.length,
+          conflicts: conflicts.length
+        }
+      });
+    }
+
+    function previewTemplateActivation(request) {
+      requireReady();
+      const parsed = activationSelections(request);
+      const preview = templateActivationModel(data, parsed.targetMonth, parsed.selections);
+      templateActivationCapabilities.set(preview, {
+        generation,
+        targetMonth: parsed.targetMonth,
+        selections: parsed.selections,
+        fingerprint: JSON.stringify(preview)
+      });
+      return preview;
+    }
+
+    function applyTemplateActivationPreview(preview) {
+      requireReady();
+      const capability = preview && typeof preview === 'object' ? templateActivationCapabilities.get(preview) : null;
+      if (preview && typeof preview === 'object') templateActivationCapabilities.delete(preview);
+      if (!capability) throw new StoreError('INVALID_TEMPLATE_ACTIVATION_PREVIEW');
+      if (capability.generation !== generation) throw new StoreError('STALE_TEMPLATE_ACTIVATION_PREVIEW');
+      const current = templateActivationModel(data, capability.targetMonth, capability.selections);
+      if (JSON.stringify(current) !== capability.fingerprint) throw new StoreError('STALE_TEMPLATE_ACTIVATION_PREVIEW');
+      if (current.conflicts.length > 0) throw new StoreError('TEMPLATE_ACTIVATION_CONFLICT');
+      return transact(candidate => {
+        for (const selection of capability.selections) selectedTemplate(candidate, selection).enabled = true;
+        return { enabledIncome: capability.selections.filter(item => item.kind === 'income').length,
+          enabledExpenses: capability.selections.filter(item => item.kind === 'expense').length };
+      }, { daily: false, prune: false });
+    }
+
     function suppressedProjection(canonical, monthKey) {
       classifyRecurring(canonical, monthKey);
       const month = canonical.months[monthKey];
@@ -1504,6 +1600,7 @@
       reassignExpenseStructure, editExpense,
       updateExpensePaycheckAmount, deleteExpense, undoDeleteExpense, reorderExpenses, updateAllocations, updateAllocation, copyFromMonth,
       clearMonth, previewRecurringMonth, applyRecurringPreview,
+      previewTemplateActivation, applyTemplateActivationPreview,
       getMonthReview, getPayPeriodPlan, getSuppressedOccurrences, unsuppressOccurrence,
       fundingDirection,
       getDataHealth, getTemplateReadiness, previewActualResolutions, applyActualResolutions, previewDefaultDateResolutions, applyDefaultDateResolutions, compareAdditiveBackup,

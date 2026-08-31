@@ -26,7 +26,10 @@ test('every declared integration ID is used and expense section IDs stay plural'
     'templates-income', 'templates-expenses',
     'templates-income-heading', 'templates-expenses-heading',
     'template-readiness', 'template-readiness-heading',
-    'template-readiness-disabled', 'template-readiness-suggestions'
+    'template-readiness-disabled', 'template-readiness-suggestions',
+    'template-activation-month', 'template-activation-preview',
+    'template-activation-dialog', 'template-activation-content',
+    'template-activation-cancel', 'template-activation-confirm'
   ]);
   ids.forEach(id => assert.match(source, new RegExp(id)));
   assert.doesNotMatch(source, /templates-expense(?:['"`]|-heading)/);

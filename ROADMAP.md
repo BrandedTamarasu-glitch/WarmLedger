@@ -29,15 +29,18 @@ Deferred within this phase: automatic date inference, automatic template creatio
 
 ## Phase 3 — Template readiness
 
-Status: first read-only readiness slice complete locally; activation remains deferred.
+Status: readiness and selected enable-only activation complete locally; awaiting publication.
 
 - Review disabled templates and conservative repeated-manual-record suggestions in separate, clearly labeled lists.
 - Use an explicit local civil reference date, a three-calendar-month horizon, and at most three upcoming occurrences per disabled template.
 - Treat blank-date repeated records as schedule unknown and require an explicit schedule before Save.
 - Suppress suggestions only for exact same-kind semantic duplicates across every existing template state; retain near matches.
 - Keep queue rendering and Review actions write-free; Review opens the existing Add or Edit form without enabling or saving anything.
-- Support selected activation only after a combined next-month preview.
+- Allow only saved disabled templates to be selected for an explicit target-month activation preview; suggestions remain Review-only.
+- Enable the complete selection atomically only after a Cancel-first preview; conflicts block confirmation and no Budget records are generated.
 - Never silently enable or generate recurring records.
+
+Deferred: automatic suggestion creation, select-all, persisted selections or target month, activation coupled to generation, and automatic recurring generation. Budget's existing Preview recurring items → Apply workflow remains the only record generator.
 
 ## Phase 4 — Exact-money foundation
 

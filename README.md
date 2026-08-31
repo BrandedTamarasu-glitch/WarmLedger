@@ -104,6 +104,10 @@ The queue uses the device's explicit local civil date as its reference date and 
 
 Template readiness is separate from recurring generation. Existing recurring records are still created only from Budget through the explicit **Preview recurring items** then **Apply** workflow described below.
 
+To activate templates together, select one or more existing saved disabled templates and choose the temporary target month, which defaults to the next local calendar month. Unsaved suggestions cannot be selected. **Preview selected activation** shows the selected templates, possible additions, skips, conflicts, and templates with no occurrence in that month without writing anything. Conflicts block confirmation. **Enable selected templates** atomically changes only those templates to enabled; it does not create a month or any paycheck or expense records.
+
+Activation preview is enable-only. Generating records remains a separate action in Budget through **Preview recurring items** and **Apply**; activation never starts that workflow automatically.
+
 Use **Templates** to add recurring income and expense plans, pause or archive them, and control their order. From the Budget view, choose **Preview recurring items** to review a month's additions and skips before confirming. Previewing and cancelling write nothing; confirmation adds the complete preview atomically.
 
 Generation is idempotent: rerunning a month does not duplicate existing occurrences or overwrite edited generated records. Dates use timezone-independent calendar arithmetic, including short-month clamping and two distinct occurrences when twice-monthly dates clamp to the same final day.

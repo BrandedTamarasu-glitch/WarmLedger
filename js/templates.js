@@ -7,14 +7,24 @@ const TemplatesView = {
     'templates-income', 'templates-expenses',
     'templates-income-heading', 'templates-expenses-heading',
     'template-readiness', 'template-readiness-heading',
-    'template-readiness-disabled', 'template-readiness-suggestions'
+    'template-readiness-disabled', 'template-readiness-suggestions',
+    'template-activation-month', 'template-activation-preview',
+    'template-activation-dialog', 'template-activation-content',
+    'template-activation-cancel', 'template-activation-confirm'
   ]),
+
+  activationPreview: null,
+  activationTrigger: null,
 
   init() {
     document.getElementById('btn-add-income-template').addEventListener('click', event =>
       this.showTemplateModal('income', null, event.currentTarget));
     document.getElementById('btn-add-expense-template').addEventListener('click', event =>
       this.showTemplateModal('expense', null, event.currentTarget));
+    document.getElementById('template-activation-month').value = this.nextLocalMonth();
+    document.getElementById('template-activation-preview').addEventListener('click', event =>
+      this.openActivationPreview(event.currentTarget));
+    document.getElementById('template-activation-dialog').addEventListener('close', () => this.onActivationDialogClose());
     this.render();
   },
 
@@ -34,6 +44,12 @@ const TemplatesView = {
   localReferenceDate() {
     const today = new Date();
     return `${String(today.getFullYear()).padStart(4, '0')}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  },
+
+  nextLocalMonth() {
+    const today = new Date();
+    const next = new Date(today.getFullYear(), today.getMonth() + 1, 1);
+    return `${String(next.getFullYear()).padStart(4, '0')}-${String(next.getMonth() + 1).padStart(2, '0')}`;
   },
 
   renderReadiness() {
@@ -73,7 +89,11 @@ const TemplatesView = {
     this.detail(details, 'Upcoming while disabled', entry.upcoming.dates.length
       ? entry.upcoming.dates.join(', ') : entry.upcoming.reason);
     const button = this.readinessButton('Review disabled template', entry, 'disabled', referenceDate);
-    readinessItem.append(details, button); return readinessItem;
+    const selectionLabel = this.element('label', 'template-activation-choice');
+    const checkbox = this.element('input'); checkbox.type = 'checkbox';
+    checkbox.dataset.activationKind = entry.kind; checkbox.dataset.activationTemplateId = entry.id;
+    selectionLabel.append(checkbox, document.createTextNode(` Select ${entry.name} for activation preview`));
+    readinessItem.append(details, selectionLabel, button); return readinessItem;
   },
 
   suggestionReadinessItem(entry, referenceDate) {
@@ -135,6 +155,84 @@ const TemplatesView = {
       const target = controls.find(control => control.dataset.readinessType === type &&
         control.dataset.templateKind === original.kind && control.dataset.readinessKey === key);
       (target || document.getElementById('template-readiness-heading')).focus({ preventScroll: true });
+    });
+  },
+
+  selectedActivationTemplates() {
+    return [...document.querySelectorAll('[data-activation-kind][data-activation-template-id]')]
+      .filter(control => control.checked)
+      .map(control => ({ kind: control.dataset.activationKind, templateId: control.dataset.activationTemplateId }));
+  },
+
+  openActivationPreview(trigger) {
+    const month = document.getElementById('template-activation-month');
+    if (!month.reportValidity()) { month.focus(); return false; }
+    const selections = this.selectedActivationTemplates();
+    if (!selections.length) {
+      App.announceStatus('Select at least one saved disabled template to preview.');
+      const first = document.querySelector('[data-activation-kind][data-activation-template-id]');
+      (first || document.getElementById('template-readiness-disabled-heading')).focus({ preventScroll: true });
+      return false;
+    }
+    try {
+      const preview = Store.previewTemplateActivation({ targetMonth: month.value, selections });
+      this.activationPreview = preview; this.activationTrigger = trigger;
+      document.getElementById('template-activation-content').replaceChildren(this.buildActivationPreview(preview));
+      const confirm = document.getElementById('template-activation-confirm');
+      confirm.disabled = preview.counts.conflicts > 0;
+      if (confirm.disabled) confirm.title = 'Resolve conflicts before enabling selected templates.';
+      else confirm.removeAttribute('title');
+      const dialog = document.getElementById('template-activation-dialog'); dialog.returnValue = ''; dialog.showModal();
+      return true;
+    } catch (error) {
+      this.activationPreview = null; App.showError(error); trigger.focus(); return false;
+    }
+  },
+
+  buildActivationPreview(preview) {
+    const wrapper = this.element('div', 'recurring-preview template-activation-preview');
+    wrapper.append(this.element('p', 'preview-summary',
+      `${preview.counts.selected} selected; ${preview.counts.additions} possible additions, ${preview.counts.skips} skips, ${preview.counts.conflicts} conflicts.`));
+    wrapper.append(this.element('p', 'field-help', 'Confirming enables only the selected templates. No budget records will be added.'));
+    this.activationPreviewSection(wrapper, 'Selected templates', preview.selected,
+      entry => `${entry.name} — ${entry.kind === 'income' ? 'Income' : 'Expense'}`);
+    this.activationPreviewSection(wrapper, 'Possible income additions', preview.additions.income,
+      entry => `${entry.name} — ${entry.scheduledDate} — ${this.money(entry.plannedAmount)}`);
+    this.activationPreviewSection(wrapper, 'Possible expense additions', preview.additions.expenses,
+      entry => `${entry.name} — ${entry.scheduledDate} — ${this.money(entry.plannedAmount)}`);
+    this.activationPreviewSection(wrapper, 'Skipped occurrences', preview.skips,
+      entry => `${entry.name} — ${entry.reason}`);
+    this.activationPreviewSection(wrapper, 'Conflicts', preview.conflicts,
+      entry => `${entry.occurrenceKey} — ${entry.reason}`);
+    const impacted = new Set([
+      ...preview.additions.income, ...preview.additions.expenses, ...preview.skips, ...preview.conflicts
+    ].map(entry => entry.templateId));
+    this.activationPreviewSection(wrapper, 'No occurrence in the preview month',
+      preview.selected.filter(entry => !impacted.has(entry.templateId)), entry => entry.name);
+    return wrapper;
+  },
+
+  activationPreviewSection(wrapper, heading, entries, label) {
+    wrapper.append(this.element('h3', '', heading));
+    const list = this.element('ul', 'preview-list');
+    if (entries.length) entries.forEach(entry => list.append(this.element('li', '', label(entry))));
+    else list.append(this.element('li', 'muted-text', 'None'));
+    wrapper.append(list);
+  },
+
+  onActivationDialogClose() {
+    const dialog = document.getElementById('template-activation-dialog');
+    const preview = this.activationPreview; const trigger = this.activationTrigger;
+    this.activationPreview = null; this.activationTrigger = null;
+    if (dialog.returnValue !== 'confirm' || !preview) {
+      requestAnimationFrame(() => trigger?.focus({ preventScroll: true })); return;
+    }
+    App.runMutation(() => Store.applyTemplateActivationPreview(preview), {
+      onSuccess: () => {
+        App.refreshAllViews(); App.announceStatus('Templates enabled. No budget records were added.');
+        requestAnimationFrame(() => document.getElementById('template-readiness-heading').focus({ preventScroll: true }));
+      },
+      onFailure: () => requestAnimationFrame(() => trigger?.focus({ preventScroll: true }))
     });
   },
 

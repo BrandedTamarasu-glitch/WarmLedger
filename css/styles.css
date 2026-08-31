@@ -1110,6 +1110,34 @@ label:has(> #field-template-enabled) { display: flex; align-items: center; min-h
   white-space: normal;
   overflow-wrap: anywhere;
 }
+#template-activation-controls {
+  min-width: 0;
+  margin: 0;
+  padding: 14px;
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-raised);
+}
+#template-activation-controls legend { padding-inline: 6px; font-weight: 700; line-height: 1.4; overflow-wrap: anywhere; }
+#template-activation-controls > .field-help { max-width: 68ch; margin-bottom: 12px; }
+#template-activation-controls .form-group { width: min(100%, 300px); }
+#template-activation-month { width: 100%; min-height: 44px; font-variant-numeric: tabular-nums; }
+#template-activation-preview { min-height: 44px; max-width: 100%; margin-bottom: 14px; white-space: normal; overflow-wrap: anywhere; }
+.template-activation-choice {
+  display: flex;
+  align-items: center;
+  width: fit-content;
+  max-width: 100%;
+  min-height: 44px;
+  margin-bottom: 8px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.template-activation-choice input { flex: 0 0 auto; width: 20px; height: 20px; margin: 0 10px 0 0; accent-color: var(--color-accent); }
+#template-activation-dialog { width: min(94vw, 680px); max-height: calc(100dvh - 24px); overflow-y: auto; }
+.template-activation-preview { min-width: 0; }
+.template-activation-preview h3 { margin: 16px 0 8px; font-size: 15px; line-height: 1.4; overflow-wrap: anywhere; }
+.template-activation-preview .preview-list li { overflow-wrap: anywhere; }
 
 /* Warm Ledger supporting views */
 #transfers-content { min-width: 0; }
@@ -1388,6 +1416,8 @@ label:has(> #field-template-enabled) { display: flex; align-items: center; min-h
   .template-details dd { margin-bottom: 8px; }
   .template-readiness-card { padding: 12px; }
   .template-readiness-action { width: fit-content; }
+  #template-activation-controls { padding: 12px; }
+  #template-activation-preview { min-height: 44px; }
   .template-actions .btn, .budget-actions .btn { min-height: 44px; }
   .monthly-review-details { grid-template-columns: 1fr; gap: 3px; }
   .monthly-review-details dd { margin-bottom: 7px; }
@@ -1469,6 +1499,9 @@ label:has(> #field-template-enabled) { display: flex; align-items: center; min-h
   #template-readiness > section + section { margin-top: 16px; }
   .template-readiness-name { display: block; margin: 0 0 8px; }
   .template-readiness-action { width: 100%; }
+  #template-activation-controls { padding: 12px 10px; }
+  #template-activation-controls .form-group, #template-activation-preview { width: 100%; }
+  #template-activation-dialog { width: calc(100vw - 16px); max-height: calc(100dvh - 16px); }
   .transfer-card-header, .transfer-action { padding-inline: 14px; }
   .transfer-action-header { flex-wrap: wrap; }
   .transfer-action-amount { width: 100%; }
@@ -1514,6 +1547,8 @@ label:has(> #field-template-enabled) { display: flex; align-items: center; min-h
   .modal, .modal-overlay, .feedback-center, .live-message, .paycheck-card, .monthly-review-action,
   .structure-card, .structure-subcard, .template-card, .structure-status, .template-status,
   .template-readiness-card, .template-readiness-action,
+  #template-activation-dialog, #template-activation-controls, #template-activation-preview,
+  .template-activation-choice, .template-activation-preview,
   .structure-actions .btn, .template-actions .btn, .transfer-card, .dash-card,
   .recovery-snapshots li, .dashboard-range-status, .dashboard-empty, .dashboard-overview-card,
   .dashboard-report-details, .dashboard-report-details > summary,
@@ -1618,4 +1653,13 @@ label:has(> #field-template-enabled) { display: flex; align-items: center; min-h
   #template-readiness > p, #template-readiness h4,
   .template-readiness-name, .template-readiness-card dt, .template-readiness-card dd { color: CanvasText; }
   .template-readiness-action { color: ButtonText; background: ButtonFace; border-color: ButtonText; }
+  #template-activation-controls, #template-activation-dialog, .template-activation-preview {
+    color: CanvasText; background: Canvas; border-color: CanvasText; box-shadow: none;
+  }
+  #template-activation-controls legend, #template-activation-controls .field-help,
+  .template-activation-choice, .template-activation-preview h3,
+  .template-activation-preview li { color: CanvasText; }
+  #template-activation-month, #template-activation-preview, .template-activation-choice input {
+    color: ButtonText; background: ButtonFace; border: 1px solid ButtonText; forced-color-adjust: auto;
+  }
 }

@@ -28,8 +28,8 @@ test('documentation states the shipped passive contract and remaining boundary',
     "device's explicit local civil date", 'next two calendar months', 'at most its next three',
     'exact same-kind semantic duplicate', 'blank dates have an unknown schedule',
     'Preview recurring items', 'Apply']) assert.match(readme, new RegExp(phrase));
-  assert.match(roadmap, /first read-only readiness slice complete locally; activation remains deferred/);
+  assert.match(roadmap, /readiness and selected enable-only activation complete locally/);
   assert.match(roadmap, /three-calendar-month horizon/);
   assert.match(roadmap, /exact same-kind semantic duplicates/);
-  assert.match(roadmap, /Support selected activation only after a combined next-month preview/);
+  assert.match(roadmap, /saved disabled templates to be selected for an explicit target-month activation preview/);
 });

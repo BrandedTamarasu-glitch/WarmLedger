@@ -240,7 +240,16 @@
         <p>Review disabled templates and repeated manual patterns. Nothing here is enabled, saved, or generated automatically.</p>
         <section aria-labelledby="template-readiness-disabled-heading">
           <h4 id="template-readiness-disabled-heading" tabindex="-1">Disabled templates</h4>
-          <div id="template-readiness-disabled"></div>
+          <fieldset id="template-activation-controls">
+            <legend>Select saved disabled templates to enable</legend>
+            <p class="field-help">Selection and target month are temporary. Previewing does not enable templates or add budget records.</p>
+            <div class="form-group">
+              <label for="template-activation-month">Preview month</label>
+              <input id="template-activation-month" type="month" required>
+            </div>
+            <button id="template-activation-preview" class="btn btn-primary" type="button">Preview selected activation</button>
+            <div id="template-readiness-disabled"></div>
+          </fieldset>
         </section>
         <section aria-labelledby="template-readiness-suggestions-heading">
           <h4 id="template-readiness-suggestions-heading" tabindex="-1">Suggestions from repeated records</h4>
@@ -347,6 +356,18 @@
       <div class="dialog-actions">
         <button id="recurring-preview-cancel" class="btn" value="cancel" autofocus>Cancel</button>
         <button id="recurring-preview-apply" class="btn btn-primary" value="confirm">Add recurring items</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="template-activation-dialog" class="restore-dialog recurring-preview-dialog" aria-labelledby="template-activation-title" aria-describedby="template-activation-warning">
+    <form method="dialog">
+      <h2 id="template-activation-title">Preview selected template activation</h2>
+      <p id="template-activation-warning">Enabling affects templates only. No budget records will be added.</p>
+      <div id="template-activation-content"></div>
+      <div class="dialog-actions">
+        <button id="template-activation-cancel" class="btn" value="cancel" autofocus>Cancel</button>
+        <button id="template-activation-confirm" class="btn btn-primary" value="confirm">Enable selected templates</button>
       </div>
     </form>
   </dialog>
