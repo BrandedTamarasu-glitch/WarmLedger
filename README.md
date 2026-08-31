@@ -94,6 +94,8 @@ For missing actuals, select only the records to resolve, enter each amount, and 
 
 **Compare a backup** validates and analyzes a selected backup without importing, restoring, or otherwise changing the ledger. The interface accepts files up to 5 MB and classifies months and structure for comparison. Comparison imports nothing. **Restore backup** is a separate, destructive workflow that previews and then replaces the active budget only after explicit confirmation.
 
+The closed **Money precision** disclosure is a read-only, aggregate-only audit of stored schema-version-3 money values. It reports how many stored values were scanned and, when needed, how many include digits smaller than one cent plus affected month and template counts. It never displays amounts, record labels, identifiers, month keys, or remediation actions, and it does not round, reject, migrate, or change the ledger. A valid ledger with sub-cent precision remains usable but is blocked from any future exact-money migration until a separately reviewed conversion and rollback workflow exists.
+
 ## Recurring templates
 
 ### Template readiness

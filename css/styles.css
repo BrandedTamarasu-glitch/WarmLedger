@@ -1332,6 +1332,24 @@ label:has(> #field-template-enabled) { display: flex; align-items: center; min-h
 .data-health-more > summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; padding: 0 14px; font-weight: 700; }
 .data-health-more-content { display: grid; gap: 18px; padding: 0 14px 14px; }
 .data-health-more .data-health-section { padding: 0; border: 0; background: transparent; box-shadow: none; }
+.money-precision-audit {
+  min-width: 0;
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-raised);
+}
+.money-precision-audit > summary {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 8px 14px;
+  font-weight: 700;
+  line-height: 1.4;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.money-precision-content { min-width: 0; display: grid; gap: 10px; padding: 0 14px 14px; }
+.money-precision-content p { min-width: 0; line-height: 1.55; overflow-wrap: anywhere; }
 .template-shortcut { display: flex; align-items: center; gap: 8px; margin-top: 4px; font-weight: 700; }
 .data-health-overview > p, .data-health-section > p { margin-top: 6px; line-height: 1.55; }
 .health-counts, .health-issue-list { list-style: none; margin-top: 16px; }
@@ -1460,6 +1478,8 @@ label:has(> #field-template-enabled) { display: flex; align-items: center; min-h
   .date-range label { flex: 0 1 auto; align-items: stretch; flex-direction: column; }
   .date-range input { flex: 0 1 auto; width: 100%; }
   .dashboard-quick-range-actions .btn { width: 100%; }
+  .money-precision-audit > summary { padding-inline: 12px; }
+  .money-precision-content { padding: 0 12px 12px; }
   .dashboard-range-status, .dashboard-empty, .dashboard-overview-card { padding: 12px; }
   .dashboard-report-details > summary { padding-inline: 12px; }
   .dashboard-data-table table { min-width: 540px; }
@@ -1644,7 +1664,10 @@ label:has(> #field-template-enabled) { display: flex; align-items: center; min-h
   .dashboard-quick-range-actions .btn { color: ButtonText; background: ButtonFace; border-color: ButtonText; }
   .dashboard-data-table caption, .dashboard-data-table th, .dashboard-data-table tbody th { color: CanvasText; }
   .data-health-overview, .data-health-section, .health-counts li, .actual-resolution-row,
-  .backup-comparison, .undo-notice { color: CanvasText; background: Canvas; border-color: CanvasText; box-shadow: none; }
+  .backup-comparison, .undo-notice, .money-precision-audit, .money-precision-content {
+    color: CanvasText; background: Canvas; border-color: CanvasText; box-shadow: none;
+  }
+  .money-precision-audit > summary, .money-precision-content p { color: CanvasText; }
   .pay-period-card, .pay-period-bill, .pay-period-needs, .pay-period-allocations,
   .pay-period-monthly-summary { color: CanvasText; background: Canvas; border-color: CanvasText; box-shadow: none; }
   .pay-period-state, .pay-period-state.state-remaining, .pay-period-state.state-balanced,

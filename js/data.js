@@ -6,7 +6,9 @@
     : (typeof require === 'function' ? require('./recurrence.js') : null);
   const DataHealth = root && root.ZeroBudgetDataHealth ? root.ZeroBudgetDataHealth
     : (typeof require === 'function' ? require('./data-health.js') : null);
-  const api = factory(Schema, Recurrence, DataHealth);
+  const ExactMoney = root && root.ZeroBudgetExactMoney ? root.ZeroBudgetExactMoney
+    : (typeof require === 'function' ? require('./exact-money.js') : null);
+  const api = factory(Schema, Recurrence, DataHealth, ExactMoney);
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (root && root.localStorage) {
     root.ZeroBudgetStore = api;
@@ -17,7 +19,7 @@
     });
     root.ALLOCATION_TYPES = api.ALLOCATION_TYPES;
   }
-})(typeof globalThis !== 'undefined' ? globalThis : this, function(Schema, Recurrence, DataHealth) {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function(Schema, Recurrence, DataHealth, ExactMoney) {
   'use strict';
   if (!Schema) throw new Error('ZeroBudgetSchema is required');
 
@@ -1380,6 +1382,14 @@
       return DataHealth.analyze(schemaPolicy.clone(data));
     }
 
+    function getExactMoneyAudit() {
+      requireReady();
+      if (!ExactMoney || typeof ExactMoney.audit !== 'function') {
+        throw new StoreError('EXACT_MONEY_UNAVAILABLE');
+      }
+      return freezeDetached(ExactMoney.audit(schemaPolicy.clone(data)));
+    }
+
     function getTemplateReadiness(options) {
       requireReady();
       if (!DataHealth || typeof DataHealth.buildTemplateReadiness !== 'function') {
@@ -1603,7 +1613,7 @@
       previewTemplateActivation, applyTemplateActivationPreview,
       getMonthReview, getPayPeriodPlan, getSuppressedOccurrences, unsuppressOccurrence,
       fundingDirection,
-      getDataHealth, getTemplateReadiness, previewActualResolutions, applyActualResolutions, previewDefaultDateResolutions, applyDefaultDateResolutions, compareAdditiveBackup,
+      getDataHealth, getExactMoneyAudit, getTemplateReadiness, previewActualResolutions, applyActualResolutions, previewDefaultDateResolutions, applyDefaultDateResolutions, compareAdditiveBackup,
       calcMonthSummary, calcPaycheckRemaining, calcCategoryTotals, calcPaymentMethodTotals,
       buildExport, exportData, previewImport, commitImport, importData, listSnapshots,
       listSnapshotMetadata, restoreSnapshot, startFresh, getCorruptEvidence

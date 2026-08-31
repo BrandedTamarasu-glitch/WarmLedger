@@ -18,8 +18,8 @@ const DataHealthView = {
 
   render() {
     const container = document.getElementById('data-health-content'); container.replaceChildren();
-    let health;
-    try { health = Store.getDataHealth(); }
+    let health; let moneyAudit;
+    try { health = Store.getDataHealth(); moneyAudit = Store.getExactMoneyAudit(); }
     catch (error) { App.showError(error); return; }
 
     const primaryCount = health.counts.missingActuals + health.counts.missingDates + health.counts.fundingMismatches;
@@ -38,6 +38,7 @@ const DataHealthView = {
       overview.append(counts);
     }
     container.append(overview);
+    container.append(this.moneyPrecisionDisclosure(moneyAudit));
 
     if (health.missingActuals.length) container.append(this.actualsSection(health.missingActuals));
     if (health.missingDates.length) container.append(this.dateResolutionSection(health.missingDates));
@@ -46,6 +47,19 @@ const DataHealthView = {
   },
 
   totalIssues(health) { return Object.values(health.counts).reduce((sum, count) => sum + count, 0); },
+
+  moneyPrecisionDisclosure(audit) {
+    const flagged = audit.subCentValueCount > 0;
+    const details = this.node('details', 'money-precision-audit');
+    details.append(this.node('summary', '', flagged ? 'Money precision needs review' : 'Money precision'));
+    const content = this.node('div', 'money-precision-content');
+    content.append(this.node('p', '', flagged
+      ? `${audit.subCentValueCount} stored money values include digits smaller than one cent across ${audit.affectedMonthCount} months and ${audit.affectedTemplateCount} templates. Warm Ledger has not changed or rounded them.`
+      : `All ${audit.scannedValueCount} stored money values use whole-cent precision.`));
+    content.append(this.node('p', 'muted-text',
+      'This check cannot determine whether sub-cent digits were intentional or came from earlier calculations or imports. Keep a current JSON backup. Exact-money storage and any conversion workflow require a separate reviewed migration.'));
+    details.append(content); return details;
+  },
 
   record(reference) {
     const month = Store.getMonth(reference.monthKey);
