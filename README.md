@@ -34,7 +34,9 @@ Warm Ledger uses a comfortable-density, warm-dark interface designed to keep the
 
 All six views remain available at narrow widths. Cards and controls reflow for phone-sized screens, while wide financial tables scroll inside their own bounded regions instead of making the whole page overflow. Keyboard focus is visible, narrow-screen controls have touch-friendly targets, native dialog action order matches keyboard order, reduced-motion preferences are respected, and high-contrast/forced-colors modes retain borders and focus indicators.
 
-The interface currently has one built-in warm-dark appearance rather than a theme selector. Dashboard canvas charts are supplementary visual summaries: their accompanying labels, filters, and summary table remain the authoritative accessible content, but per-chart data-table equivalents are not yet provided.
+The interface currently has one built-in warm-dark appearance rather than a theme selector. Dashboard canvas charts are supplementary visual summaries; every chart has an accompanying accessible data table. The dashboard's explicit Planned and Actual spending basis applies to category, payment-method, year-comparison, and summary reports. Projected vs Actual remains a comparison, while composition and allocation-rate reports remain explicitly planned-only. Missing actuals are shown as **Incomplete**, never silently treated as zero.
+
+Dashboard CSV export uses the selected range and spending basis. It is generated locally and contains normalized monthly income, expense totals, category spending, and payment-method rows with explicit Complete or Incomplete status. Missing actual values remain blank rather than becoming zero, and text fields are protected from spreadsheet formula interpretation.
 
 ## Run locally
 

@@ -26,8 +26,19 @@ function dashboardQuickRange(command, civilDate) {
   return Object.freeze({ from: format(start), to: format(end) });
 }
 
+function dashboardCsv(rows) {
+  const encode = value => {
+    const isText = typeof value === 'string';
+    let text = value === null || value === undefined ? '' : String(value);
+    if (isText && /^\s*[=+\-@]/.test(text)) text = `'${text}`;
+    return `"${text.replaceAll('"', '""')}"`;
+  };
+  return `\uFEFF${rows.map(row => row.map(encode).join(',')).join('\r\n')}\r\n`;
+}
+
 const DashboardView = {
   charts: {},
+  basis: 'planned',
 
   init() {
     this.bindEvents();
@@ -37,11 +48,29 @@ const DashboardView = {
   bindEvents() {
     document.getElementById('dash-from').addEventListener('change', () => this.render());
     document.getElementById('dash-to').addEventListener('change', () => this.render());
+    document.getElementById('btn-dashboard-csv').addEventListener('click', () => this.exportCsv());
     if (typeof document.querySelectorAll === 'function') {
+      document.querySelectorAll('[data-dashboard-basis]').forEach(button => {
+        button.onclick = () => this.applyBasis(button.dataset.dashboardBasis);
+      });
       document.querySelectorAll('[data-dashboard-quick-range]').forEach(button => {
         button.onclick = () => this.applyQuickRange(button.dataset.dashboardQuickRange);
       });
     }
+  },
+
+  applyBasis(basis) {
+    if (basis !== 'planned' && basis !== 'actual') return false;
+    this.basis = basis;
+    if (typeof document.querySelectorAll === 'function') {
+      document.querySelectorAll('[data-dashboard-basis]').forEach(button => {
+        const selected = button.dataset.dashboardBasis === basis;
+        button.setAttribute('aria-pressed', String(selected));
+        button.classList.toggle('is-selected', selected);
+      });
+    }
+    this.render();
+    return true;
   },
 
   applyQuickRange(command) {
@@ -51,6 +80,45 @@ const DashboardView = {
     document.getElementById('dash-from').value = range.from;
     document.getElementById('dash-to').value = range.to;
     this.render();
+    return true;
+  },
+
+  buildCsv(months, basis) {
+    const rows = [['Month', 'Basis', 'Metric', 'Category', 'Payment method', 'Value', 'Status']];
+    const add = (month, metric, category, paymentMethod, value) => rows.push([
+      month, basis, metric, category, paymentMethod, value === null ? '' : value, value === null ? 'Incomplete' : 'Complete'
+    ]);
+    for (const month of months) {
+      const summary = Store.calcMonthSummary(month);
+      const income = basis === 'planned' ? this.plannedIncome(summary) :
+        (summary.unresolvedIncomeCount === 0 ? summary.totalActualIncome : null);
+      const expenses = basis === 'planned' ? this.plannedExpenses(summary) : this.actualExpenses(summary);
+      add(month, 'Income', '', '', income);
+      add(month, 'Total expenses', '', '', expenses);
+      const categoryTotals = Store.calcCategoryTotals(month);
+      for (const category of Object.keys(categoryTotals).sort()) {
+        const value = basis === 'planned' ? this.categoryPlanned(categoryTotals[category]) : this.categoryActual(categoryTotals[category]);
+        add(month, 'Category spending', category, '', value);
+      }
+      const methodTotals = Store.calcPaymentMethodTotals(month, basis);
+      const incompleteMethods = new Set(basis === 'actual' ? Store.getMonth(month).expenses
+        .filter(expense => expense.actualAmount === null).map(expense => expense.paymentMethod) : []);
+      for (const [key, label] of [['bank', 'Bank'], ['credit_card', 'Credit Card'], ['savings', 'Savings'], ['investments', 'Investments']]) {
+        add(month, 'Bills by payment method', '', label, incompleteMethods.has(key) ? null : (methodTotals[key] ?? 0));
+      }
+    }
+    return dashboardCsv(rows);
+  },
+
+  exportCsv() {
+    const range = this.validateDateRange(this.getDateRange());
+    if (range.status !== 'ready') {
+      this.clearRenderedOutput(); this.renderState(range);
+      document.getElementById('dashboard-state')?.focus(); return false;
+    }
+    const content = this.buildCsv(range.months, this.basis);
+    App.download(content, `warm-ledger-dashboard-${range.from}-to-${range.to}-${this.basis}.csv`, 'text/csv;charset=utf-8');
+    App.announceStatus(`Dashboard CSV downloaded for ${range.from} to ${range.to} using ${this.basis} spending.`);
     return true;
   },
 
@@ -131,17 +199,19 @@ const DashboardView = {
     container.replaceChildren(table);
   },
 
-  buildCategoryTrendModel(months) {
+  buildCategoryTrendModel(months, basis = 'actual') {
     const allCategories = new Set(); const dataByMonth = {};
     months.forEach(monthKey => {
       const totals = Store.calcCategoryTotals(monthKey); dataByMonth[monthKey] = totals;
       Object.keys(totals).forEach(category => allCategories.add(category));
     });
     const categories = [...allCategories]; const labels = months.map(month => this.formatMonthShort(month));
+    const valueFor = total => basis === 'planned' ? this.categoryPlanned(total) : this.categoryActual(total);
+    const basisLabel = basis === 'planned' ? 'Planned' : 'Actual';
     const datasets = categories.map(category => ({ label: category,
-      data: months.map(month => this.categoryActual(dataByMonth[month][category])) }));
-    return { labels, datasets, table: { caption: 'Actual spending by month and category',
-      columns: ['Month', 'Category', 'Actual spending'], rows: months.flatMap((month, monthIndex) =>
+      data: months.map(month => valueFor(dataByMonth[month][category])) }));
+    return { labels, datasets, table: { caption: `${basisLabel} spending by month and category`,
+      columns: ['Month', 'Category', `${basisLabel} spending`], rows: months.flatMap((month, monthIndex) =>
         categories.map((category, categoryIndex) => ({ header: labels[monthIndex],
           cells: [category, this.formatWholeAmount(datasets[categoryIndex].data[monthIndex])] }))) } };
   },
@@ -191,19 +261,24 @@ const DashboardView = {
     } };
   },
 
-  buildPaymentMethodModel(months) {
+  buildPaymentMethodModel(months, basis = 'planned') {
     const labels = months.map(month => this.formatMonthShort(month));
-    const totals = months.map(mk => Store.calcPaymentMethodTotals(mk, 'planned'));
+    const totals = months.map(mk => Store.calcPaymentMethodTotals(mk, basis));
+    const incompleteMethods = months.map(mk => new Set(basis === 'actual'
+      ? Store.getMonth(mk).expenses.filter(expense => expense.actualAmount === null).map(expense => expense.paymentMethod)
+      : []));
     const datasets = [
       { label: 'Bank', key: 'bank' }, { label: 'Credit Card', key: 'credit_card' },
       { label: 'Savings', key: 'savings' }, { label: 'Investments', key: 'investments' }
-    ].map(method => ({ label: method.label, data: totals.map(total => total[method.key] ?? 0) }));
-    return { labels, datasets, table: { caption: 'Planned bills by payment method and month',
+    ].map(method => ({ label: method.label, data: totals.map((total, index) =>
+      incompleteMethods[index].has(method.key) ? null : (total[method.key] ?? 0)) }));
+    const basisLabel = basis === 'planned' ? 'Planned' : 'Actual';
+    return { labels, datasets, table: { caption: `${basisLabel} bills by payment method and month`,
       columns: ['Month', ...datasets.map(dataset => dataset.label)], rows: labels.map((label, monthIndex) =>
         ({ header: label, cells: datasets.map(dataset => this.formatWholeAmount(dataset.data[monthIndex])) })) } };
   },
 
-  buildYoYModel(months) {
+  buildYoYModel(months, basis = 'actual') {
     const years = {};
     months.forEach(month => { const year = month.slice(0, 4); (years[year] ||= []).push(month); });
     const yearKeys = Object.keys(years).sort();
@@ -217,12 +292,14 @@ const DashboardView = {
     const datasets = yearKeys.map(year => ({ label: year, data: labels.map(category => {
       let total = 0;
       for (const month of years[year]) {
-        const value = this.categoryActual(Store.calcCategoryTotals(month)[category]);
+        const categoryTotal = Store.calcCategoryTotals(month)[category];
+        const value = basis === 'planned' ? this.categoryPlanned(categoryTotal) : this.categoryActual(categoryTotal);
         if (value === null) return null; total += value;
       }
       return total;
     }) }));
-    return { eligible: true, labels, datasets, table: { caption: 'Actual category spending by selected year',
+    const basisLabel = basis === 'planned' ? 'Planned' : 'Actual';
+    return { eligible: true, labels, datasets, table: { caption: `${basisLabel} category spending by selected year`,
       columns: ['Category', ...yearKeys], rows: labels.map((label, categoryIndex) => ({ header: label,
         cells: datasets.map(dataset => this.formatWholeAmount(dataset.data[categoryIndex])) })) } };
   },
@@ -355,13 +432,13 @@ const DashboardView = {
     if (results) results.hidden = false;
     const months = [...range.months];
 
-    this.renderCategoryTrend(months);
+    this.renderCategoryTrend(months, this.basis);
     this.renderIncomePct(months);
     this.renderProjVsActual(months);
     this.renderSavingsRate(months);
-    this.renderPaymentMethod(months);
-    this.renderYoY(months);
-    this.renderSummaryTable(months);
+    this.renderPaymentMethod(months, this.basis);
+    this.renderYoY(months, this.basis);
+    this.renderSummaryTable(months, this.basis);
   },
 
   destroyChart(id) {
@@ -382,9 +459,11 @@ const DashboardView = {
   ],
 
   // 1. Category spending trend (line chart)
-  renderCategoryTrend(months) {
+  renderCategoryTrend(months, basis = 'actual') {
     this.destroyChart('categoryTrend');
-    const model = this.buildCategoryTrendModel(months);
+    const model = this.buildCategoryTrendModel(months, basis);
+    const heading = document.getElementById('dashboard-category-trend-heading');
+    if (heading) heading.textContent = `${basis === 'planned' ? 'Planned' : 'Actual'} spending by category (month over month)`;
     const datasets = model.datasets.map((dataset, index) => ({
       label: dataset.label, data: dataset.data,
       borderColor: this.COLORS[index % this.COLORS.length],
@@ -509,9 +588,11 @@ const DashboardView = {
   },
 
   // 5. Payment method breakdown (bar)
-  renderPaymentMethod(months) {
+  renderPaymentMethod(months, basis = 'planned') {
     this.destroyChart('paymentMethod');
-    const model = this.buildPaymentMethodModel(months);
+    const model = this.buildPaymentMethodModel(months, basis);
+    const heading = document.getElementById('dashboard-payment-method-heading');
+    if (heading) heading.textContent = `${basis === 'planned' ? 'Planned' : 'Actual'} bills by payment method`;
     const colors = [DASHBOARD_THEME.info, DASHBOARD_THEME.warning, DASHBOARD_THEME.positive, DASHBOARD_THEME.accent];
 
     const ctx = document.getElementById('chart-payment-method').getContext('2d');
@@ -534,9 +615,11 @@ const DashboardView = {
   },
 
   // 6. Year-over-Year comparison (grouped bar by category)
-  renderYoY(months) {
+  renderYoY(months, basis = 'actual') {
     this.destroyChart('yoy');
-    const model = this.buildYoYModel(months);
+    const model = this.buildYoYModel(months, basis);
+    const heading = document.getElementById('dashboard-yoy-heading');
+    if (heading) heading.textContent = `${basis === 'planned' ? 'Planned' : 'Actual'} selected-year category comparison`;
     const card = document.getElementById('dashboard-yoy-card'); const state = document.getElementById('dashboard-yoy-state');
     if (!model.eligible) {
       const table = document.getElementById('table-yoy'); if (table) table.replaceChildren();
@@ -568,7 +651,9 @@ const DashboardView = {
   },
 
   // 7. Summary table
-  renderSummaryTable(months) {
+  renderSummaryTable(months, basis = 'actual') {
+    const heading = document.getElementById('dashboard-summary-heading');
+    if (heading) heading.textContent = `${basis === 'planned' ? 'Planned' : 'Actual'} monthly summary table`;
     const allCats = new Set();
     const dataByMonth = {};
 
@@ -591,41 +676,48 @@ const DashboardView = {
       const row = tbody.insertRow(); const name = row.insertCell(); name.textContent = cat;
       let total = 0;
       let count = 0;
+      let complete = true;
       months.forEach(mk => {
-        const val = this.categoryActual(dataByMonth[mk][cat]);
+        const totalForCategory = dataByMonth[mk][cat];
+        const val = basis === 'planned' ? this.categoryPlanned(totalForCategory) : this.categoryActual(totalForCategory);
         row.insertCell().textContent = this.formatWholeAmount(val);
-        if (val !== null) {
+        if (val === null) complete = false;
+        else {
           total += val;
           count++;
         }
       });
-      const avg = count > 0 ? total / count : 0;
+      const avg = complete && count > 0 ? total / count : (complete ? 0 : null);
       const cell = row.insertCell(); const strong = document.createElement('strong');
-      strong.textContent = `$${avg.toLocaleString(undefined, { maximumFractionDigits: 0 })}`; cell.append(strong);
+      strong.textContent = this.formatWholeAmount(avg); cell.append(strong);
     });
 
     const totalRow = tbody.insertRow(); totalRow.className = 'summary-total-row';
     let cell = totalRow.insertCell(); let strong = document.createElement('strong'); strong.textContent = 'Total'; cell.append(strong);
     let grandTotal = 0;
     let monthCount = 0;
+    let grandComplete = true;
     months.forEach(mk => {
       const s = Store.calcMonthSummary(mk);
-      const val = this.actualExpenses(s);
+      const val = basis === 'planned' ? this.plannedExpenses(s) : this.actualExpenses(s);
       cell = totalRow.insertCell(); strong = document.createElement('strong');
       strong.textContent = this.formatWholeAmount(val); cell.append(strong);
-      if (val !== null) {
+      if (val === null) grandComplete = false;
+      else {
         grandTotal += val;
         monthCount++;
       }
     });
-    const grandAvg = monthCount > 0 ? grandTotal / monthCount : 0;
+    const grandAvg = grandComplete && monthCount > 0 ? grandTotal / monthCount : (grandComplete ? 0 : null);
     cell = totalRow.insertCell(); strong = document.createElement('strong');
-    strong.textContent = `$${grandAvg.toLocaleString(undefined, { maximumFractionDigits: 0 })}`; cell.append(strong);
+    strong.textContent = this.formatWholeAmount(grandAvg); cell.append(strong);
     const incomeRow = tbody.insertRow(); cell = incomeRow.insertCell(); strong = document.createElement('strong');
-    strong.textContent = 'Planned income'; cell.append(strong);
+    strong.textContent = basis === 'planned' ? 'Planned income' : 'Actual income'; cell.append(strong);
     months.forEach(mk => {
       const s = Store.calcMonthSummary(mk);
-      incomeRow.insertCell().textContent = this.formatWholeAmount(this.plannedIncome(s));
+      const income = basis === 'planned' ? this.plannedIncome(s) :
+        (s.unresolvedIncomeCount === 0 ? s.totalActualIncome : null);
+      incomeRow.insertCell().textContent = this.formatWholeAmount(income);
     });
     incomeRow.insertCell();
     document.getElementById('summary-table-container').replaceChildren(table);

@@ -29,7 +29,7 @@ test('activation documentation preserves enable-only and generator boundaries', 
     'temporary target month', 'defaults to the next local calendar month', 'Conflicts block confirmation',
     'changes only those templates to enabled', 'does not create a month', 'Activation preview is enable-only',
     'Preview recurring items', 'Apply']) assert.match(readme, new RegExp(phrase));
-  assert.match(roadmap, /selected enable-only activation complete locally/);
+  assert.match(roadmap, /selected enable-only activation published/);
   assert.match(roadmap, /suggestions remain Review-only/);
   assert.match(roadmap, /conflicts block confirmation and no Budget records are generated/);
   assert.match(roadmap, /activation coupled to generation/);

@@ -31,8 +31,8 @@ function load({ year = 2026, monthIndex = 7 } = {}) {
       activeElement: buttons[0],
       getElementById: element,
       querySelectorAll(selector) {
-        assert.equal(selector, '[data-dashboard-quick-range]');
-        return buttons;
+        if (selector === '[data-dashboard-basis]') return [];
+        assert.equal(selector, '[data-dashboard-quick-range]'); return buttons;
       }
     },
     Store: new Proxy({}, { get(_target, key) { return (...args) => { storeCalls.push([key, ...args]); }; } }),
@@ -92,4 +92,3 @@ test('invalid direct commands are no-op and do not render or touch inputs', () =
   assert.equal(harness.element('dash-to').value, '2024-12');
   assert.deepEqual(harness.storeCalls, []);
 });
-

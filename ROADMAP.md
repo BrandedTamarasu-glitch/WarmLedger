@@ -80,11 +80,14 @@ Status: published on 2026-08-30.
 
 ## Phase 7 — Dashboard truth, accessibility, and reporting
 
-- Add an explicit Planned/Actual basis and honest incomplete-state handling.
-- Correct Savings Rate, Income, and Payment Method labeling and coverage.
-- Add an accessible table equivalent for every chart.
-- Validate date ranges and clear stale visualizations.
-- Add forecasting, CSV export, and printable reports in later slices.
+Status: reporting truth, accessible chart tables, date-range safety, and quick ranges published; spending basis control complete locally; later reporting slices remain deferred.
+
+- Published: honest incomplete-state handling plus corrected Savings Rate, Income, and Payment Method labeling and coverage.
+- Published: an accessible table equivalent for every chart.
+- Published: strict date-range validation, stale-visualization clearing, and Current month, Last 3 months, Last 6 months, and Year to date shortcuts.
+- Complete locally: an explicit Planned/Actual basis control for spending reports, with incomplete actuals preserved and planned-only reports clearly bounded.
+- Complete locally: range- and basis-aware CSV export with explicit completeness and spreadsheet-formula protection.
+- Deferred to later slices: forecasting and printable reports.
 
 ## Global release gates
 

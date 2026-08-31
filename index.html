@@ -138,6 +138,14 @@
           <label for="dash-from"><span>From month</span><input type="month" id="dash-from"></label>
           <label for="dash-to"><span>To month</span><input type="month" id="dash-to"></label>
         </div>
+        <div class="dashboard-basis" role="group" aria-labelledby="dashboard-basis-label" aria-describedby="dashboard-basis-help">
+          <span id="dashboard-basis-label">Spending basis</span>
+          <div class="dashboard-basis-actions">
+            <button class="btn is-selected" type="button" data-dashboard-basis="planned" aria-pressed="true">Planned</button>
+            <button class="btn" type="button" data-dashboard-basis="actual" aria-pressed="false">Actual</button>
+          </div>
+          <p id="dashboard-basis-help" class="field-help">Applies to category, payment-method, year-comparison, and summary reports. Incomplete actual amounts remain marked Incomplete. Comparison and allocation reports retain their stated basis.</p>
+        </div>
         <div class="dashboard-quick-ranges" role="group" aria-labelledby="dashboard-quick-ranges-label">
           <span id="dashboard-quick-ranges-label">Quick ranges</span>
           <div class="dashboard-quick-range-actions">
@@ -147,6 +155,10 @@
             <button class="btn" type="button" data-dashboard-quick-range="ytd">Year to date</button>
           </div>
         </div>
+        <div class="dashboard-export-actions">
+          <button id="btn-dashboard-csv" class="btn btn-secondary" type="button">Download CSV</button>
+          <span>Exports the selected range and spending basis. Nothing is uploaded.</span>
+        </div>
         <p id="dashboard-range-help" class="field-help">Choose a start and end month or use a quick range. The range can include up to 600 months.</p>
       </fieldset>
       <div id="dashboard-state" class="dashboard-range-status dashboard-empty" role="status" aria-live="polite" aria-atomic="true" tabindex="-1" hidden></div>
@@ -154,7 +166,7 @@
       <section id="dashboard-overview" class="dashboard-overview" aria-label="Selected range overview"></section>
       <div class="dashboard-grid dashboard-primary-grid">
         <div class="dash-card wide">
-          <h3 id="dashboard-category-trend-heading">Spending by Category (Month over Month)</h3>
+          <h3 id="dashboard-category-trend-heading">Planned spending by category (month over month)</h3>
           <canvas id="chart-category-trend" aria-hidden="true"></canvas>
           <details id="dashboard-category-trend-table-disclosure" class="dashboard-table-disclosure">
             <summary>View data table</summary>
@@ -200,7 +212,7 @@
           </div>
           <p id="dashboard-yoy-state" class="dashboard-yoy-state" role="status" hidden></p>
           <div id="dashboard-yoy-card" class="dash-card wide">
-            <h3 id="dashboard-yoy-heading">Selected-year category comparison</h3>
+            <h3 id="dashboard-yoy-heading">Planned selected-year category comparison</h3>
             <canvas id="chart-yoy" aria-hidden="true"></canvas>
             <details id="dashboard-yoy-table-disclosure" class="dashboard-table-disclosure">
               <summary>View data table</summary>
@@ -208,7 +220,7 @@
             </details>
           </div>
           <div class="dash-card wide">
-            <h3>Monthly Summary Table</h3>
+            <h3 id="dashboard-summary-heading">Planned monthly summary table</h3>
             <div id="summary-table-container" class="table-scroll"></div>
           </div>
         </div>

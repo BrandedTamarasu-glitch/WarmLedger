@@ -67,6 +67,6 @@ test('payment method chart includes all four planned schema methods in frozen or
 test('truthful source labels do not introduce persisted behavior or chart redesign', () => {
   assert.match(source, /Planned savings & investment allocation rate/);
   assert.match(source, /Planned expenses/); assert.match(source, /Actual expenses/);
-  assert.match(source, /strong\.textContent = 'Planned income'/);
+  assert.match(source, /basis === 'planned' \? 'Planned income' : 'Actual income'/);
   assert.doesNotMatch(source, /localStorage|sessionStorage|fetch\s*\(|setTimeout|setInterval|MutationObserver/);
 });

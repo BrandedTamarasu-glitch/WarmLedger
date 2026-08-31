@@ -357,6 +357,22 @@ const SCENARIO = `(async () => {
     'Successful Restore did not invalidate outstanding expense Undo.');
   assert(localStorage.getItem(primaryKey) === importBytes, 'No-op backup restore changed bytes.');
   const rerun = Store.previewRecurringMonth(month); assert(rerun.counts.additions === 0, 'Recurring apply was not idempotent.');
+
+  const dashboardBytes = localStorage.getItem(primaryKey); let csvCapture = null; const originalDownload = App.download;
+  App.download = (content, filename, type) => { csvCapture = { content, filename, type }; };
+  App.switchView('dashboard'); document.getElementById('dash-from').value = month;
+  document.getElementById('dash-to').value = month; DashboardView.render(); await settle();
+  document.querySelector('[data-dashboard-basis="actual"]').click(); await settle();
+  assert(DashboardView.basis === 'actual', 'Dashboard Actual basis did not activate.');
+  assert(document.querySelector('[data-dashboard-basis="actual"]').getAttribute('aria-pressed') === 'true',
+    'Dashboard Actual basis did not expose pressed state.');
+  document.getElementById('btn-dashboard-csv').click(); await settle(); App.download = originalDownload;
+  assert(csvCapture?.filename === 'warm-ledger-dashboard-' + month + '-to-' + month + '-actual.csv',
+    'Dashboard CSV filename is incorrect.');
+  assert(csvCapture?.type === 'text/csv;charset=utf-8' && csvCapture.content.startsWith('\uFEFF'),
+    'Dashboard CSV encoding or media type is incorrect.');
+  assert(csvCapture.content.includes('"Incomplete"'), 'Dashboard CSV did not preserve incomplete actuals.');
+  assert(localStorage.getItem(primaryKey) === dashboardBytes, 'Dashboard basis or CSV export changed storage bytes.');
   App.switchView('data-health'); await settle();
   return { month, passiveActionsByteExact: true, monthlyReviewEdit: true, expenseDeleteCancelUndoStale: true,
     generatedTombstoneUndo: true, dataHealthPassiveRoutes: true, actualZeroPreviewCancelApply: true, actualApplyFailureAlertFocus: true,
@@ -364,7 +380,8 @@ const SCENARIO = `(async () => {
     payPeriodsPassiveByteExact: true, payPeriodsCanonicalActualsFundingStates: true,
     payPeriodsAllocationsReconcileHostileSafe: true, payPeriodsExactCanonicalCollapsedRoutes: true,
     payPeriodsFourDigitFunding: true, payPeriodsStaleAndZeroPaycheckRoutes: true,
-    previewCancelApply: true, backupRoundTrip: true, generatedIncome: Store.getMonth(month).paychecks.length,
+    previewCancelApply: true, backupRoundTrip: true, dashboardBasisCsvPassive: true,
+    generatedIncome: Store.getMonth(month).paychecks.length,
     generatedExpenses: Store.getMonth(month).expenses.length };
 })()`;
 

@@ -46,7 +46,7 @@ test('documentation preserves the aggregate-only audit and migration boundary', 
     'does not round, reject, migrate, or change the ledger', 'separately reviewed conversion and rollback workflow']) {
     assert.match(readme, new RegExp(phrase));
   }
-  assert.match(roadmap, /Phase 4A read-only precision audit complete locally/);
+  assert.match(roadmap, /Phase 4A read-only precision audit published/);
   assert.match(roadmap, /storage migration remains deferred/);
   assert.match(roadmap, /audit never rounds, repairs, rejects, or writes data/);
 });
