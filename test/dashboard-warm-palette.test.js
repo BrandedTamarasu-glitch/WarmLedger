@@ -123,6 +123,7 @@ test('chart configurations use frozen mappings without changing analytics intent
 
 test('palette wave preserves render and destruction lifecycle boundaries', () => {
   const { dashboard } = loadDashboard();
+  dashboard.renderForecast = () => {};
   const calls = [];
   for (const method of ['renderCategoryTrend', 'renderIncomePct', 'renderProjVsActual', 'renderSavingsRate',
     'renderPaymentMethod', 'renderYoY', 'renderSummaryTable']) dashboard[method] = months => calls.push([method, months]);
@@ -136,7 +137,7 @@ test('palette wave preserves render and destruction lifecycle boundaries', () =>
   dashboard.destroyAllCharts(); assert.equal(destroyed, 2);
   assert.equal(dashboard.charts.first, null); assert.equal(dashboard.charts.second, null);
 
-  assert.equal((source.match(/addEventListener\s*\(/g) || []).length, 6,
-    'two range listeners plus CSV, print, reporting-only Budget, and Data Health actions');
+  assert.equal((source.match(/addEventListener\s*\(/g) || []).length, 7,
+    'two range listeners plus CSV, print, forecast CSV, reporting-only Budget, and Data Health actions');
   assert.doesNotMatch(source, /MutationObserver|ResizeObserver|localStorage|sessionStorage|fetch\s*\(|XMLHttpRequest|WebSocket|setTimeout|setInterval/);
 });

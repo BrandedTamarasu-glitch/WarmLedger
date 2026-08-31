@@ -1246,6 +1246,15 @@ label:has(> #field-template-enabled) { display: flex; align-items: center; min-h
 .dashboard-export-actions .btn { min-height: 44px; }
 .dashboard-export-actions span { min-width: 0; color: var(--color-text-muted); line-height: 1.45; overflow-wrap: anywhere; }
 .dashboard-print-context { display: none; }
+.dashboard-forecast { margin-bottom: 18px; }
+.dashboard-forecast-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.dashboard-forecast-header > div:first-child { min-width: 0; }
+.dashboard-forecast-header p { max-width: 70ch; color: var(--color-text-muted); line-height: 1.5; overflow-wrap: anywhere; }
+.dashboard-forecast-controls { flex: 0 1 480px; min-width: 0; }
+#dashboard-forecast-horizon-label { display: block; margin-bottom: 8px; font-weight: 700; }
+.dashboard-forecast-controls > div { display: flex; flex-wrap: wrap; gap: 8px; }
+.dashboard-forecast-controls .btn { min-height: 44px; margin-top: 8px; white-space: normal; }
+.dashboard-forecast-controls .btn.is-selected { color: var(--color-on-accent); background: var(--color-accent); border-color: var(--color-accent); }
 .dashboard-range-status, .dashboard-empty {
   min-width: 0; margin: 0 0 18px; padding: 14px 16px; border: 1px solid var(--color-info);
   border-radius: var(--radius-control); background: var(--color-surface); line-height: 1.5; overflow-wrap: anywhere;
@@ -1486,6 +1495,10 @@ label:has(> #field-template-enabled) { display: flex; align-items: center; min-h
   .date-range label { flex: 0 1 auto; align-items: stretch; flex-direction: column; }
   .date-range input { flex: 0 1 auto; width: 100%; }
   .dashboard-basis-actions .btn, .dashboard-quick-range-actions .btn, .dashboard-export-actions .btn { width: 100%; }
+  .dashboard-forecast-header { flex-direction: column; }
+  .dashboard-forecast-controls { width: 100%; flex-basis: auto; }
+  .dashboard-forecast-controls > div { display: grid; grid-template-columns: minmax(0, 1fr); }
+  .dashboard-forecast-controls .btn { width: 100%; }
   .money-precision-audit > summary { padding-inline: 12px; }
   .money-precision-content { padding: 0 12px 12px; }
   .dashboard-range-status, .dashboard-empty, .dashboard-overview-card { padding: 12px; }
@@ -1673,6 +1686,9 @@ label:has(> #field-template-enabled) { display: flex; align-items: center; min-h
   .dashboard-basis-actions .btn, .dashboard-quick-range-actions .btn { color: ButtonText; background: ButtonFace; border-color: ButtonText; }
   .dashboard-basis-actions .btn.is-selected { color: HighlightText; background: Highlight; border-color: Highlight; }
   .dashboard-export-actions, .dashboard-export-actions span { color: CanvasText; background: Canvas; }
+  .dashboard-forecast, .dashboard-forecast-header, .dashboard-forecast-controls,
+  .dashboard-forecast-header p { color: CanvasText; background: Canvas; border-color: CanvasText; }
+  .dashboard-forecast-controls .btn.is-selected { color: HighlightText; background: Highlight; border-color: Highlight; }
   .dashboard-data-table caption, .dashboard-data-table th, .dashboard-data-table tbody th { color: CanvasText; }
   .data-health-overview, .data-health-section, .health-counts li, .actual-resolution-row,
   .backup-comparison, .undo-notice, .money-precision-audit, .money-precision-content {
@@ -1711,7 +1727,7 @@ label:has(> #field-template-enabled) { display: flex; align-items: center; min-h
   @page { margin: 12mm; }
   body, #application-shell { color: #000; background: #fff; }
   #application-shell { padding: 0; }
-  .topnav, .feedback-center, .dashboard-controls, .dashboard-range-status,
+  .topnav, .feedback-center, .dashboard-controls, .dashboard-range-status, .dashboard-forecast-controls,
   .dashboard-table-disclosure > summary, .dashboard-report-details > summary { display: none !important; }
   .view { display: none !important; }
   #view-dashboard { display: block !important; max-width: none; padding: 0; }

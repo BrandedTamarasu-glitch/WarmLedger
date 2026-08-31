@@ -358,6 +358,9 @@ const SCENARIO = `(async () => {
   assert(localStorage.getItem(primaryKey) === importBytes, 'No-op backup restore changed bytes.');
   const rerun = Store.previewRecurringMonth(month); assert(rerun.counts.additions === 0, 'Recurring apply was not idempotent.');
 
+  const forecastMonth = DashboardView.getForecastMonths()[0];
+  Store.addPaycheck(forecastMonth, { earnerId, plannedAmount: 88, actualAmount: null, date: '' });
+  Store.updateAllocation(forecastMonth, 'savings', 8);
   const dashboardBytes = localStorage.getItem(primaryKey); let csvCapture = null; const originalDownload = App.download;
   App.download = (content, filename, type) => { csvCapture = { content, filename, type }; };
   App.switchView('dashboard'); document.getElementById('dash-from').value = month;
@@ -366,12 +369,24 @@ const SCENARIO = `(async () => {
   assert(DashboardView.basis === 'actual', 'Dashboard Actual basis did not activate.');
   assert(document.querySelector('[data-dashboard-basis="actual"]').getAttribute('aria-pressed') === 'true',
     'Dashboard Actual basis did not expose pressed state.');
-  document.getElementById('btn-dashboard-csv').click(); await settle(); App.download = originalDownload;
+  document.getElementById('btn-dashboard-csv').click(); await settle();
   assert(csvCapture?.filename === 'warm-ledger-dashboard-' + month + '-to-' + month + '-actual.csv',
     'Dashboard CSV filename is incorrect.');
   assert(csvCapture?.type === 'text/csv;charset=utf-8' && csvCapture.content.startsWith('\uFEFF'),
     'Dashboard CSV encoding or media type is incorrect.');
   assert(csvCapture.content.includes('"Incomplete"'), 'Dashboard CSV did not preserve incomplete actuals.');
+  const forecastRows = [...document.querySelectorAll('#table-dashboard-forecast tbody tr')];
+  assert(forecastRows[0]?.textContent.includes('Saved month plan') && forecastRows[0].textContent.includes('$88'),
+    'Dashboard forecast did not render the saved future month.');
+  assert(forecastRows[1]?.textContent.includes('No saved plan'), 'Dashboard forecast estimated an absent future month.');
+  document.querySelector('[data-dashboard-forecast-horizon="6"]').click(); await settle();
+  assert(DashboardView.forecastHorizon === 6 &&
+    document.querySelector('[data-dashboard-forecast-horizon="6"]').getAttribute('aria-pressed') === 'true',
+    'Dashboard forecast horizon did not update accessibly.');
+  csvCapture = null; document.getElementById('btn-dashboard-forecast-csv').click(); await settle();
+  assert(csvCapture?.filename.startsWith('warm-ledger-forecast-') && csvCapture.content.includes('"Saved month plan"') &&
+    csvCapture.content.includes('"No saved plan"'), 'Dashboard forecast CSV did not preserve saved-only sources.');
+  App.download = originalDownload;
   const originalPrint = globalThis.print; let printCount = 0; globalThis.print = () => { printCount++; };
   document.getElementById('btn-dashboard-print').click(); await settle(); globalThis.print = originalPrint;
   assert(printCount === 1, 'Dashboard print action did not invoke browser print exactly once.');
@@ -387,6 +402,7 @@ const SCENARIO = `(async () => {
     payPeriodsAllocationsReconcileHostileSafe: true, payPeriodsExactCanonicalCollapsedRoutes: true,
     payPeriodsFourDigitFunding: true, payPeriodsStaleAndZeroPaycheckRoutes: true,
     previewCancelApply: true, backupRoundTrip: true, dashboardBasisCsvPrintPassive: true,
+    dashboardSavedMonthForecastPassive: true,
     generatedIncome: Store.getMonth(month).paychecks.length,
     generatedExpenses: Store.getMonth(month).expenses.length };
 })()`;

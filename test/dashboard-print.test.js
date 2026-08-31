@@ -44,6 +44,7 @@ test('print validates the range, requires rendered results, and invokes print on
 test('print context is updated from the validated range and selected basis', () => {
   const { dashboard, element } = load();
   dashboard.clearRenderedOutput = () => {}; dashboard.renderState = () => {}; dashboard.renderOverview = () => {};
+  dashboard.renderForecast = () => {};
   dashboard.getDateRange = () => ({ from: '2026-01', to: '2026-02' }); dashboard.basis = 'actual';
   dashboard.renderCategoryTrend = dashboard.renderIncomePct = dashboard.renderProjVsActual = () => {};
   dashboard.renderSavingsRate = dashboard.renderPaymentMethod = dashboard.renderYoY = dashboard.renderSummaryTable = () => {};

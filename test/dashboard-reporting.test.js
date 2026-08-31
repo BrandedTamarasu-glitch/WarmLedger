@@ -42,7 +42,8 @@ function load() {
     }
   });
   vm.runInContext(source, context);
-  return { dashboard: vm.runInContext('DashboardView', context), elements, element, months, switches, storeCalls };
+  const dashboard = vm.runInContext('DashboardView', context); dashboard.renderForecast = () => {};
+  return { dashboard, elements, element, months, switches, storeCalls };
 }
 
 test('strict civil range validation covers incomplete, malformed, reversed, same, 600, and 601 months', () => {

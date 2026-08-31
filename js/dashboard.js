@@ -36,9 +36,24 @@ function dashboardCsv(rows) {
   return `\uFEFF${rows.map(row => row.map(encode).join(',')).join('\r\n')}\r\n`;
 }
 
+function dashboardForecastMonths(horizon, civilDate) {
+  if (![3, 6, 12].includes(horizon) || !civilDate || !Number.isInteger(civilDate.year) ||
+      !Number.isInteger(civilDate.month) || civilDate.year < 0 || civilDate.year > 9999 ||
+      civilDate.month < 1 || civilDate.month > 12) return null;
+  const start = civilDate.year * 12 + civilDate.month;
+  const months = [];
+  for (let offset = 0; offset < horizon; offset++) {
+    const ordinal = start + offset; const year = Math.floor(ordinal / 12); const month = ordinal % 12 + 1;
+    if (year > 9999) return null;
+    months.push(`${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}`);
+  }
+  return Object.freeze(months);
+}
+
 const DashboardView = {
   charts: {},
   basis: 'planned',
+  forecastHorizon: 3,
 
   init() {
     this.bindEvents();
@@ -50,9 +65,13 @@ const DashboardView = {
     document.getElementById('dash-to').addEventListener('change', () => this.render());
     document.getElementById('btn-dashboard-csv').addEventListener('click', () => this.exportCsv());
     document.getElementById('btn-dashboard-print').addEventListener('click', () => this.printReport());
+    document.getElementById('btn-dashboard-forecast-csv').addEventListener('click', () => this.exportForecastCsv());
     if (typeof document.querySelectorAll === 'function') {
       document.querySelectorAll('[data-dashboard-basis]').forEach(button => {
         button.onclick = () => this.applyBasis(button.dataset.dashboardBasis);
+      });
+      document.querySelectorAll('[data-dashboard-forecast-horizon]').forEach(button => {
+        button.onclick = () => this.applyForecastHorizon(Number(button.dataset.dashboardForecastHorizon));
       });
       document.querySelectorAll('[data-dashboard-quick-range]').forEach(button => {
         button.onclick = () => this.applyQuickRange(button.dataset.dashboardQuickRange);
@@ -72,6 +91,16 @@ const DashboardView = {
     }
     this.render();
     return true;
+  },
+
+  applyForecastHorizon(horizon) {
+    if (![3, 6, 12].includes(horizon)) return false;
+    this.forecastHorizon = horizon;
+    document.querySelectorAll('[data-dashboard-forecast-horizon]').forEach(button => {
+      const selected = Number(button.dataset.dashboardForecastHorizon) === horizon;
+      button.setAttribute('aria-pressed', String(selected)); button.classList.toggle('is-selected', selected);
+    });
+    this.renderForecast(); return true;
   },
 
   applyQuickRange(command) {
@@ -109,6 +138,68 @@ const DashboardView = {
       }
     }
     return dashboardCsv(rows);
+  },
+
+  getForecastMonths() {
+    const now = new Date();
+    return dashboardForecastMonths(this.forecastHorizon, { year: now.getFullYear(), month: now.getMonth() + 1 }) || Object.freeze([]);
+  },
+
+  buildForecastModel(months) {
+    const storedMonths = new Set(Store.getAllMonthKeys());
+    const rows = months.map(month => {
+      if (!storedMonths.has(month)) return Object.freeze({ month, saved: false, income: null, expenses: null, allocations: null, remainder: null });
+      const summary = Store.calcMonthSummary(month);
+      const income = this.plannedIncome(summary); const expenses = this.plannedExpenses(summary);
+      const allocations = summary.totalAllocated ?? Object.values(Store.getMonth(month).allocations || {})
+        .reduce((sum, value) => sum + value, 0);
+      return Object.freeze({ month, saved: true, income, expenses, allocations,
+        remainder: income - expenses - allocations });
+    });
+    const savedCount = rows.filter(row => row.saved).length;
+    return Object.freeze({ months: Object.freeze([...months]), rows: Object.freeze(rows), savedCount });
+  },
+
+  renderForecast() {
+    this.destroyChart('forecast');
+    const model = this.buildForecastModel(this.getForecastMonths());
+    const state = document.getElementById('dashboard-forecast-state');
+    if (state) state.textContent = model.savedCount
+      ? `${model.savedCount} of ${model.rows.length} forecast months have a saved plan. Missing months are not estimated.`
+      : `No saved plans were found in the next ${model.rows.length} months. Missing months are not estimated.`;
+    const labels = model.rows.map(row => this.formatMonthShort(row.month));
+    const ctx = document.getElementById('chart-dashboard-forecast').getContext('2d');
+    this.charts.forecast = new Chart(ctx, { type: 'bar', data: { labels, datasets: [
+      { label: 'Planned income', data: model.rows.map(row => row.income), backgroundColor: DASHBOARD_THEME.info },
+      { label: 'Planned expenses and allocations', data: model.rows.map(row => row.saved ? row.expenses + row.allocations : null), backgroundColor: DASHBOARD_THEME.accent },
+      { label: 'Planned monthly remainder', data: model.rows.map(row => row.remainder), backgroundColor: DASHBOARD_THEME.positive }
+    ] }, options: { responsive: true,
+      plugins: { legend: { position: 'bottom', labels: { color: DASHBOARD_THEME.text, boxWidth: 12 } } },
+      scales: {
+        x: { ticks: { color: DASHBOARD_THEME.muted }, grid: { color: DASHBOARD_THEME.grid } },
+        y: { ticks: { color: DASHBOARD_THEME.muted, callback: value => '$' + value.toLocaleString() }, grid: { color: DASHBOARD_THEME.grid } }
+      }
+    } });
+    this.renderDataTable('table-dashboard-forecast', { caption: 'Saved future month plans',
+      columns: ['Month', 'Source', 'Planned income', 'Planned expenses', 'Planned allocations', 'Planned monthly remainder'],
+      rows: model.rows.map(row => ({ header: this.formatMonthShort(row.month), cells: [row.saved ? 'Saved month plan' : 'No saved plan',
+        this.formatForecastAmount(row.income), this.formatForecastAmount(row.expenses),
+        this.formatForecastAmount(row.allocations), this.formatForecastAmount(row.remainder)] })) });
+    return model;
+  },
+
+  formatForecastAmount(value) {
+    return value === null ? '— No saved plan' : this.formatWholeAmount(value);
+  },
+
+  exportForecastCsv() {
+    const model = this.buildForecastModel(this.getForecastMonths());
+    const rows = [['Month', 'Source', 'Planned income', 'Planned expenses', 'Planned allocations', 'Planned monthly remainder']];
+    model.rows.forEach(row => rows.push([row.month, row.saved ? 'Saved month plan' : 'No saved plan',
+      row.income, row.expenses, row.allocations, row.remainder]));
+    const from = model.months[0]; const to = model.months[model.months.length - 1];
+    App.download(dashboardCsv(rows), `warm-ledger-forecast-${from}-to-${to}.csv`, 'text/csv;charset=utf-8');
+    App.announceStatus(`Planned forecast CSV downloaded for ${from} to ${to}.`); return true;
   },
 
   exportCsv() {
@@ -433,6 +524,7 @@ const DashboardView = {
 
   render() {
     this.clearRenderedOutput();
+    this.renderForecast();
     const range = this.validateDateRange(this.getDateRange());
     if (range.status !== 'ready') { this.renderState(range); return; }
     const storedMonths = new Set(Store.getAllMonthKeys());

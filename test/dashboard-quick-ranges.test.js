@@ -32,6 +32,7 @@ function load({ year = 2026, monthIndex = 7 } = {}) {
       getElementById: element,
       querySelectorAll(selector) {
         if (selector === '[data-dashboard-basis]') return [];
+        if (selector === '[data-dashboard-forecast-horizon]') return [];
         assert.equal(selector, '[data-dashboard-quick-range]'); return buttons;
       }
     },

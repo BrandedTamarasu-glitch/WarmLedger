@@ -40,6 +40,8 @@ Dashboard CSV export uses the selected range and spending basis. It is generated
 
 Printable dashboard reports use the same validated range and spending basis. Printing hides application controls and charts, expands the authoritative data tables, includes the range and basis in the report, and uses a high-contrast paper layout. The browser's print destination can produce paper or PDF; Warm Ledger does not upload or persist the report.
 
+The Dashboard's **Planned forecast** is a read-only view of saved future months beginning with the next local calendar month. Choose a three-, six-, or twelve-month horizon to compare planned income, expenses, allocations, and month-local remainder. Months without a saved plan are shown as **No saved plan** and are never estimated. The forecast does not inspect or generate recurring-template occurrences, carry a remainder between months, or predict bank balances, payments, transfers, or reconciled cash. Its table, CSV export, and print presentation use the same saved-only contract.
+
 ## Run locally
 
 Open `index.html` in a modern browser. From this directory on Linux, for example:

@@ -163,6 +163,29 @@
         <p id="dashboard-range-help" class="field-help">Choose a start and end month or use a quick range. The range can include up to 600 months.</p>
       </fieldset>
       <div id="dashboard-state" class="dashboard-range-status dashboard-empty" role="status" aria-live="polite" aria-atomic="true" tabindex="-1" hidden></div>
+      <section class="dashboard-forecast dash-card wide" aria-labelledby="dashboard-forecast-heading">
+        <div class="dashboard-forecast-header">
+          <div>
+            <h3 id="dashboard-forecast-heading">Planned forecast</h3>
+            <p>Saved future months only. This monthly plan does not predict bank balances, payments, transfers, or reconciled cash.</p>
+          </div>
+          <div class="dashboard-forecast-controls" role="group" aria-labelledby="dashboard-forecast-horizon-label">
+            <span id="dashboard-forecast-horizon-label">Forecast horizon</span>
+            <div>
+              <button class="btn is-selected" type="button" data-dashboard-forecast-horizon="3" aria-pressed="true">Next 3 months</button>
+              <button class="btn" type="button" data-dashboard-forecast-horizon="6" aria-pressed="false">Next 6 months</button>
+              <button class="btn" type="button" data-dashboard-forecast-horizon="12" aria-pressed="false">Next 12 months</button>
+            </div>
+            <button id="btn-dashboard-forecast-csv" class="btn btn-secondary" type="button">Download forecast CSV</button>
+          </div>
+        </div>
+        <p id="dashboard-forecast-state" class="dash-card-note" role="status" aria-live="polite"></p>
+        <canvas id="chart-dashboard-forecast" aria-hidden="true"></canvas>
+        <details class="dashboard-table-disclosure">
+          <summary>View forecast data table</summary>
+          <div id="table-dashboard-forecast" class="dashboard-data-table table-scroll" role="region" aria-labelledby="dashboard-forecast-heading"></div>
+        </details>
+      </section>
       <div id="dashboard-results" hidden>
       <p id="dashboard-print-context" class="dashboard-print-context"></p>
       <section id="dashboard-overview" class="dashboard-overview" aria-label="Selected range overview"></section>
