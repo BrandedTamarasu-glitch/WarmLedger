@@ -78,7 +78,7 @@ test('valid export downloads selected range and basis while invalid range focuse
 
 test('CSV action is local-only, touch-sized, responsive, and documented', () => {
   assert.match(html, /id="btn-dashboard-csv"[^>]*type="button">Download CSV/);
-  assert.match(html, /Exports the selected range and spending basis\. Nothing is uploaded\./);
+  assert.match(html, /CSV and print reports use the selected range and spending basis\. Nothing is uploaded\./);
   assert.match(css, /\.dashboard-export-actions \.btn\s*\{[^}]*min-height:\s*44px/);
   assert.match(css, /@media \(max-width:\s*640px\)[\s\S]*\.dashboard-export-actions \.btn\s*\{[^}]*width:\s*100%/);
   assert.match(roadmap, /range- and basis-aware CSV export/);

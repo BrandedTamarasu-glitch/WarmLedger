@@ -87,7 +87,8 @@ Status: reporting truth, accessible chart tables, date-range safety, and quick r
 - Published: strict date-range validation, stale-visualization clearing, and Current month, Last 3 months, Last 6 months, and Year to date shortcuts.
 - Complete locally: an explicit Planned/Actual basis control for spending reports, with incomplete actuals preserved and planned-only reports clearly bounded.
 - Complete locally: range- and basis-aware CSV export with explicit completeness and spreadsheet-formula protection.
-- Deferred to later slices: forecasting and printable reports.
+- Complete locally: printable dashboard reports with explicit range and basis context, expanded data tables, and paper-safe presentation.
+- Deferred to a later slice: forecasting.
 
 ## Global release gates
 

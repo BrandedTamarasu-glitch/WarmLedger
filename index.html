@@ -157,12 +157,14 @@
         </div>
         <div class="dashboard-export-actions">
           <button id="btn-dashboard-csv" class="btn btn-secondary" type="button">Download CSV</button>
-          <span>Exports the selected range and spending basis. Nothing is uploaded.</span>
+          <button id="btn-dashboard-print" class="btn btn-secondary" type="button">Print report</button>
+          <span>CSV and print reports use the selected range and spending basis. Nothing is uploaded.</span>
         </div>
         <p id="dashboard-range-help" class="field-help">Choose a start and end month or use a quick range. The range can include up to 600 months.</p>
       </fieldset>
       <div id="dashboard-state" class="dashboard-range-status dashboard-empty" role="status" aria-live="polite" aria-atomic="true" tabindex="-1" hidden></div>
       <div id="dashboard-results" hidden>
+      <p id="dashboard-print-context" class="dashboard-print-context"></p>
       <section id="dashboard-overview" class="dashboard-overview" aria-label="Selected range overview"></section>
       <div class="dashboard-grid dashboard-primary-grid">
         <div class="dash-card wide">

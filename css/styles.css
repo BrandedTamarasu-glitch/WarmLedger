@@ -1245,6 +1245,7 @@ label:has(> #field-template-enabled) { display: flex; align-items: center; min-h
 .dashboard-export-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; min-width: 0; margin-top: 14px; }
 .dashboard-export-actions .btn { min-height: 44px; }
 .dashboard-export-actions span { min-width: 0; color: var(--color-text-muted); line-height: 1.45; overflow-wrap: anywhere; }
+.dashboard-print-context { display: none; }
 .dashboard-range-status, .dashboard-empty {
   min-width: 0; margin: 0 0 18px; padding: 14px 16px; border: 1px solid var(--color-info);
   border-radius: var(--radius-control); background: var(--color-surface); line-height: 1.5; overflow-wrap: anywhere;
@@ -1703,5 +1704,36 @@ label:has(> #field-template-enabled) { display: flex; align-items: center; min-h
   .template-activation-preview li { color: CanvasText; }
   #template-activation-month, #template-activation-preview, .template-activation-choice input {
     color: ButtonText; background: ButtonFace; border: 1px solid ButtonText; forced-color-adjust: auto;
+  }
+}
+
+@media print {
+  @page { margin: 12mm; }
+  body, #application-shell { color: #000; background: #fff; }
+  #application-shell { padding: 0; }
+  .topnav, .feedback-center, .dashboard-controls, .dashboard-range-status,
+  .dashboard-table-disclosure > summary, .dashboard-report-details > summary { display: none !important; }
+  .view { display: none !important; }
+  #view-dashboard { display: block !important; max-width: none; padding: 0; }
+  .dashboard-heading { margin-bottom: 8mm; }
+  .dashboard-heading p { color: #222; }
+  .dashboard-print-context { display: block; margin-bottom: 6mm; font-weight: 700; }
+  #dashboard-results { display: block !important; }
+  .dashboard-overview { grid-template-columns: repeat(3, 1fr); }
+  .dashboard-overview-card, .dash-card, .dashboard-report-details, .dashboard-yoy-state {
+    color: #000; background: #fff; border: 1px solid #777; box-shadow: none; break-inside: avoid;
+  }
+  .dashboard-overview-card h3, .dash-card h3, .dash-card-note,
+  .dashboard-data-table caption, .dashboard-data-table th, .dashboard-data-table tbody th { color: #000; }
+  .dashboard-grid { display: block; }
+  .dash-card { margin-bottom: 6mm; }
+  .dash-card canvas { display: none !important; }
+  .dashboard-report-details, .dashboard-report-details > *,
+  .dashboard-table-disclosure, .dashboard-table-disclosure > * { display: block !important; }
+  .dashboard-details-grid { padding: 0; }
+  .dashboard-data-table, .table-scroll { overflow: visible; }
+  .dashboard-data-table table, .table-scroll table { width: 100%; min-width: 0; font-size: 9pt; }
+  .dashboard-data-table th, .dashboard-data-table td, .table-scroll th, .table-scroll td {
+    color: #000; border-color: #999; white-space: normal;
   }
 }

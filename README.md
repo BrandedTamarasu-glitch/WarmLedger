@@ -38,6 +38,8 @@ The interface currently has one built-in warm-dark appearance rather than a them
 
 Dashboard CSV export uses the selected range and spending basis. It is generated locally and contains normalized monthly income, expense totals, category spending, and payment-method rows with explicit Complete or Incomplete status. Missing actual values remain blank rather than becoming zero, and text fields are protected from spreadsheet formula interpretation.
 
+Printable dashboard reports use the same validated range and spending basis. Printing hides application controls and charts, expands the authoritative data tables, includes the range and basis in the report, and uses a high-contrast paper layout. The browser's print destination can produce paper or PDF; Warm Ledger does not upload or persist the report.
+
 ## Run locally
 
 Open `index.html` in a modern browser. From this directory on Linux, for example:

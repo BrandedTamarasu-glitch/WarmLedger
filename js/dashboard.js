@@ -49,6 +49,7 @@ const DashboardView = {
     document.getElementById('dash-from').addEventListener('change', () => this.render());
     document.getElementById('dash-to').addEventListener('change', () => this.render());
     document.getElementById('btn-dashboard-csv').addEventListener('click', () => this.exportCsv());
+    document.getElementById('btn-dashboard-print').addEventListener('click', () => this.printReport());
     if (typeof document.querySelectorAll === 'function') {
       document.querySelectorAll('[data-dashboard-basis]').forEach(button => {
         button.onclick = () => this.applyBasis(button.dataset.dashboardBasis);
@@ -119,6 +120,21 @@ const DashboardView = {
     const content = this.buildCsv(range.months, this.basis);
     App.download(content, `warm-ledger-dashboard-${range.from}-to-${range.to}-${this.basis}.csv`, 'text/csv;charset=utf-8');
     App.announceStatus(`Dashboard CSV downloaded for ${range.from} to ${range.to} using ${this.basis} spending.`);
+    return true;
+  },
+
+  printReport() {
+    const range = this.validateDateRange(this.getDateRange());
+    if (range.status !== 'ready') {
+      this.clearRenderedOutput(); this.renderState(range);
+      document.getElementById('dashboard-state')?.focus(); return false;
+    }
+    this.render();
+    const results = document.getElementById('dashboard-results');
+    if (!results || results.hidden) {
+      document.getElementById('dashboard-state')?.focus(); return false;
+    }
+    globalThis.print();
     return true;
   },
 
@@ -430,6 +446,8 @@ const DashboardView = {
     this.renderState(range); this.renderOverview(entries);
     const results = document.getElementById('dashboard-results');
     if (results) results.hidden = false;
+    const printContext = document.getElementById('dashboard-print-context');
+    if (printContext) printContext.textContent = `Reporting range: ${range.from} to ${range.to}. Spending basis: ${this.basis === 'planned' ? 'Planned' : 'Actual'}.`;
     const months = [...range.months];
 
     this.renderCategoryTrend(months, this.basis);

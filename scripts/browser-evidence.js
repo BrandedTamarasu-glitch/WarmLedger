@@ -372,7 +372,13 @@ const SCENARIO = `(async () => {
   assert(csvCapture?.type === 'text/csv;charset=utf-8' && csvCapture.content.startsWith('\uFEFF'),
     'Dashboard CSV encoding or media type is incorrect.');
   assert(csvCapture.content.includes('"Incomplete"'), 'Dashboard CSV did not preserve incomplete actuals.');
-  assert(localStorage.getItem(primaryKey) === dashboardBytes, 'Dashboard basis or CSV export changed storage bytes.');
+  const originalPrint = globalThis.print; let printCount = 0; globalThis.print = () => { printCount++; };
+  document.getElementById('btn-dashboard-print').click(); await settle(); globalThis.print = originalPrint;
+  assert(printCount === 1, 'Dashboard print action did not invoke browser print exactly once.');
+  assert(document.getElementById('dashboard-print-context').textContent.includes(month) &&
+    document.getElementById('dashboard-print-context').textContent.includes('Actual'),
+    'Dashboard print context did not preserve range and basis.');
+  assert(localStorage.getItem(primaryKey) === dashboardBytes, 'Dashboard basis, CSV, or print changed storage bytes.');
   App.switchView('data-health'); await settle();
   return { month, passiveActionsByteExact: true, monthlyReviewEdit: true, expenseDeleteCancelUndoStale: true,
     generatedTombstoneUndo: true, dataHealthPassiveRoutes: true, actualZeroPreviewCancelApply: true, actualApplyFailureAlertFocus: true,
@@ -380,7 +386,7 @@ const SCENARIO = `(async () => {
     payPeriodsPassiveByteExact: true, payPeriodsCanonicalActualsFundingStates: true,
     payPeriodsAllocationsReconcileHostileSafe: true, payPeriodsExactCanonicalCollapsedRoutes: true,
     payPeriodsFourDigitFunding: true, payPeriodsStaleAndZeroPaycheckRoutes: true,
-    previewCancelApply: true, backupRoundTrip: true, dashboardBasisCsvPassive: true,
+    previewCancelApply: true, backupRoundTrip: true, dashboardBasisCsvPrintPassive: true,
     generatedIncome: Store.getMonth(month).paychecks.length,
     generatedExpenses: Store.getMonth(month).expenses.length };
 })()`;
