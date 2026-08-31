@@ -29,8 +29,13 @@ Deferred within this phase: automatic date inference, automatic template creatio
 
 ## Phase 3 — Template readiness
 
-- Review imported and suggested templates in one queue.
-- Show uncertain dates, amounts, and next occurrences.
+Status: first read-only readiness slice complete locally; activation remains deferred.
+
+- Review disabled templates and conservative repeated-manual-record suggestions in separate, clearly labeled lists.
+- Use an explicit local civil reference date, a three-calendar-month horizon, and at most three upcoming occurrences per disabled template.
+- Treat blank-date repeated records as schedule unknown and require an explicit schedule before Save.
+- Suppress suggestions only for exact same-kind semantic duplicates across every existing template state; retain near matches.
+- Keep queue rendering and Review actions write-free; Review opens the existing Add or Edit form without enabling or saving anything.
 - Support selected activation only after a combined next-month preview.
 - Never silently enable or generate recurring records.
 

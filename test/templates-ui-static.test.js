@@ -24,7 +24,9 @@ test('every declared integration ID is used and expense section IDs stay plural'
   assert.deepEqual(ids, [
     'btn-add-income-template', 'btn-add-expense-template',
     'templates-income', 'templates-expenses',
-    'templates-income-heading', 'templates-expenses-heading'
+    'templates-income-heading', 'templates-expenses-heading',
+    'template-readiness', 'template-readiness-heading',
+    'template-readiness-disabled', 'template-readiness-suggestions'
   ]);
   ids.forEach(id => assert.match(source, new RegExp(id)));
   assert.doesNotMatch(source, /templates-expense(?:['"`]|-heading)/);

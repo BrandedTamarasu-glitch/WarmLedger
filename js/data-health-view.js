@@ -219,15 +219,17 @@ const DataHealthView = {
   },
 
   patternsSection(patterns) {
-    const section = this.section('Repeated manual patterns', 'These manual record patterns appear in at least three distinct months and may be useful when reviewing recurring templates.');
+    const section = this.section('Repeated manual patterns', 'These exact manual record patterns appear in at least three distinct months. Review any suggestion before saving a recurring template.');
     if (!patterns.length) { section.append(this.empty('No repeated manual patterns were found.')); return section; }
     const list = this.node('ul', 'health-issue-list'); patterns.forEach(pattern => {
       const item = this.node('li'); const details = this.node('div', 'health-issue-details');
       const draft = this.templateDraft(pattern);
       details.append(this.node('strong', 'break-anywhere', draft.name),
-        this.node('span', 'muted-text', `${pattern.monthKeys.length} months · ${pattern.occurrences.length} records · Monthly on day ${draft.recurrence.day}`));
-      const button = this.node('button', 'btn btn-sm', 'Create template'); button.type = 'button';
-      button.setAttribute('aria-label', `Create a recurring template for ${draft.name}`);
+        this.node('span', 'muted-text', draft.recurrence
+          ? `${pattern.monthKeys.length} months · ${pattern.occurrences.length} records · Possible monthly schedule on day ${draft.recurrence.day}`
+          : `${pattern.monthKeys.length} months · ${pattern.occurrences.length} records · Schedule unknown — choose a schedule before saving`));
+      const button = this.node('button', 'btn btn-sm', 'Review template suggestion'); button.type = 'button';
+      button.setAttribute('aria-label', `Review template suggestion for ${draft.name}`);
       button.addEventListener('click', () => this.openPatternTemplate(pattern, button));
       item.append(details, button); list.append(item);
     }); section.append(list); return section;
@@ -241,12 +243,15 @@ const DataHealthView = {
   },
 
   templateDraft(pattern) {
-    const reference = pattern.occurrences[0]; const record = this.record(reference);
-    const date = record?.date || `${reference.monthKey}-01`;
+    const reference = pattern.occurrences.reduce((latest, item) =>
+      !latest || item.monthKey > latest.monthKey ? item : latest, null);
+    const record = this.record(reference);
+    const scheduleKnown = Boolean(record?.date);
     const latestMonth = pattern.monthKeys.at(-1);
     const draft = { name: pattern.kind === 'income' ? record.earner : record.name,
-      plannedAmount: record.plannedAmount, enabled: false, startDate: TemplatesView.nextMonthStart(`${latestMonth}-01`), endDate: null,
-      recurrence: { cadence: 'monthly', day: Number(date.slice(8)) } };
+      plannedAmount: record.plannedAmount, enabled: false,
+      startDate: scheduleKnown ? TemplatesView.nextMonthStart(`${latestMonth}-01`) : null, endDate: null,
+      recurrence: scheduleKnown ? { cadence: 'monthly', day: Number(record.date.slice(8)) } : null };
     if (pattern.kind === 'income') draft.earnerId = record.earnerId;
     else Object.assign(draft, { categoryId: record.categoryId, categoryItemId: record.categoryItemId, paymentMethod: record.paymentMethod });
     return draft;

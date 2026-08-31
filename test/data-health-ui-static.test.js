@@ -31,7 +31,8 @@ test('health workflows use frozen Store APIs without unsafe persisted-content si
   assert.match(view, /dialog\.returnValue\s*!==\s*'confirm'/);
   assert.match(view, /More checks and tools/);
   assert.match(view, /review-default-dates/);
-  assert.match(view, /Create template/);
+  assert.match(view, /Review template suggestion/);
+  assert.match(view, /Schedule unknown — choose a schedule before saving/);
   assert.match(view, /openPatternTemplate\(pattern, trigger\)/);
   assert.match(view, /Store\.getDataHealth\(\)\.repeatedManualPatterns\.find/);
   assert.match(view, /TemplatesView\.showTemplateModal/);

@@ -1092,6 +1092,25 @@ input, select, textarea, .expense-table input[type="number"], .expense-table sel
 #field-template-enabled { width: 20px; height: 20px; margin-right: 8px; accent-color: var(--color-accent); vertical-align: middle; }
 label:has(> #field-template-enabled) { display: flex; align-items: center; min-height: 44px; width: fit-content; }
 
+/* Template readiness is a passive review queue above canonical template management. */
+#template-readiness { min-width: 0; background: var(--color-surface-raised); }
+#template-readiness > p { max-width: 72ch; margin: 6px 0 18px; line-height: 1.55; overflow-wrap: anywhere; }
+#template-readiness > section { min-width: 0; padding-top: 16px; border-top: 1px solid var(--color-divider); }
+#template-readiness > section + section { margin-top: 20px; }
+#template-readiness h4 { margin-bottom: 10px; font-size: 15px; line-height: 1.4; overflow-wrap: anywhere; }
+.template-readiness-list { min-width: 0; display: grid; gap: 10px; list-style: none; }
+.template-readiness-card { min-width: 0; padding: 14px 16px; background: var(--color-surface); }
+.template-readiness-name { display: inline; margin-right: 10px; font-size: 15px; line-height: 1.4; overflow-wrap: anywhere; }
+.template-readiness-card .template-status { vertical-align: .15em; }
+.template-readiness-card .template-details { margin: 12px 0; padding: 10px 0; }
+.template-readiness-action {
+  min-width: 0;
+  min-height: 44px;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 /* Warm Ledger supporting views */
 #transfers-content { min-width: 0; }
 .transfers-grid { min-width: 0; gap: 18px; }
@@ -1367,6 +1386,8 @@ label:has(> #field-template-enabled) { display: flex; align-items: center; min-h
   .structure-actions .btn { min-height: 44px; }
   .template-details { grid-template-columns: 1fr; gap: 3px; }
   .template-details dd { margin-bottom: 8px; }
+  .template-readiness-card { padding: 12px; }
+  .template-readiness-action { width: fit-content; }
   .template-actions .btn, .budget-actions .btn { min-height: 44px; }
   .monthly-review-details { grid-template-columns: 1fr; gap: 3px; }
   .monthly-review-details dd { margin-bottom: 7px; }
@@ -1445,6 +1466,9 @@ label:has(> #field-template-enabled) { display: flex; align-items: center; min-h
   [data-structure-action^="move-"], [data-template-action^="move-"] { min-width: 44px; }
   .template-name { display: block; margin: 0 0 8px; }
   .template-status { margin-bottom: 4px; }
+  #template-readiness > section + section { margin-top: 16px; }
+  .template-readiness-name { display: block; margin: 0 0 8px; }
+  .template-readiness-action { width: 100%; }
   .transfer-card-header, .transfer-action { padding-inline: 14px; }
   .transfer-action-header { flex-wrap: wrap; }
   .transfer-action-amount { width: 100%; }
@@ -1489,6 +1513,7 @@ label:has(> #field-template-enabled) { display: flex; align-items: center; min-h
   .nav-tab, .btn, button, .category-header, .category-toggle, dialog, .restore-dialog,
   .modal, .modal-overlay, .feedback-center, .live-message, .paycheck-card, .monthly-review-action,
   .structure-card, .structure-subcard, .template-card, .structure-status, .template-status,
+  .template-readiness-card, .template-readiness-action,
   .structure-actions .btn, .template-actions .btn, .transfer-card, .dash-card,
   .recovery-snapshots li, .dashboard-range-status, .dashboard-empty, .dashboard-overview-card,
   .dashboard-report-details, .dashboard-report-details > summary,
@@ -1586,4 +1611,11 @@ label:has(> #field-template-enabled) { display: flex; align-items: center; min-h
   .pay-period-bill-pill { color: ButtonText; background: ButtonFace; border-color: ButtonText; }
   .health-counts strong { color: CanvasText; }
   .actual-resolution-row > input[type="checkbox"] { forced-color-adjust: auto; }
+  #template-readiness, #template-readiness > section, .template-readiness-card,
+  .template-readiness-list, .template-readiness-card .template-details {
+    color: CanvasText; background: Canvas; border-color: CanvasText; box-shadow: none;
+  }
+  #template-readiness > p, #template-readiness h4,
+  .template-readiness-name, .template-readiness-card dt, .template-readiness-card dd { color: CanvasText; }
+  .template-readiness-action { color: ButtonText; background: ButtonFace; border-color: ButtonText; }
 }

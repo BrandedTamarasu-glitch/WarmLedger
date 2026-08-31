@@ -5,7 +5,9 @@ const TemplatesView = {
   requiredElementIds: Object.freeze([
     'btn-add-income-template', 'btn-add-expense-template',
     'templates-income', 'templates-expenses',
-    'templates-income-heading', 'templates-expenses-heading'
+    'templates-income-heading', 'templates-expenses-heading',
+    'template-readiness', 'template-readiness-heading',
+    'template-readiness-disabled', 'template-readiness-suggestions'
   ]),
 
   init() {
@@ -24,8 +26,116 @@ const TemplatesView = {
   },
 
   render() {
+    this.renderReadiness();
     this.renderSection('income', Store.getIncomeTemplates());
     this.renderSection('expense', Store.getExpenseTemplates());
+  },
+
+  localReferenceDate() {
+    const today = new Date();
+    return `${String(today.getFullYear()).padStart(4, '0')}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  },
+
+  renderReadiness() {
+    const referenceDate = this.localReferenceDate();
+    const readiness = Store.getTemplateReadiness({ referenceDate });
+    this.renderReadinessList('disabled', readiness.disabledTemplates, referenceDate);
+    this.renderReadinessList('suggestions', readiness.suggestions, referenceDate);
+  },
+
+  renderReadinessList(type, entries, referenceDate) {
+    const container = document.getElementById(`template-readiness-${type}`); container.replaceChildren();
+    if (!entries.length) {
+      container.append(this.element('p', 'muted-text', type === 'disabled'
+        ? 'No disabled templates need review.' : 'No repeated-record suggestions need review.')); return;
+    }
+    const list = this.element('ul', 'template-readiness-list');
+    entries.forEach(entry => list.append(type === 'disabled'
+      ? this.disabledReadinessItem(entry, referenceDate) : this.suggestionReadinessItem(entry, referenceDate)));
+    container.append(list);
+  },
+
+  readinessIdentity(readinessItem, entry, label) {
+    const heading = this.element('h5', 'template-readiness-name', entry.name);
+    const status = this.element('span', 'template-status state-disabled', label);
+    readinessItem.append(heading, status);
+  },
+
+  disabledReadinessItem(entry, referenceDate) {
+    const readinessItem = this.element('li', 'template-card template-readiness-card');
+    this.readinessIdentity(readinessItem, entry, 'Disabled template');
+    const details = this.element('dl', 'template-details');
+    this.detail(details, 'Kind', entry.kind === 'income' ? 'Income' : 'Expense');
+    this.detail(details, 'Planned amount', this.money(entry.plannedAmount));
+    this.detail(details, 'Structure', this.readinessStructure(entry.kind, entry.structure));
+    this.detail(details, 'Schedule', this.recurrenceLabel(entry.schedule.recurrence));
+    this.detail(details, 'Active dates', `${entry.activeDates.startDate} through ${entry.activeDates.endDate || 'no end date'}`);
+    this.detail(details, 'Upcoming while disabled', entry.upcoming.dates.length
+      ? entry.upcoming.dates.join(', ') : entry.upcoming.reason);
+    const button = this.readinessButton('Review disabled template', entry, 'disabled', referenceDate);
+    readinessItem.append(details, button); return readinessItem;
+  },
+
+  suggestionReadinessItem(entry, referenceDate) {
+    const readinessItem = this.element('li', 'template-card template-readiness-card');
+    this.readinessIdentity(readinessItem, entry, 'Suggestion — not saved');
+    const details = this.element('dl', 'template-details');
+    this.detail(details, 'Kind', entry.kind === 'income' ? 'Income' : 'Expense');
+    this.detail(details, 'Planned amount', this.money(entry.plannedAmount));
+    this.detail(details, 'Structure', this.readinessStructure(entry.kind, entry.structure));
+    this.detail(details, 'Evidence', `${entry.evidence.count} records across ${entry.evidence.monthKeys.length} months: ${entry.evidence.monthKeys.join(', ')}`);
+    this.detail(details, 'Schedule', entry.schedule.known
+      ? `Possible ${this.recurrenceLabel(entry.schedule.recurrence).toLowerCase()}`
+      : 'Schedule unknown — choose a schedule before saving.');
+    this.detail(details, 'Possible upcoming dates', entry.upcoming.dates.length
+      ? entry.upcoming.dates.join(', ') : entry.upcoming.reason);
+    const button = this.readinessButton('Review suggestion', entry, 'suggestion', referenceDate);
+    readinessItem.append(details, button); return readinessItem;
+  },
+
+  readinessStructure(kind, structure) {
+    if (kind === 'income') {
+      const earner = Store.getEarner(structure.earnerId);
+      return `Earner: ${earner ? earner.name : 'No longer available'}`;
+    }
+    const category = Store.getCategory(structure.categoryId);
+    const preset = structure.categoryItemId && category ? Store.getCategoryItem(category.id, structure.categoryItemId) : null;
+    const method = ({ bank: 'Bank', credit_card: 'Credit card', savings: 'Savings', investments: 'Investments' })[structure.paymentMethod] || 'Unknown';
+    return `Category: ${category ? category.name : 'No longer available'}; preset: ${preset ? preset.name : 'None'}; payment method: ${method}`;
+  },
+
+  readinessButton(text, entry, type, referenceDate) {
+    const button = this.element('button', 'btn btn-sm template-readiness-action', text); button.type = 'button';
+    button.dataset.readinessType = type; button.dataset.templateKind = entry.kind;
+    button.dataset.readinessKey = type === 'disabled' ? entry.id : entry.key;
+    button.setAttribute('aria-label', `${text}: ${entry.name}`);
+    button.addEventListener('click', event => this.reviewReadiness(type, entry, referenceDate, event.currentTarget)); return button;
+  },
+
+  reviewReadiness(type, original, referenceDate, trigger) {
+    const current = Store.getTemplateReadiness({ referenceDate });
+    const entries = type === 'disabled' ? current.disabledTemplates : current.suggestions;
+    const match = entries.find(entry => entry.kind === original.kind &&
+      (type === 'disabled' ? entry.id === original.id : entry.key === original.key) &&
+      entry.fingerprint === original.fingerprint);
+    if (!match) { this.handleStaleReadiness(type, original); return; }
+    if (type === 'suggestion') { this.showTemplateModal(match.kind, null, trigger, match.draft); return; }
+    const records = match.kind === 'income' ? Store.getIncomeTemplates() : Store.getExpenseTemplates();
+    const template = records.find(record => record.id === match.id);
+    if (!template) { this.handleStaleReadiness(type, original); return; }
+    this.showTemplateModal(match.kind, template, trigger);
+  },
+
+  handleStaleReadiness(type, original) {
+    this.renderReadiness();
+    App.announceStatus('Template readiness changed. Review the refreshed list.');
+    requestAnimationFrame(() => {
+      const controls = [...document.querySelectorAll('[data-readiness-type][data-readiness-key]')];
+      const key = type === 'disabled' ? original.id : original.key;
+      const target = controls.find(control => control.dataset.readinessType === type &&
+        control.dataset.templateKind === original.kind && control.dataset.readinessKey === key);
+      (target || document.getElementById('template-readiness-heading')).focus({ preventScroll: true });
+    });
   },
 
   renderSection(kind, templates) {
@@ -158,7 +268,7 @@ const TemplatesView = {
       ${kind === 'expense' ? '<div class="form-group"><label for="field-template-item">Preset item (optional)</label><select id="field-template-item"></select></div><div class="form-group"><label for="field-template-method">Payment method</label><select id="field-template-method"><option value="bank">Bank</option><option value="credit_card">Credit card</option><option value="savings">Savings</option><option value="investments">Investments</option></select></div>' : ''}
       <div class="form-group"><label for="field-template-start">Start date (inclusive)</label><input id="field-template-start" type="date" required></div>
       <div class="form-group"><label for="field-template-end">End date (inclusive, optional)</label><input id="field-template-end" type="date"></div>
-      <div class="form-group"><label for="field-template-cadence">Repeats</label><select id="field-template-cadence"><option value="monthly">Monthly</option><option value="twice-monthly">Twice monthly</option><option value="weekly">Weekly</option><option value="biweekly">Every two weeks</option></select></div>
+      <div class="form-group"><label for="field-template-cadence">Repeats</label><select id="field-template-cadence" required><option value="">Choose a schedule</option><option value="monthly">Monthly</option><option value="twice-monthly">Twice monthly</option><option value="weekly">Weekly</option><option value="biweekly">Every two weeks</option></select></div>
       <div id="template-monthly-fields"><label for="field-template-day">Day of month</label><input id="field-template-day" type="number" min="1" max="31" value="1"><p class="field-help">Short months use their final day.</p></div>
       <div id="template-twice-fields"><label for="field-template-day-one">First day</label><input id="field-template-day-one" type="number" min="1" max="31" value="1"><label for="field-template-day-two">Second day</label><input id="field-template-day-two" type="number" min="1" max="31" value="15"><p class="field-help">Each day clamps independently; both occurrences remain if they land together.</p></div>
       <div id="template-anchor-fields"><label for="field-template-anchor">Anchor date</label><input id="field-template-anchor" type="date"></div>
@@ -208,17 +318,17 @@ const TemplatesView = {
   populateForm(existing) {
     document.getElementById('field-template-name').value = existing ? existing.name : '';
     document.getElementById('field-template-amount').value = existing ? existing.plannedAmount : '';
-    document.getElementById('field-template-start').value = existing ? existing.startDate : '';
+    document.getElementById('field-template-start').value = existing ? existing.startDate || '' : '';
     document.getElementById('field-template-end').value = existing ? existing.endDate || '' : '';
     document.getElementById('field-template-enabled').checked = existing ? existing.enabled : false;
     const recurrence = existing ? existing.recurrence : { cadence: 'monthly', day: 1 };
-    document.getElementById('field-template-cadence').value = recurrence.cadence;
-    if (recurrence.cadence === 'monthly') document.getElementById('field-template-day').value = recurrence.day;
-    if (recurrence.cadence === 'twice-monthly') {
+    document.getElementById('field-template-cadence').value = recurrence ? recurrence.cadence : '';
+    if (recurrence && recurrence.cadence === 'monthly') document.getElementById('field-template-day').value = recurrence.day;
+    if (recurrence && recurrence.cadence === 'twice-monthly') {
       document.getElementById('field-template-day-one').value = recurrence.days[0];
       document.getElementById('field-template-day-two').value = recurrence.days[1];
     }
-    if (recurrence.anchorDate) document.getElementById('field-template-anchor').value = recurrence.anchorDate;
+    if (recurrence && recurrence.anchorDate) document.getElementById('field-template-anchor').value = recurrence.anchorDate;
   },
 
   syncCadenceFields() {
@@ -238,6 +348,7 @@ const TemplatesView = {
 
   readRecurrence() {
     const cadence = document.getElementById('field-template-cadence').value;
+    if (!cadence) return null;
     if (cadence === 'monthly') return { cadence, day: Number(document.getElementById('field-template-day').value) };
     if (cadence === 'twice-monthly') return { cadence, days: [
       Number(document.getElementById('field-template-day-one').value),

@@ -96,6 +96,14 @@ For missing actuals, select only the records to resolve, enter each amount, and 
 
 ## Recurring templates
 
+### Template readiness
+
+The top of **Templates** contains a read-only Template readiness queue. It keeps existing **Disabled template** entries separate from **Suggestion — not saved** entries derived from repeated manual records. Reviewing an entry only opens the existing template form; the queue itself does not enable, save, create, or generate anything.
+
+The queue uses the device's explicit local civil date as its reference date and examines that month plus the next two calendar months. A disabled template shows at most its next three hypothetical occurrences. Suggestions are suppressed only by an exact same-kind semantic duplicate across enabled, disabled, or archived templates; near matches remain visible for review. Repeated records with blank dates have an unknown schedule, so their form starts at **Choose a schedule** and cannot be saved until a schedule is explicitly selected.
+
+Template readiness is separate from recurring generation. Existing recurring records are still created only from Budget through the explicit **Preview recurring items** then **Apply** workflow described below.
+
 Use **Templates** to add recurring income and expense plans, pause or archive them, and control their order. From the Budget view, choose **Preview recurring items** to review a month's additions and skips before confirming. Previewing and cancelling write nothing; confirmation adds the complete preview atomically.
 
 Generation is idempotent: rerunning a month does not duplicate existing occurrences or overwrite edited generated records. Dates use timezone-independent calendar arithmetic, including short-month clamping and two distinct occurrences when twice-monthly dates clamp to the same final day.

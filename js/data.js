@@ -1284,6 +1284,18 @@
       return DataHealth.analyze(schemaPolicy.clone(data));
     }
 
+    function getTemplateReadiness(options) {
+      requireReady();
+      if (!DataHealth || typeof DataHealth.buildTemplateReadiness !== 'function') {
+        throw new StoreError('DATA_HEALTH_UNAVAILABLE');
+      }
+      if (!options || typeof options !== 'object' || Array.isArray(options)) {
+        throw new StoreError('INVALID_REFERENCE_DATE');
+      }
+      try { return DataHealth.buildTemplateReadiness(schemaPolicy.clone(data), options.referenceDate); }
+      catch { throw new StoreError('INVALID_REFERENCE_DATE'); }
+    }
+
     function previewActualResolutions(proposals) {
       requireReady();
       let selections;
@@ -1494,7 +1506,7 @@
       clearMonth, previewRecurringMonth, applyRecurringPreview,
       getMonthReview, getPayPeriodPlan, getSuppressedOccurrences, unsuppressOccurrence,
       fundingDirection,
-      getDataHealth, previewActualResolutions, applyActualResolutions, previewDefaultDateResolutions, applyDefaultDateResolutions, compareAdditiveBackup,
+      getDataHealth, getTemplateReadiness, previewActualResolutions, applyActualResolutions, previewDefaultDateResolutions, applyDefaultDateResolutions, compareAdditiveBackup,
       calcMonthSummary, calcPaycheckRemaining, calcCategoryTotals, calcPaymentMethodTotals,
       buildExport, exportData, previewImport, commitImport, importData, listSnapshots,
       listSnapshotMetadata, restoreSnapshot, startFresh, getCorruptEvidence

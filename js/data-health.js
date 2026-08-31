@@ -1,9 +1,11 @@
 (function(root, factory) {
   'use strict';
-  const api = factory();
+  const Recurrence = root && root.ZeroBudgetRecurrence ? root.ZeroBudgetRecurrence
+    : (typeof require === 'function' ? require('./recurrence.js') : null);
+  const api = factory(Recurrence);
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (root) root.ZeroBudgetDataHealth = api;
-})(typeof globalThis !== 'undefined' ? globalThis : this, function() {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function(Recurrence) {
   'use strict';
 
   function clone(value) { return JSON.parse(JSON.stringify(value)); }
@@ -15,6 +17,19 @@
     return value;
   }
   function result(value) { return freeze(clone(value)); }
+  function stable(value) {
+    if (Array.isArray(value)) return `[${value.map(stable).join(',')}]`;
+    if (value && typeof value === 'object') return `{${Object.keys(value).sort().map(key =>
+      `${JSON.stringify(key)}:${stable(value[key])}`).join(',')}}`;
+    return JSON.stringify(value);
+  }
+  function shortKey(value) {
+    let hash = 2166136261;
+    for (let index = 0; index < value.length; index++) {
+      hash ^= value.charCodeAt(index); hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0).toString(16).padStart(8, '0');
+  }
   function nextMonth(monthKey) {
     const year = Number(monthKey.slice(0, 4));
     const month = Number(monthKey.slice(5));
@@ -26,6 +41,97 @@
       plannedAmount: record.plannedAmount, datePattern });
     return JSON.stringify({ categoryId: record.categoryId, categoryItemId: record.categoryItemId,
       name: record.name, plannedAmount: record.plannedAmount, paymentMethod: record.paymentMethod, datePattern });
+  }
+
+  function validateReferenceDate(value) {
+    if (!Recurrence || typeof value !== 'string') throw new TypeError('Invalid reference date');
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+    if (!match) throw new RangeError('Invalid reference date');
+    const month = Number(match[2]); const day = Number(match[3]);
+    if (month < 1 || month > 12 || day < 1 || day > Recurrence.daysInMonth(Number(match[1]), month)) {
+      throw new RangeError('Invalid reference date');
+    }
+    return value;
+  }
+
+  function sameRecurrence(left, right) { return stable(left) === stable(right); }
+
+  function buildTemplateReadiness(data, referenceDate) {
+    validateReferenceDate(referenceDate);
+    const startMonth = referenceDate.slice(0, 7);
+    const monthKeys = [startMonth, nextMonth(startMonth), nextMonth(nextMonth(startMonth))];
+    const disabledTemplates = [];
+    for (const [kind, templates] of [['income', data.templates.income], ['expense', data.templates.expenses]]) {
+      for (const template of templates) {
+        if (template.enabled || template.archived) continue;
+        const hypothetical = { ...clone(template), enabled: true, archived: false };
+        const dates = monthKeys.flatMap(monthKey => Recurrence.occurrencesForMonth(hypothetical, monthKey)
+          .map(occurrence => occurrence.scheduledDate))
+          .filter(date => date >= referenceDate).sort().slice(0, 3);
+        const structure = kind === 'income' ? { earnerId: template.earnerId }
+          : { categoryId: template.categoryId, categoryItemId: template.categoryItemId,
+            paymentMethod: template.paymentMethod };
+        const fingerprint = stable({ kind, template });
+        disabledTemplates.push({
+          kind, id: template.id, fingerprint, name: template.name, plannedAmount: template.plannedAmount,
+          flags: { saved: true, disabled: true, archived: false },
+          structure, schedule: { known: true, recurrence: clone(template.recurrence) },
+          activeDates: { startDate: template.startDate, endDate: template.endDate },
+          upcoming: { dates, reason: dates.length ? null : 'No occurrences in the three-month horizon.' }
+        });
+      }
+    }
+
+    const health = analyze(data); const suggestions = [];
+    for (const pattern of health.repeatedManualPatterns) {
+      const references = pattern.occurrences;
+      const latest = references.reduce((selected, reference) =>
+        !selected || reference.monthKey > selected.monthKey ? reference : selected, null);
+      const month = data.months[latest.monthKey];
+      const records = pattern.kind === 'income' ? month.paychecks : month.expenses;
+      const record = records.find(item => item.id === latest.recordId);
+      const dateKnown = record.date !== '';
+      const recurrence = dateKnown ? { cadence: 'monthly', day: Number(record.date.slice(8)) } : null;
+      const structure = pattern.kind === 'income' ? { earnerId: record.earnerId }
+        : { categoryId: record.categoryId, categoryItemId: record.categoryItemId,
+          paymentMethod: record.paymentMethod };
+      const semantic = { kind: pattern.kind, name: pattern.kind === 'income' ? record.earner : record.name,
+        structure, plannedAmount: record.plannedAmount, recurrence };
+      const templates = pattern.kind === 'income' ? data.templates.income : data.templates.expenses;
+      const duplicate = dateKnown && templates.some(template => template.name === semantic.name &&
+        template.plannedAmount === semantic.plannedAmount && sameRecurrence(template.recurrence, recurrence) &&
+        (pattern.kind === 'income' ? template.earnerId === structure.earnerId
+          : template.categoryId === structure.categoryId && template.categoryItemId === structure.categoryItemId &&
+            template.paymentMethod === structure.paymentMethod));
+      if (duplicate) continue;
+      const latestEvidenceMonth = pattern.monthKeys.at(-1);
+      const startDate = dateKnown ? `${nextMonth(latestEvidenceMonth)}-01` : null;
+      const upcomingDates = dateKnown ? monthKeys.flatMap(monthKey => Recurrence.occurrencesForMonth({
+        enabled: true, archived: false, startDate, endDate: null, recurrence
+      }, monthKey).map(occurrence => occurrence.scheduledDate))
+        .filter(date => date >= referenceDate).sort().slice(0, 3) : [];
+      const draft = pattern.kind === 'income'
+        ? { name: semantic.name, earnerId: structure.earnerId, plannedAmount: record.plannedAmount,
+          enabled: false, startDate, endDate: null, recurrence: clone(recurrence) }
+        : { name: semantic.name, categoryId: structure.categoryId, categoryItemId: structure.categoryItemId,
+          plannedAmount: record.plannedAmount, paymentMethod: structure.paymentMethod, enabled: false,
+          startDate, endDate: null, recurrence: clone(recurrence) };
+      const fingerprint = stable({ semantic, evidenceMonths: pattern.monthKeys, evidence: references });
+      suggestions.push({
+        kind: pattern.kind, key: `suggestion-${pattern.kind}-${shortKey(fingerprint)}`, fingerprint,
+        name: semantic.name, plannedAmount: record.plannedAmount, structure,
+        flags: { saved: false, disabled: true, scheduleKnown: dateKnown },
+        evidence: { count: references.length, monthKeys: [...pattern.monthKeys], occurrences: clone(references) },
+        schedule: { known: dateKnown, recurrence: clone(recurrence),
+          reason: dateKnown ? null : 'Schedule unknown — choose a schedule before saving.' },
+        upcoming: { dates: upcomingDates, reason: dateKnown
+          ? (upcomingDates.length ? null : 'No occurrences in the three-month horizon.') : 'Schedule unknown.' },
+        draft
+      });
+    }
+    return result({ referenceDate, horizon: { startMonth, endMonth: monthKeys.at(-1), monthKeys },
+      disabledTemplates, suggestions,
+      counts: { disabledTemplates: disabledTemplates.length, suggestions: suggestions.length } });
   }
 
   function analyze(data) {
@@ -78,5 +184,5 @@
         repeatedManualPatterns: repeatedManualPatterns.length } });
   }
 
-  return Object.freeze({ analyze });
+  return Object.freeze({ analyze, buildTemplateReadiness });
 });
