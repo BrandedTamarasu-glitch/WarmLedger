@@ -13,7 +13,7 @@ const DEFAULT_SIZES = Object.freeze([
 const DEFAULT_ITERATIONS = 3;
 const LIMITS = Object.freeze({ sizes: 6, months: 120, expensesPerMonth: 1000, records: 50000, iterations: 20 });
 const OPERATIONS = Object.freeze([
-  'startup_load', 'ordinary_edit_commit', 'prepare_dashboard_range',
+  'startup_load', 'ordinary_edit_commit', 'month_sharded_ordinary_edit_commit', 'prepare_dashboard_range',
   'saved_record_search', 'saved_month_comparison', 'explain_change'
 ]);
 
@@ -155,12 +155,17 @@ function timed(callback) {
   return { duration: performance.now() - start, observation };
 }
 
-function makeStore(raw) {
-  const storage = new InstrumentedStorage({ [STORAGE_KEY]: raw });
-  let sequence = 0;
+function makeStore(raw, initial = null, uuidOffset = 0) {
+  const storage = new InstrumentedStorage(initial || { [STORAGE_KEY]: raw });
+  let sequence = uuidOffset;
   const store = createStore({ storage, now: () => new Date('2026-09-01T12:00:00.000Z'),
-    uuid: () => `benchmark-${++sequence}` });
+    uuid: () => `00000000-0000-4000-8000-${String(++sequence).padStart(12, '0')}` });
   return { store, storage };
+}
+
+function activeManifest(storage) {
+  const root = JSON.parse(storage.values.get(STORAGE_KEY));
+  return { root, manifest: JSON.parse(storage.values.get(root.manifestKey)) };
 }
 
 function writeObservation(operations) {
@@ -170,6 +175,31 @@ function writeObservation(operations) {
   return { writeCount: writes.length, writtenBytes: writes.reduce((sum, item) => sum + item.bytes, 0),
     primaryWriteCount: primary.length, primaryWrittenBytes: primary.reduce((sum, item) => sum + item.bytes, 0),
     snapshotWriteCount: snapshots.length, snapshotWrittenBytes: snapshots.reduce((sum, item) => sum + item.bytes, 0) };
+}
+
+function shardedWriteObservation(storage, operations, before) {
+  const observation = writeObservation(operations);
+  const writes = operations.filter(operation => operation.type === 'write');
+  const activeLayoutWrites = writes.filter(item => item.key === STORAGE_KEY ||
+    item.key.startsWith('zeroBudget_manifest:') || item.key.startsWith('zeroBudget_global:') ||
+    item.key.startsWith('zeroBudget_month:'));
+  const after = activeManifest(storage);
+  const unchangedMonths = before.manifest.monthOrder.filter(monthKey =>
+    before.manifest.months[monthKey].key === after.manifest.months[monthKey].key);
+  const changedMonths = before.manifest.monthOrder.filter(monthKey =>
+    before.manifest.months[monthKey].key !== after.manifest.months[monthKey].key);
+  return {
+    ...observation,
+    activeLayoutWriteCount: activeLayoutWrites.length,
+    activeLayoutWrittenBytes: activeLayoutWrites.reduce((sum, item) => sum + item.bytes, 0),
+    journalWriteCount: writes.filter(item => item.key === 'zeroBudget_journal').length,
+    manifestWriteCount: writes.filter(item => item.key.startsWith('zeroBudget_manifest:')).length,
+    globalShardWriteCount: writes.filter(item => item.key.startsWith('zeroBudget_global:')).length,
+    monthShardWriteCount: writes.filter(item => item.key.startsWith('zeroBudget_month:')).length,
+    reusedGlobalReferenceCount: before.manifest.global.key === after.manifest.global.key ? 1 : 0,
+    reusedMonthReferenceCount: unchangedMonths.length,
+    changedMonthReferenceCount: changedMonths.length
+  };
 }
 
 function aggregateObservations(items) {
@@ -200,11 +230,35 @@ function benchmarkSize(size, iterations) {
     return { stateReady: state === 'ready' ? 1 : 0,
       storageReadCount: storage.operations.filter(item => item.type === 'read').length };
   });
+  const legacyEditStores = Array.from({ length: iterations }, () => {
+    const subject = makeStore(raw);
+    subject.store.load();
+    subject.storage.resetOperations();
+    return subject;
+  });
   operations.ordinary_edit_commit = measureOperation(iterations, index => {
-    const { store, storage } = makeStore(raw); store.load(); storage.resetOperations();
+    const { store, storage } = legacyEditStores[index];
     store.updateExpense(baselineMonth, ledger.months[baselineMonth].expenses[0].id,
       { actualAmount: 21 + index / 100 });
     return writeObservation(storage.operations);
+  });
+  const migratedSeed = makeStore(raw);
+  migratedSeed.store.load();
+  migratedSeed.store.commitShardedPersistenceMigration(
+    migratedSeed.store.previewShardedPersistenceMigration());
+  const migratedInitial = Object.fromEntries(migratedSeed.storage.values);
+  const shardedEditStores = Array.from({ length: iterations }, (_, index) => {
+    const subject = makeStore(raw, migratedInitial, 1000 + index * 10);
+    subject.store.load();
+    const before = activeManifest(subject.storage);
+    subject.storage.resetOperations();
+    return { ...subject, before };
+  });
+  operations.month_sharded_ordinary_edit_commit = measureOperation(iterations, index => {
+    const { store, storage, before } = shardedEditStores[index];
+    store.updateExpense(baselineMonth, ledger.months[baselineMonth].expenses[0].id,
+      { actualAmount: 21 + index / 100 });
+    return shardedWriteObservation(storage, storage.operations, before);
   });
   const loaded = makeStore(raw); loaded.store.load(); loaded.storage.resetOperations();
   operations.prepare_dashboard_range = measureOperation(iterations, () => {
@@ -239,7 +293,7 @@ function runBenchmark(options) {
     throw new Error(`iterations must be between 1 and ${LIMITS.iterations}`);
   }
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     benchmark: 'warm-ledger-large-ledger',
     measurementOnly: true,
     units: { duration: 'milliseconds', storage: 'UTF-8 bytes' },
@@ -257,7 +311,10 @@ function humanSummary(report) {
       `(${fixture.serializedBytes} bytes)`);
     for (const name of OPERATIONS) {
       const duration = result.operations[name].duration;
-      lines.push(`  ${name}: median ${duration.medianMs} ms, p95 ${duration.p95Ms} ms`);
+      const observation = result.operations[name].observations;
+      const writeSuffix = typeof observation.writtenBytes === 'number'
+        ? `, mean writes ${Math.round(observation.writtenBytes)} bytes` : '';
+      lines.push(`  ${name}: median ${duration.medianMs} ms, p95 ${duration.p95Ms} ms${writeSuffix}`);
     }
   }
   return lines.join('\n');

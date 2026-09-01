@@ -38,6 +38,7 @@ test('synthetic fixture shape is deterministic, generic, and exercises null vers
 test('small benchmark covers every operation with a privacy-safe measurement-only schema', () => {
   const report = Benchmark.runBenchmark({ sizes: [{ months: 2, expensesPerMonth: 3 }], iterations: 1 });
   assert.equal(report.measurementOnly, true);
+  assert.equal(report.schemaVersion, 2);
   assert.deepEqual(report.operationCoverage, [...Benchmark.OPERATIONS]);
   assert.deepEqual(Object.keys(report.results[0].operations), [...Benchmark.OPERATIONS]);
   for (const operation of Object.values(report.results[0].operations)) {
@@ -51,6 +52,26 @@ test('small benchmark covers every operation with a privacy-safe measurement-onl
   assert.doesNotMatch(serialized, /threshold|passed|failed|hostname|username|cwd/i);
 });
 
+test('migrated ordinary edit writes one month shard and reuses every unaffected reference', () => {
+  const months = 3;
+  const report = Benchmark.runBenchmark({ sizes: [{ months, expensesPerMonth: 4 }], iterations: 1 });
+  const legacy = report.results[0].operations.ordinary_edit_commit.observations;
+  const sharded = report.results[0].operations.month_sharded_ordinary_edit_commit.observations;
+
+  assert.equal(sharded.monthShardWriteCount, 1);
+  assert.equal(sharded.activeLayoutWriteCount, 3);
+  assert.ok(sharded.activeLayoutWrittenBytes > sharded.primaryWrittenBytes);
+  assert.ok(sharded.activeLayoutWrittenBytes < sharded.writtenBytes);
+  assert.equal(sharded.manifestWriteCount, 1);
+  assert.equal(sharded.primaryWriteCount, 1);
+  assert.equal(sharded.globalShardWriteCount, 0);
+  assert.equal(sharded.reusedGlobalReferenceCount, 1);
+  assert.equal(sharded.reusedMonthReferenceCount, months - 1);
+  assert.equal(sharded.changedMonthReferenceCount, 1);
+  assert.ok(sharded.writtenBytes < legacy.writtenBytes,
+    `expected sharded writes (${sharded.writtenBytes}) below legacy writes (${legacy.writtenBytes})`);
+});
+
 test('small smoke report writes parseable JSON and produces a concise human summary', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'warm-ledger-benchmark-'));
   const output = path.join(directory, 'result.json');
@@ -61,4 +82,5 @@ test('small smoke report writes parseable JSON and produces a concise human summ
   const summary = Benchmark.humanSummary(report);
   assert.match(summary, /measurement only; no pass\/fail thresholds/);
   assert.match(summary, /startup_load: median/);
+  assert.match(summary, /month_sharded_ordinary_edit_commit: median .*mean writes \d+ bytes/);
 });

@@ -114,7 +114,7 @@ The browser suite exercises the explicit month-sharded migration, verifies byte-
 
 ### Large-ledger performance profiling
 
-The dependency-free benchmark harness builds deterministic, generic synthetic ledgers and measures startup/load, an ordinary expense edit and commit, prepared Dashboard range generation, saved-record search, saved-month comparison, and Explain change:
+The dependency-free benchmark harness builds deterministic, generic synthetic ledgers and measures startup/load, the same ordinary expense edit and commit in both legacy and month-sharded active storage, prepared Dashboard range generation, saved-record search, saved-month comparison, and Explain change:
 
 ```bash
 npm run benchmark:ledger
@@ -126,11 +126,11 @@ It writes machine-readable JSON to standard output and a concise human summary t
 npm run benchmark:ledger -- --sizes 12x50,36x100,60x200 --iterations 3 --output benchmark-results-local.json
 ```
 
-Sizes use `months x expenses-per-month`. Defaults and accepted overrides are bounded to protect local machines; run `npm run benchmark:ledger -- --help` for the current limits. Reports contain aggregate fixture counts, serialized byte counts, duration distributions, operation result counts, and edit write-byte counts—never synthetic record labels or identifiers.
+Sizes use `months x expenses-per-month`. Defaults and accepted overrides are bounded to protect local machines; run `npm run benchmark:ledger -- --help` for the current limits. Schema-version-2 reports contain aggregate fixture counts, serialized byte counts, duration distributions, operation result counts, total edit write-byte counts, active-layout write bytes, and shard/reference reuse counts—never synthetic record labels or identifiers.
 
-Benchmark durations are measurements, not test assertions: normal tests intentionally have no wall-clock thresholds. Compare repeated runs on the same machine and runtime. Consider a separately reviewed active-storage sharding migration only if representative ledgers show that ordinary edit commits scale materially with serialized ledger bytes and create user-visible latency. If read-only operations dominate instead, optimize the measured scanner or projection rather than changing the compatible monolithic storage format. Record a baseline and a candidate run before making either decision.
+Benchmark durations are measurements, not test assertions: normal tests intentionally have no wall-clock thresholds. Compare repeated legacy and month-sharded runs on the same machine and runtime. Use the write-byte and shard-reuse measurements to verify that ordinary sharded edits remain narrowly scoped; if a read-only operation becomes dominant instead, optimize that measured scanner or projection rather than adding broader persistence machinery.
 
-The published 2026-09-01 synthetic baseline found that a 60-month ledger with 200 expenses per month serialized to about 3.44 MB. Median startup was about 123 ms and read-side operations stayed below 5 ms, while a first-daily ordinary edit took about 855 ms and wrote about 6.88 MB across the active ledger and safety snapshot. That evidence isolates the compatible monolithic commit path as the remaining scaling ceiling and authorizes the separately reviewed, preview-first month-sharded persistence implementation. These figures are directional measurements from one machine, not universal performance guarantees.
+The published 2026-09-01 synthetic baseline found that a 60-month ledger with 200 expenses per month serialized to about 3.44 MB. Median startup was about 123 ms and read-side operations stayed below 5 ms, while a first-daily ordinary legacy edit took about 855 ms and wrote about 6.88 MB across the active ledger and safety snapshot. A same-harness month-sharded candidate run wrote about 3.52 MB total, including that first-daily full safety snapshot; its active layout changed exactly one month shard, one manifest, and the root pointer while reusing the global shard and 59 unaffected month references. The measured total-write reduction was about 49%. These figures are directional measurements from one machine, not pass/fail thresholds or universal performance guarantees.
 
 ## Monthly Review
 
