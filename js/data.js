@@ -1654,6 +1654,109 @@
       });
     }
 
+    function projectMonthAttention(monthKey) {
+      requireReady();
+      validateMonthKey(monthKey);
+      const exists = Object.hasOwn(data.months, monthKey);
+      const month = data.months[monthKey];
+      const records = exists ? [...month.paychecks, ...month.expenses] : [];
+      const empty = exists && records.length === 0;
+      const manualClearing = residentSchemaVersion === Schema.V5_SCHEMA_VERSION;
+      const counts = {
+        actualsMissing: records.filter(record => record.actualAmount === null).length,
+        datesMissing: records.filter(record => record.date === '').length,
+        fundingIssues: exists ? month.expenses.filter(expense => fundingDirection(
+          expense.plannedAmount - Object.values(expense.paycheckAmounts)
+            .reduce((sum, amount) => sum + amount, 0)
+        ) !== 0).length : 0,
+        notManuallyCleared: manualClearing
+          ? records.filter(record => record.cleared !== true).length : null
+      };
+      const attentionKinds = [];
+      if (counts.actualsMissing > 0) attentionKinds.push('actuals');
+      if (counts.datesMissing > 0) attentionKinds.push('dates');
+      if (counts.fundingIssues > 0) attentionKinds.push('funding');
+      if (manualClearing && counts.notManuallyCleared > 0) attentionKinds.push('manual-clearing');
+      return {
+        monthKey, exists, empty, counts,
+        availability: { manualClearing }, attentionKinds,
+        allApplicableFactsClear: exists && !empty && attentionKinds.length === 0
+      };
+    }
+
+    function getMonthReviewQueue(request) {
+      requireReady();
+      const prototype = request && typeof request === 'object' && !Array.isArray(request)
+        ? Object.getPrototypeOf(request) : undefined;
+      const allowedKeys = ['anchorMonth', 'lookbackMonths'];
+      if (!request || typeof request !== 'object' || Array.isArray(request) ||
+          (prototype !== Object.prototype && prototype !== null) || !Object.hasOwn(request, 'anchorMonth') ||
+          Reflect.ownKeys(request).some(key => typeof key !== 'string' || !allowedKeys.includes(key))) {
+        throw new StoreError('INVALID_MONTH_REVIEW_QUEUE');
+      }
+      validateMonthKey(request.anchorMonth);
+      const lookbackMonths = Object.hasOwn(request, 'lookbackMonths') ? request.lookbackMonths : 12;
+      if (![6, 12, 24].includes(lookbackMonths)) throw new StoreError('INVALID_MONTH_REVIEW_LOOKBACK');
+
+      const [anchorYear, anchorMonth] = request.anchorMonth.split('-').map(Number);
+      const anchorIndex = anchorYear * 12 + anchorMonth - 1;
+      const windowMonths = [];
+      for (let offset = 0; offset < lookbackMonths; offset += 1) {
+        const index = anchorIndex - offset;
+        if (index < 0) continue;
+        const year = Math.floor(index / 12);
+        const month = index % 12 + 1;
+        windowMonths.push(`${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}`);
+      }
+      const saved = windowMonths.filter(monthKey => Object.hasOwn(data.months, monthKey))
+        .map(monthKey => projectMonthAttention(monthKey));
+      const items = saved.filter(item => !item.empty && item.attentionKinds.length > 0);
+      const emptyMonths = saved.filter(item => item.empty).map(item => item.monthKey);
+      return freezeDetached({
+        anchorMonth: request.anchorMonth, lookbackMonths,
+        coverage: {
+          savedMonthCount: saved.length,
+          emptyMonthCount: emptyMonths.length,
+          monthsWithAttentionCount: items.length,
+          savedMonthsClearCount: saved.filter(item => !item.empty && item.allApplicableFactsClear).length
+        },
+        items, emptyMonths
+      });
+    }
+
+    function getNextReviewSteps(monthKey) {
+      const attention = projectMonthAttention(monthKey);
+      const review = getMonthReview(monthKey);
+      const definitions = {
+        actuals: { label: 'Enter actual amounts', routeTarget: 'budget-actuals' },
+        dates: { label: 'Add record dates', routeTarget: 'budget-dates' },
+        funding: { label: 'Review paycheck funding', routeTarget: 'budget-funding' },
+        'manual-clearing': { label: 'Review manual cleared marks', routeTarget: 'manual-cleared-checklist' }
+      };
+      const countForKind = {
+        actuals: attention.counts.actualsMissing,
+        dates: attention.counts.datesMissing,
+        funding: attention.counts.fundingIssues,
+        'manual-clearing': attention.counts.notManuallyCleared
+      };
+      const stepOrder = ['dates', 'actuals', 'funding', 'manual-clearing'];
+      const steps = stepOrder.filter(kind => attention.attentionKinds.includes(kind)).map(kind => ({
+        kind, count: countForKind[kind], label: definitions[kind].label,
+        routeTarget: definitions[kind].routeTarget
+      }));
+      if (review.states.needsRecurringReview) steps.unshift({
+        kind: 'recurring', count: review.recurring.pendingCount + review.recurring.conflictCount,
+        label: 'Preview recurring items', routeTarget: 'recurring-preview'
+      });
+      const status = !attention.exists ? 'no-saved-month' : attention.empty ? 'empty-month'
+        : steps.length > 0 ? 'attention' : 'no-current-attention';
+      return freezeDetached({
+        monthKey, exists: attention.exists, empty: attention.empty,
+        availability: attention.availability, status, steps,
+        limitation: 'Local saved-data review aid only—not payment confirmation, bank verification, reconciliation, or month close.'
+      });
+    }
+
     function findSavedRecords(request) {
       requireReady();
       const allowedKeys = ['query', 'kind', 'fromMonth', 'toMonth', 'limit'];
@@ -2042,7 +2145,8 @@
       clearMonth, previewRecurringMonth, applyRecurringPreview,
       previewTemplateActivation, applyTemplateActivationPreview,
       getMonthReview, getPayPeriodPlan, getUpcomingBillsAndPaydays, getSuppressedOccurrences, unsuppressOccurrence,
-      getClearedChecklist, getMonthReadiness, findSavedRecords, setRecordCleared,
+      getClearedChecklist, getMonthReadiness, getMonthReviewQueue, getNextReviewSteps,
+      findSavedRecords, setRecordCleared,
       fundingDirection,
       getDataHealth, getExactMoneyAudit, getExactMoneyMigrationSummary, previewExactMoneyMigration, commitExactMoneyMigration,
       getTemplateReadiness, previewActualResolutions, applyActualResolutions, previewDefaultDateResolutions, applyDefaultDateResolutions, compareAdditiveBackup,

@@ -55,6 +55,7 @@ const DashboardView = {
   basis: 'planned',
   forecastHorizon: 3,
   upcomingDayCount: 30,
+  reviewQueueLookback: 12,
   savedRecordSearchRequest: null,
 
   init() {
@@ -92,12 +93,107 @@ const DashboardView = {
           this.upcomingDayCount = Number(control.value); this.renderUpcoming();
         };
       });
+      const reviewControls = typeof document.getElementsByName === 'function'
+        ? document.getElementsByName('dashboard-review-months') : [];
+      [...reviewControls].forEach(control => {
+        control.onchange = () => {
+          if (!control.checked) return;
+          this.reviewQueueLookback = Number(control.value); this.renderMonthReviewQueue();
+        };
+      });
     }
   },
 
   localCivilDate() {
     const today = new Date();
     return `${String(today.getFullYear()).padStart(4, '0')}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  },
+
+  localCivilMonth() {
+    return this.localCivilDate().slice(0, 7);
+  },
+
+  reviewRouteLabel(kind) {
+    return ({ actuals: 'Enter actual amounts', dates: 'Add record dates', funding: 'Review paycheck funding',
+      'manual-clearing': 'Review manual cleared marks' })[kind];
+  },
+
+  reviewRouteTarget(kind) {
+    return ({ actuals: 'budget-actuals', dates: 'budget-dates', funding: 'budget-funding',
+      'manual-clearing': 'manual-cleared-checklist' })[kind];
+  },
+
+  renderMonthReviewQueue() {
+    const container = document.getElementById('dashboard-review-queue-content');
+    if (!container || typeof Store.getMonthReviewQueue !== 'function') return;
+    container.replaceChildren();
+    let report;
+    try { report = Store.getMonthReviewQueue({ anchorMonth: this.localCivilMonth(), lookbackMonths: this.reviewQueueLookback }); }
+    catch (error) { App.showError(error); return; }
+    const coverage = this.upcomingNode('dl', 'dashboard-review-coverage');
+    [['Saved months', report.coverage.savedMonthCount], ['Saved empty months', report.coverage.emptyMonthCount],
+      ['Months with listed attention', report.coverage.monthsWithAttentionCount],
+      ['Saved months with no listed attention', report.coverage.savedMonthsClearCount]].forEach(([label, value]) => {
+      const row = this.upcomingNode('div'); row.append(this.upcomingNode('dt', '', label), this.upcomingNode('dd', '', String(value))); coverage.append(row);
+    });
+    container.append(coverage);
+    if (!report.items.length && !report.emptyMonths.length) {
+      container.append(this.upcomingNode('p', 'dashboard-review-empty', 'No saved months in this window have listed attention or are empty.'));
+      return;
+    }
+    if (report.items.length) {
+      const section = this.upcomingNode('section', 'dashboard-review-attention');
+      section.append(this.upcomingNode('h3', '', 'Saved months with listed attention'));
+      const list = this.upcomingNode('ul', 'dashboard-review-list');
+      report.items.forEach(item => list.append(this.reviewQueueItem(item)));
+      section.append(list); container.append(section);
+    }
+    if (report.emptyMonths.length) {
+      const section = this.upcomingNode('section', 'dashboard-review-empty-months');
+      section.append(this.upcomingNode('h3', '', 'Saved empty months'));
+      const list = this.upcomingNode('ul', 'dashboard-review-list');
+      report.emptyMonths.forEach(monthKey => list.append(this.reviewEmptyMonthItem(monthKey)));
+      section.append(list); container.append(section);
+    }
+  },
+
+  reviewQueueItem(item) {
+    const row = this.upcomingNode('li', 'dashboard-review-item');
+    row.append(this.upcomingNode('h4', '', App.formatMonth(item.monthKey)));
+    const facts = this.upcomingNode('ul', 'dashboard-review-facts');
+    const labels = { actualsMissing: 'actual amounts not entered', datesMissing: 'record dates needed',
+      fundingIssues: 'existing funding issues', notManuallyCleared: 'records not manually marked cleared' };
+    Object.entries(labels).forEach(([key, label]) => {
+      const count = item.counts[key]; if (count) facts.append(this.upcomingNode('li', '', `${count} ${label}.`));
+    });
+    if (!item.availability.manualClearing) facts.append(this.upcomingNode('li', '', 'Manual clearing is unavailable for this budget version.'));
+    row.append(facts);
+    const actions = this.upcomingNode('div', 'dashboard-review-actions');
+    item.attentionKinds.forEach(kind => {
+      const button = this.upcomingNode('button', 'btn btn-sm', this.reviewRouteLabel(kind)); button.type = 'button';
+      button.dataset.reviewKind = kind; button.dataset.monthKey = item.monthKey;
+      button.addEventListener('click', () => BudgetView.routeReviewNavigation(item.monthKey, kind, this.reviewRouteTarget(kind)));
+      actions.append(button);
+    });
+    row.append(actions); return row;
+  },
+
+  reviewEmptyMonthItem(monthKey) {
+    const row = this.upcomingNode('li', 'dashboard-review-item');
+    row.append(this.upcomingNode('h4', '', App.formatMonth(monthKey)),
+      this.upcomingNode('p', '', 'Saved month has no paychecks or expenses.'));
+    const button = this.upcomingNode('button', 'btn btn-sm', 'Open monthly review'); button.type = 'button';
+    button.dataset.emptyMonthKey = monthKey; button.addEventListener('click', () => this.openEmptyReviewMonth(monthKey));
+    row.append(button); return row;
+  },
+
+  openEmptyReviewMonth(monthKey) {
+    const current = Store.getMonthReviewQueue({ anchorMonth: this.localCivilMonth(), lookbackMonths: this.reviewQueueLookback });
+    if (!current.emptyMonths.includes(monthKey)) {
+      this.renderMonthReviewQueue(); App.announceStatus('Saved-month review facts changed. Review the refreshed list.');
+      document.querySelector('#dashboard-review-queue > summary')?.focus({ preventScroll: true }); return false;
+    }
+    BudgetView.openMonthlyReviewMonth(monthKey); return true;
   },
 
   savedRecordRequestFromForm() {
@@ -711,6 +807,7 @@ const DashboardView = {
 
   render() {
     this.renderUpcoming();
+    this.renderMonthReviewQueue();
     this.clearRenderedOutput();
     this.renderForecast();
     const range = this.validateDateRange(this.getDateRange());

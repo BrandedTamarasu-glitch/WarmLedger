@@ -164,6 +164,19 @@
           <div id="dashboard-record-results" class="dashboard-record-results" aria-live="polite"></div>
         </div>
       </details>
+      <details id="dashboard-review-queue" class="dashboard-review-queue dash-card">
+        <summary>Months needing attention</summary>
+        <div class="dashboard-review-queue-body">
+          <p>Saved-month review facts only. This list does not set financial priority or confirm completion.</p>
+          <fieldset class="dashboard-review-queue-controls">
+            <legend>Saved-month window</legend>
+            <label><input type="radio" name="dashboard-review-months" value="6"> 6 months</label>
+            <label><input type="radio" name="dashboard-review-months" value="12" checked> 12 months</label>
+            <label><input type="radio" name="dashboard-review-months" value="24"> 24 months</label>
+          </fieldset>
+          <div id="dashboard-review-queue-content"></div>
+        </div>
+      </details>
       <fieldset class="dashboard-controls" aria-describedby="dashboard-range-help dashboard-state">
         <legend>Reporting range</legend>
         <div class="date-range">

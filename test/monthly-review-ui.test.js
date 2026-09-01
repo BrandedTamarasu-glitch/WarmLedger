@@ -157,7 +157,7 @@ test('empty review stays compact and never exposes recurring exceptions', () => 
 });
 
 test('implementation is safe DOM, capability-neutral, and restores review focus by stable data', () => {
-  const reviewRenderer = source.slice(source.indexOf('  renderMonthlyReview()'), source.indexOf('  renderReviewActualGroup('));
+  const reviewRenderer = source.slice(source.indexOf('  renderMonthlyReview()'), source.indexOf('  renderNextReviewSteps('));
   assert.equal((source.match(/Store\.getMonthReview\(/g) || []).length, 1);
   assert.equal((source.match(/Store\.getPayPeriodPlan\(/g) || []).length, 1);
   assert.equal((source.match(/Store\.getSuppressedOccurrences\(/g) || []).length, 0);

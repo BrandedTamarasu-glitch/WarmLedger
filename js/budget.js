@@ -185,6 +185,10 @@ const BudgetView = {
     if (review.empty) stateText.push('This month is empty and is not ready.');
     stateText.forEach(text => states.append(this.element('li', '', text))); wrapper.append(states);
 
+    if (typeof Store.getNextReviewSteps === 'function') {
+      wrapper.append(this.renderNextReviewSteps(Store.getNextReviewSteps(this.currentMonth)));
+    }
+
     if (typeof Store.getClearedChecklist === 'function') {
       wrapper.append(this.renderClearedChecklist(Store.getClearedChecklist(this.currentMonth),
         Store.getMonthReadiness(this.currentMonth)));
@@ -230,6 +234,89 @@ const BudgetView = {
     balance.append(balanceMetrics);
 
     container.replaceChildren(wrapper);
+  },
+
+  renderNextReviewSteps(report) {
+    const section = this.element('section', 'monthly-review-next-steps');
+    const heading = this.element('h4', '', 'Next review steps'); heading.id = 'monthly-review-next-steps-heading'; heading.tabIndex = -1;
+    section.setAttribute('aria-labelledby', heading.id); section.append(heading,
+      this.element('p', 'monthly-review-next-limitation', report.limitation));
+    if (report.status === 'no-saved-month') {
+      section.append(this.element('p', 'monthly-review-next-empty', 'No saved month is available for these review routes.'));
+      return section;
+    }
+    if (report.status === 'empty-month') {
+      section.append(this.element('p', 'monthly-review-next-empty', 'This saved month has no paychecks or expenses to review.'));
+      return section;
+    }
+    if (report.status === 'no-current-attention') {
+      section.append(this.element('p', 'monthly-review-next-empty', 'No current review steps are listed for saved records in this month.'));
+      return section;
+    }
+    const list = this.element('ol', 'monthly-review-next-list');
+    const reviewOrder = new Map(['recurring', 'dates', 'actuals', 'funding', 'manual-clearing']
+      .map((kind, index) => [kind, index]));
+    [...report.steps].sort((left, right) => reviewOrder.get(left.kind) - reviewOrder.get(right.kind)).forEach(step => {
+      const item = this.element('li', 'monthly-review-next-item');
+      item.append(this.element('span', '', `${step.label} — ${step.count} ${step.count === 1 ? 'record' : 'records'}.`));
+      const button = this.element('button', 'btn btn-sm monthly-review-next-action', step.label); button.type = 'button';
+      button.dataset.reviewStepKind = step.kind; button.dataset.reviewRouteTarget = step.routeTarget;
+      button.addEventListener('click', () => this.routeReviewNavigation(report.monthKey, step.kind, step.routeTarget));
+      item.append(button); list.append(item);
+    });
+    section.append(list); return section;
+  },
+
+  routeReviewNavigation(monthKey, kind, routeTarget) {
+    const current = Store.getNextReviewSteps(monthKey);
+    const step = current.steps.find(item => item.kind === kind && item.routeTarget === routeTarget);
+    if (!step) {
+      this.currentMonth = monthKey; this.render(); App.announceStatus('Review needs changed. Review the refreshed month.');
+      requestAnimationFrame(() => document.getElementById('monthly-review-next-steps-heading')?.focus({ preventScroll: true }));
+      return false;
+    }
+    this.currentMonth = monthKey; App.switchView('budget'); this.render();
+    requestAnimationFrame(() => {
+      if (routeTarget === 'recurring-preview') {
+        const controls = [...document.querySelectorAll('[data-review-step-kind][data-review-route-target]')];
+        const trigger = controls.find(control => control.dataset.reviewStepKind === kind &&
+          control.dataset.reviewRouteTarget === routeTarget);
+        if (trigger) App.openRecurringPreview(trigger);
+        else document.getElementById('monthly-review-next-steps-heading')?.focus({ preventScroll: true });
+        return;
+      }
+      this.focusReviewNavigationTarget(routeTarget);
+    }); return true;
+  },
+
+  openMonthlyReviewMonth(monthKey) {
+    this.currentMonth = monthKey; App.switchView('budget'); this.render();
+    requestAnimationFrame(() => document.getElementById('monthly-review-heading')?.focus({ preventScroll: true }));
+  },
+
+  focusReviewNavigationTarget(routeTarget) {
+    if (routeTarget === 'manual-cleared-checklist') {
+      const details = document.getElementById('monthly-review-cleared'); if (details) details.open = true;
+      (details?.querySelector('[data-cleared-kind][data-record-id]') || details?.querySelector('summary') ||
+        document.getElementById('monthly-review-next-steps-heading'))?.focus({ preventScroll: true }); return;
+    }
+    if (routeTarget === 'budget-funding') {
+      const controls = [...document.querySelectorAll('[data-review-kind][data-record-id]')];
+      (controls.find(control => control.dataset.reviewKind === 'funding') ||
+        document.getElementById('monthly-review-next-steps-heading'))?.focus({ preventScroll: true }); return;
+    }
+    const month = Store.getMonth(this.currentMonth);
+    const missing = routeTarget === 'budget-dates'
+      ? [...month.paychecks.map(record => ({ kind: 'income', record })), ...month.expenses.map(record => ({ kind: 'expense', record }))]
+        .find(item => item.record.date === '') : null;
+    if (missing) {
+      const controls = [...document.querySelectorAll('.btn-edit')];
+      const target = controls.find(control => control.dataset.editType === missing.kind && control.dataset.recordId === missing.record.id);
+      if (target) { target.focus({ preventScroll: true }); return; }
+    }
+    const reviewControls = [...document.querySelectorAll('[data-review-kind][data-record-id]')];
+    const actual = reviewControls.find(control => control.dataset.reviewKind === 'income' || control.dataset.reviewKind === 'expense');
+    (actual || document.getElementById('monthly-review-next-steps-heading'))?.focus({ preventScroll: true });
   },
 
   renderClearedChecklist(checklist, readiness) {
