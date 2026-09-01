@@ -1091,6 +1091,107 @@ async function run(options) {
     })()`);
     assertEvidence(reload.schemaVersion === 5 && reload.additions === 0 && reload.cleared && reload.nativeChecked,
       `Reload did not preserve v5 Manual Cleared state: ${JSON.stringify(reload)}`);
+    const accounts = await evaluate(cdp, `(async () => {
+      const settle = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const primaryKey = ZeroBudgetStore.STORAGE_KEY || Store.STORAGE_KEY;
+      const allBytes = () => JSON.stringify(Object.keys(localStorage).sort().map(key => [key, localStorage.getItem(key)]));
+      App.switchView('data-health'); DataHealthView.render(); await settle();
+      const trigger = document.getElementById('review-accounts-migration');
+      const beforePreview = allBytes(); trigger?.click(); await settle();
+      const cancel = document.getElementById('modal-cancel');
+      const previewWriteFree = Boolean(trigger && cancel && document.activeElement === cancel && beforePreview === allBytes());
+      cancel?.click(); await settle();
+      const cancelWriteFree = beforePreview === allBytes() && document.activeElement === trigger;
+      trigger?.click(); await settle(); document.getElementById('modal-save')?.click(); await settle();
+      const snapshot = Store.listSnapshots().find(item => item.reason === 'pre-accounts');
+      const migrated = Store.getStatus().residentSchemaVersion === 6 &&
+        Store.getAccountsMigrationSummary().state === 'already-migrated' && Boolean(snapshot);
+
+      const hostileName = '<img src=x onerror="globalThis.__accountHostileRan=true"> Household checking';
+      const bank = Store.createAccount({ name: hostileName, kind: 'bank' });
+      const card = Store.createAccount({ name: 'Household card', kind: 'credit_card' });
+      const reserve = Store.createAccount({ name: 'Reserve savings', kind: 'savings' });
+      Store.updateAccount(bank.id, { name: hostileName + ' renamed' });
+      Store.reorderAccounts([reserve.id, bank.id, card.id]);
+      const monthKey = BudgetView.currentMonth; const monthData = Store.getMonth(monthKey);
+      const paycheck = monthData.paychecks[0]; const expense = monthData.expenses[0];
+      const incomeTemplate = Store.getIncomeTemplates()[0]; const expenseTemplate = Store.getExpenseTemplates()[0];
+      Store.updatePaycheck(monthKey, paycheck.id, { accountId: bank.id });
+      Store.updateExpense(monthKey, expense.id, { paymentMethod: 'bank', accountId: bank.id });
+      Store.updateIncomeTemplate(incomeTemplate.id, { accountId: reserve.id });
+      Store.updateExpenseTemplate(expenseTemplate.id, { paymentMethod: 'bank', accountId: bank.id });
+      App.switchView('structure'); StructureView.render(); await settle();
+      const hostileSafe = !document.querySelector('#structure-accounts img') && !globalThis.__accountHostileRan &&
+        document.getElementById('structure-accounts').textContent.includes('Household checking');
+      Store.updateAccount(bank.id, { archived: true }); StructureView.render(); BudgetView.render(); TemplatesView.render(); await settle();
+      BudgetView.showPaycheckModal(Store.getMonth(monthKey).paychecks.find(item => item.id === paycheck.id)); await settle();
+      const paycheckArchivedCurrent = document.getElementById('field-paycheck-account')?.value === bank.id &&
+        document.getElementById('field-paycheck-account')?.selectedOptions[0]?.textContent.includes('(Archived)');
+      ModalView.close('cancel');
+      const unassigned = Store.addPaycheck(monthKey, { earnerId: Store.getEarners()[0].id,
+        plannedAmount: 1, actualAmount: null, date: '', accountId: null });
+      let rejected = false; try { Store.updatePaycheck(monthKey, unassigned.id, { accountId: bank.id }); }
+      catch (error) { rejected = error?.code === 'ACCOUNT_ARCHIVED'; }
+      Store.updateAccount(bank.id, { archived: false });
+      sessionStorage.setItem('browser-evidence-accounts-primary', localStorage.getItem(primaryKey));
+      sessionStorage.setItem('browser-evidence-accounts-semantic', JSON.stringify(Store.getData()));
+      return { previewWriteFree, cancelWriteFree, migrated, hostileSafe, paycheckArchivedCurrent, rejected,
+        ordered: Store.getAccounts({ includeArchived: true }).map(item => item.id).join('|') === [reserve.id, bank.id, card.id].join('|'),
+        references: Store.getMonth(monthKey).paychecks.find(item => item.id === paycheck.id).accountId === bank.id &&
+          Store.getMonth(monthKey).expenses.find(item => item.id === expense.id).accountId === bank.id &&
+          Store.getIncomeTemplates().find(item => item.id === incomeTemplate.id).accountId === reserve.id &&
+          Store.getExpenseTemplates().find(item => item.id === expenseTemplate.id).accountId === bank.id };
+    })()`);
+    assertEvidence(accounts.previewWriteFree && accounts.cancelWriteFree && accounts.migrated && accounts.hostileSafe &&
+      accounts.paycheckArchivedCurrent && accounts.rejected && accounts.ordered && accounts.references,
+      `Accounts migration or lifecycle evidence failed: ${JSON.stringify(accounts)}`);
+    scenario.accountsMigrationPreviewNoWriteCancelConfirm = true;
+    scenario.accountsCrudSelectorsArchiveReloadHostileSafe = true;
+    await cdp.send('Page.reload', { ignoreCache: true }); await new Promise(resolve => setTimeout(resolve, 700));
+    const accountsReload = await evaluate(cdp, `(async () => {
+      const settle = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const data = Store.getData(); const monthKey = BudgetView.currentMonth;
+      const bank = Store.getAccounts({ includeArchived: true }).find(item => item.name.includes('Household checking'));
+      const reserve = Store.getAccounts().find(item => item.kind === 'savings');
+      const paycheck = Store.getMonth(monthKey).paychecks.find(item => item.accountId === bank.id);
+      const expense = Store.getMonth(monthKey).expenses.find(item => item.accountId === bank.id);
+      BudgetView.showPaycheckModal(paycheck); await settle();
+      const paycheckSelected = document.getElementById('field-paycheck-account')?.value === bank.id; ModalView.close('cancel');
+      BudgetView.showExpenseModal(expense); await settle();
+      const expenseSelected = document.getElementById('field-expense-account')?.value === bank.id; ModalView.close('cancel');
+      TemplatesView.showTemplateModal('income', Store.getIncomeTemplates().find(item => item.accountId === reserve.id)); await settle();
+      const incomeTemplateSelected = document.getElementById('field-template-account')?.value === reserve.id; ModalView.close('cancel');
+      TemplatesView.showTemplateModal('expense', Store.getExpenseTemplates().find(item => item.accountId === bank.id)); await settle();
+      const expenseTemplateSelected = document.getElementById('field-template-account')?.value === bank.id; ModalView.close('cancel');
+      return { schema6: Store.getStatus().residentSchemaVersion === 6,
+        semantic: JSON.stringify(data) === sessionStorage.getItem('browser-evidence-accounts-semantic'),
+        primary: localStorage.getItem(ZeroBudgetStore.STORAGE_KEY || Store.STORAGE_KEY) === sessionStorage.getItem('browser-evidence-accounts-primary'),
+        selectors: paycheckSelected && expenseSelected && incomeTemplateSelected && expenseTemplateSelected };
+    })()`);
+    assertEvidence(accountsReload.schema6 && accountsReload.semantic && accountsReload.primary && accountsReload.selectors,
+      `Accounts did not survive byte-exact reload: ${JSON.stringify(accountsReload)}`);
+    scenario.accountsSchema6ReloadByteExact = true;
+    await evaluate(cdp, `App.switchView('structure'); StructureView.render()`);
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width: 320, height: 900, deviceScaleFactor: 1, mobile: false });
+    const accountsNarrow = await evaluate(cdp, `(() => {
+      const section = document.getElementById('structure-accounts-section'); const viewport = document.documentElement.clientWidth;
+      return { visible: Boolean(section?.getClientRects().length), width: document.documentElement.scrollWidth, viewport,
+        controlsFit: [...section.querySelectorAll('button, input, select')].every(control => control.getBoundingClientRect().width <= viewport) };
+    })()`);
+    assertEvidence(accountsNarrow.visible && accountsNarrow.width <= accountsNarrow.viewport && accountsNarrow.controlsFit,
+      `Accounts manager overflows at 320px: ${JSON.stringify(accountsNarrow)}`);
+    await cdp.send('Emulation.setEmulatedMedia', { features: [{ name: 'forced-colors', value: 'active' }] });
+    const accountsForcedColors = await evaluate(cdp, `(() => {
+      const card = document.querySelector('.account-card'); const focus = card?.querySelector('button'); focus?.focus();
+      return { active: matchMedia('(forced-colors: active)').matches, visible: Boolean(card?.getClientRects().length),
+        border: card ? getComputedStyle(card).borderColor : '', focused: document.activeElement === focus };
+    })()`);
+    assertEvidence(accountsForcedColors.active && accountsForcedColors.visible &&
+      accountsForcedColors.border !== 'rgba(0, 0, 0, 0)' && accountsForcedColors.focused,
+      `Accounts forced-colors evidence failed: ${JSON.stringify(accountsForcedColors)}`);
+    await cdp.send('Emulation.setEmulatedMedia', { features: [{ name: 'forced-colors', value: 'none' }] });
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width: 640, height: 450, deviceScaleFactor: 1, mobile: false });
+    scenario.accountsNarrowForcedColors = true;
     await evaluate(cdp, `localStorage.setItem(ZeroBudgetStore.STORAGE_KEY, ${JSON.stringify(scenario.blockedV3Bytes)})`);
     await cdp.send('Page.reload', { ignoreCache: true }); await new Promise(resolve => setTimeout(resolve, 700));
     const blocked = await evaluate(cdp, `(() => {
@@ -1134,13 +1235,21 @@ async function run(options) {
     assertEvidence(multiTab.busy && multiTab.stale && multiTab.reloadChanged && multiTab.byteExact && multiTab.recovered,
       `Multi-tab stale or busy write did not fail closed and recover by reload: ${JSON.stringify(multiTab)}`);
     scenario.multiTabStaleBusyReloadRecovery = true;
+    await evaluate(cdp, `localStorage.setItem(ZeroBudgetStore.STORAGE_KEY || Store.STORAGE_KEY,
+      sessionStorage.getItem('browser-evidence-accounts-primary')); Store.reload()`);
     const shardedMigration = await evaluate(cdp, `(async () => {
       App.switchView('data-health'); DataHealthView.render();
       const primaryKey = ZeroBudgetStore.STORAGE_KEY || Store.STORAGE_KEY;
       const allBytes = () => JSON.stringify(Object.keys(localStorage).sort().map(key => [key, localStorage.getItem(key)]));
+      const semantic = value => Array.isArray(value) ? value.map(semantic) : value && typeof value === 'object'
+        ? Object.fromEntries(Object.keys(value).sort().map(key => [key, semantic(value[key])])) : value;
       const beforePreview = allBytes();
       const trigger = document.getElementById('review-month-sharded-storage');
-      if (!trigger) return { available: false };
+      if (!trigger) return { available: false, status: Store.getStatus(), summary: Store.getShardedPersistenceSummary(),
+        accounts: Store.getAccountsMigrationSummary(), heading: document.getElementById('month-sharded-storage-heading')?.textContent,
+        error: document.getElementById('app-error')?.textContent, content: document.getElementById('data-health-content')?.textContent,
+        probes: ['getDataHealth','getExactMoneyAudit','getExactMoneyMigrationSummary'].map(name => { try { Store[name](); return name + ':ok'; }
+          catch (error) { return name + ':' + error.code + ':' + error.message; } }) };
       trigger.click();
       await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       const previewWriteFree = beforePreview === allBytes();
@@ -1164,7 +1273,7 @@ async function run(options) {
         manifest.monthOrder.every(monthKey => ZeroBudgetStorageEngine.validateMonthReference(
           manifest.months[monthKey], localStorage.getItem(manifest.months[monthKey].key))));
       sessionStorage.setItem('browser-evidence-sharded-bytes', allBytes());
-      sessionStorage.setItem('browser-evidence-sharded-semantic', JSON.stringify(Store.getData()));
+      sessionStorage.setItem('browser-evidence-sharded-semantic', JSON.stringify(semantic(Store.getData())));
       return { available: true, previewWriteFree, cancelFocused, cancelWriteFree,
         rootKeyFrozen: primaryKey === 'zeroBudget_data',
         rootPresent: rootPointer !== null,
@@ -1190,8 +1299,10 @@ async function run(options) {
       const safety = snapshots.find(snapshot => snapshot.reason === 'pre-sharding');
       const reloadActive = Store.getShardedPersistenceSummary().state === 'already-sharded';
       const allBytes = () => JSON.stringify(Object.keys(localStorage).sort().map(key => [key, localStorage.getItem(key)]));
+      const semantic = value => Array.isArray(value) ? value.map(semantic) : value && typeof value === 'object'
+        ? Object.fromEntries(Object.keys(value).sort().map(key => [key, semantic(value[key])])) : value;
       const reloadByteExact = allBytes() === sessionStorage.getItem('browser-evidence-sharded-bytes');
-      const reloadSemanticExact = JSON.stringify(Store.getData()) ===
+      const reloadSemanticExact = JSON.stringify(semantic(Store.getData())) ===
         sessionStorage.getItem('browser-evidence-sharded-semantic');
       localStorage.setItem(monthShardKey, '{corrupt-browser-evidence');
       const damaged = Store.reload();

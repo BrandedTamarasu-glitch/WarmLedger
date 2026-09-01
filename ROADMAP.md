@@ -1,6 +1,6 @@
 # Warm Ledger Roadmap
 
-This roadmap turns the August 2026 ForgeFlow product audit into sequenced, testable releases. Warm Ledger remains local-only, dependency-free, compatible with direct `file://` startup, resident schema versions 3, 4, and 5, and backup/snapshot envelope format version 1 unless a later phase explicitly authorizes a migration.
+This roadmap turns the August 2026 ForgeFlow product audit into sequenced, testable releases. Warm Ledger remains local-only, dependency-free, compatible with direct `file://` startup, resident schema versions 3 through 6, and backup/snapshot envelope format version 1 unless a later phase explicitly authorizes a migration.
 
 ## Phase 1 — Data safety fixes
 
@@ -98,9 +98,22 @@ Status: published on 2026-08-30.
 - Keep assignments explicit and editable only in Budget; recurring templates do not auto-assign generated bills.
 - Keep monthly remaining-funds allocations separate from paycheck funding envelopes.
 - Make no claims about calendar pay-period boundaries, cross-month funding, paid status, bank activity, reconciliation, or actual transfers.
-- Operate schema-neutrally over normalized resident schema-version-3, schema-version-4, and schema-version-5 runtime data; preserve backup/snapshot envelope format version 1.
+- Operate schema-neutrally over normalized resident schema-version-3 through schema-version-6 runtime data; preserve backup/snapshot envelope format version 1.
 
-### Phase 6B — Honest actual transfers and accounts
+### Phase 6B1 — Local accounts foundation
+
+Status: published on 2026-09-01.
+
+- Add explicit local account records and optional saved account references for paychecks, expenses, and recurring templates.
+- Add Structure Accounts and compatible Budget/Templates selectors while keeping accounts as local planning labels only.
+- Add an explicit preview-first schema-version-5 to schema-version-6 migration in Data Health, protected by a verified safety snapshot.
+- Preserve account references through copy-from-previous-month, recurring generation, backup, restore, snapshots, import, and month-sharded persistence.
+- Keep backup and snapshot envelope format version 1 compatible with schema versions 3 through 6.
+- Make no Actual mode, actual-transfer, balance, statement, or reconciliation claims.
+
+### Phase 6B2 — Honest actual transfers and accounts
+
+Status: explicitly deferred until reconciliation evidence is sufficient.
 
 - Add an Actual mode only after actuals and reconciliation are sufficiently complete.
 - Model accounts and account-to-account transfers explicitly if required.

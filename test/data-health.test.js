@@ -107,3 +107,22 @@ test('month-sharded migration summary helper preserves the brief copy for each s
   });
   assert.equal(empty.description, 'No saved local data is present yet. Month-sharded local storage becomes relevant after this ledger contains saved months.');
 });
+
+test('accounts migration summary helper keeps upgrade states truthful and local-only', () => {
+  const eligible = Health.buildAccountsMigration({ state: 'eligible', paycheckCount: 2, expenseCount: 3, templateCount: 4 });
+  assert.deepEqual({ state: eligible.state, title: eligible.title, buttonLabel: eligible.buttonLabel, canPreview: eligible.canPreview },
+    { state: 'eligible', title: 'Local accounts are ready', buttonLabel: 'Review accounts upgrade', canPreview: true });
+  assert.match(eligible.description, /local planning labels only/);
+  assert.match(eligible.description, /do not connect to a bank, prove payment, or reconcile activity/);
+
+  const message = 'Complete the earlier storage upgrades before adding accounts.';
+  const blocked = Health.buildAccountsMigration({ state: 'blocked', message });
+  assert.equal(blocked.title, 'Local accounts are not available yet');
+  assert.equal(blocked.description, message);
+  assert.equal(blocked.canPreview, false);
+
+  const active = Health.buildAccountsMigration({ state: 'already-migrated' });
+  assert.equal(active.title, 'Local accounts are available');
+  assert.equal(active.canPreview, false);
+  assert.throws(() => Health.buildAccountsMigration({ state: 'unknown' }), /Invalid accounts migration summary/);
+});

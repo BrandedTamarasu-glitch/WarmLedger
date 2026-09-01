@@ -167,6 +167,24 @@ test('browser evidence covers month-sharded preview, migration, reload, corrupti
   assert.match(source, /orphanedShardingKeys\.every\(key => localStorage\.getItem\(key\) === null\)/);
 });
 
+test('browser evidence covers explicit account migration, lifecycle, selectors, reload, and hostile labels', () => {
+  for (const marker of ['accountsMigrationPreviewNoWriteCancelConfirm',
+    'accountsCrudSelectorsArchiveReloadHostileSafe', 'accountsSchema6ReloadByteExact', 'accountsNarrowForcedColors']) {
+    assert.match(source, new RegExp(marker));
+  }
+  assert.match(source, /review-accounts-migration/);
+  assert.match(source, /beforePreview === allBytes\(\)/);
+  assert.match(source, /reason === 'pre-accounts'/);
+  assert.match(source, /field-paycheck-account/);
+  assert.match(source, /field-expense-account/);
+  assert.match(source, /field-template-account/);
+  assert.match(source, /error\?\.code === 'ACCOUNT_ARCHIVED'/);
+  assert.match(source, /browser-evidence-accounts-primary/);
+  assert.match(source, /browser-evidence-accounts-semantic/);
+  assert.match(source, /Accounts manager overflows at 320px/);
+  assert.match(source, /Accounts forced-colors evidence failed/);
+});
+
 test('browser evidence proves Explain change is lazy, transient, routable, and export-neutral', () => {
   for (const marker of ['savedMonthComparisonExplainLazyReplaceCloseTransitions',
     'savedMonthComparisonExplainNullZeroStaleSuccessCsvByteExact']) assert.match(source, new RegExp(marker));

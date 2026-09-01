@@ -58,6 +58,8 @@ test('storage origins, keys, global APIs, and compatibility evidence identifiers
     assert.match(evidence, new RegExp(namespace));
   }
   assert.match(evidence, /const primaryKey = Store\.STORAGE_KEY \|\| ZeroBudgetStore\.STORAGE_KEY/);
+  assert.match(evidence, /review-accounts-migration/);
+  assert.match(evidence, /reason === 'pre-accounts'/);
   assert.doesNotMatch(evidence, /zeroBudgetData/);
   assert.match(schema, /root\.ZeroBudgetSchema = api/);
   assert.match(data, /root\.ZeroBudgetStore = api/);

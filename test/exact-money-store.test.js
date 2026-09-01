@@ -191,6 +191,35 @@ test('canonical resident v3 load is not reported as migrated', () => {
   assert.equal(store.getStatus().residentSchemaVersion, 3);
 });
 
+test('schema 6 keeps Exact Money and Data Health projections available without writes or downgrade', () => {
+  const v6 = Schema.migrateV5ToV6(Schema.migrateV4ToV5(Schema.migrateV3ToV4ExactMoney(makeV3Budget())));
+  const raw = JSON.stringify(v6);
+  const storage = new MemoryStorage({ [STORAGE_KEY]: raw });
+  let sequence = 0;
+  const store = createStore({ storage, now: () => new Date('2026-09-01T12:00:00.000Z'),
+    uuid: () => `schema-6-projection-${++sequence}` });
+  assert.equal(store.load().state, 'ready');
+  storage.operations.length = 0;
+
+  const audit = store.getExactMoneyAudit();
+  assert.equal(audit.subCentValueCount, 0);
+  assert.equal(store.getExactMoneyMigrationSummary().state, 'already-migrated');
+  assert.equal(Object.isFrozen(store.getDataHealth()), true);
+  assert.equal(store.getStatus().residentSchemaVersion, Schema.V6_SCHEMA_VERSION);
+  assert.equal(storage.getItem(STORAGE_KEY), raw);
+  assert.equal(storage.operations.some(operation => operation.op === 'setItem' || operation.op === 'removeItem'), false);
+
+  store.commitShardedPersistenceMigration(store.previewShardedPersistenceMigration());
+  assert.equal(store.reload().state, 'ready');
+  assert.equal(store.getStatus().residentSchemaVersion, Schema.V6_SCHEMA_VERSION);
+  assert.equal(store.getExactMoneyMigrationSummary().state, 'already-migrated');
+  assert.equal(Object.isFrozen(store.getDataHealth()), true);
+  assert.equal(store.getShardedPersistenceSummary().state, 'already-sharded');
+  const purge = store.previewLocalDataPurge();
+  assert.equal(purge.activeDataPresent, true);
+  assert.equal(purge.generation, store.getStatus().generation);
+});
+
 test('migration summary and preview are aggregate-only, frozen, identity-bound, and write-free', () => {
   const { store, storage, raw } = readyStore(makeV3Budget());
   const generation = store.getStatus().generation;

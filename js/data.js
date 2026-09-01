@@ -2259,6 +2259,15 @@
         month.paychecks.forEach(record => { delete record.cleared; });
         month.expenses.forEach(record => { delete record.cleared; });
       }
+      if (residentSchemaVersion >= Schema.V6_SCHEMA_VERSION) {
+        delete result.settings.accounts;
+        result.templates.income.forEach(template => { delete template.accountId; });
+        result.templates.expenses.forEach(template => { delete template.accountId; });
+        for (const month of Object.values(result.months)) {
+          month.paychecks.forEach(record => { delete record.accountId; });
+          month.expenses.forEach(record => { delete record.accountId; });
+        }
+      }
       return result;
     }
 
@@ -2568,7 +2577,8 @@
 
     function getExactMoneyMigrationSummary() {
       requireReady();
-      if (residentSchemaVersion === Schema.V4_SCHEMA_VERSION || residentSchemaVersion === Schema.V5_SCHEMA_VERSION) {
+      if (residentSchemaVersion === Schema.V4_SCHEMA_VERSION || residentSchemaVersion === Schema.V5_SCHEMA_VERSION ||
+          residentSchemaVersion === Schema.V6_SCHEMA_VERSION) {
         return freezeDetached({ state: 'already-migrated', subCentValueCount: 0, affectedMonthCount: 0, affectedTemplateCount: 0 });
       }
       const audit = getExactMoneyAudit();

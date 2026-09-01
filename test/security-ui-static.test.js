@@ -55,6 +55,13 @@ test('month-sharded storage remains explicit, previewed, and uses the shared saf
   assert.match(health, /initialFocus: \(\) => document\.getElementById\('modal-cancel'\)/);
 });
 
+test('accounts migration remains explicit, previewed, and uses the shared safe modal', () => {
+  assert.match(health, /Store\.previewAccountsMigration\(\)/);
+  assert.match(health, /Store\.commitAccountsMigration\(preview\)/);
+  assert.match(health, /review-accounts-migration/);
+  assert.match(health, /initialFocus: \(\) => document\.getElementById\('modal-cancel'\)/);
+});
+
 test('multi-tab changes reload and stale or busy writes fail closed with exact messages', () => {
   assert.match(app, /window\.addEventListener\('storage'/);
   assert.match(app, /Store\.reload\(\)/);

@@ -234,5 +234,34 @@
     });
   }
 
-  return Object.freeze({ analyze, buildTemplateReadiness, buildExactMoneyMigration, buildShardedPersistenceMigration });
+  function buildAccountsMigration(summary) {
+    if (!summary || typeof summary !== 'object' || Array.isArray(summary) ||
+        !['eligible', 'blocked', 'already-migrated'].includes(summary.state)) {
+      throw new TypeError('Invalid accounts migration summary');
+    }
+    if (summary.state === 'eligible') return result({
+      state: 'eligible',
+      title: 'Local accounts are ready',
+      description: 'This ledger can add optional account labels without changing any saved budget values. Accounts are local planning labels only. They do not connect to a bank, prove payment, or reconcile activity.',
+      buttonLabel: 'Review accounts upgrade',
+      canPreview: true
+    });
+    if (summary.state === 'blocked') return result({
+      state: 'blocked',
+      title: 'Local accounts are not available yet',
+      description: summary.message,
+      buttonLabel: null,
+      canPreview: false
+    });
+    return result({
+      state: 'already-migrated',
+      title: 'Local accounts are available',
+      description: 'This ledger can use optional local account labels. No upgrade action is needed.',
+      buttonLabel: null,
+      canPreview: false
+    });
+  }
+
+  return Object.freeze({ analyze, buildTemplateReadiness, buildExactMoneyMigration, buildShardedPersistenceMigration,
+    buildAccountsMigration });
 });

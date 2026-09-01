@@ -34,6 +34,10 @@ function loadView({ store, render, showModal, runMutation } = {}) {
   nodes['modal-cancel'].id = 'modal-cancel';
   nodes['month-sharded-storage-heading'] = new NodeStub('h3');
   nodes['month-sharded-storage-heading'].id = 'month-sharded-storage-heading';
+  nodes['accounts-migration-heading'] = new NodeStub('h3');
+  nodes['accounts-migration-heading'].id = 'accounts-migration-heading';
+  nodes['review-accounts-migration'] = new NodeStub('button');
+  nodes['review-accounts-migration'].id = 'review-accounts-migration';
   let currentReviewTrigger = new NodeStub('button');
   currentReviewTrigger.id = 'review-month-sharded-storage';
   nodes['review-month-sharded-storage'] = currentReviewTrigger;
@@ -57,6 +61,8 @@ function loadView({ store, render, showModal, runMutation } = {}) {
     Store: store,
     ZeroBudgetDataHealth: {
       buildExactMoneyMigration: () => ({ state: 'eligible' }),
+      buildAccountsMigration: summary => ({ state: summary.state, title: 'Local accounts are ready',
+        description: 'Ready', canPreview: true, buttonLabel: 'Review accounts upgrade' }),
       buildShardedPersistenceMigration: summary => ({
         state: summary.state,
         title: 'Month-sharded local storage is ready',
@@ -129,6 +135,31 @@ test('month-sharded preview clears on every non-confirm close reason', () => {
     assert.equal(view.monthShardedPreview, null);
     assert.equal(preview !== null, true);
   }
+});
+
+test('accounts confirm consumes its preview and a failed attempt requires a fresh review', () => {
+  let serial = 0;
+  const store = {
+    previewAccountsMigration: () => Object.freeze({ state: 'eligible', generation: ++serial,
+      paycheckCount: 1, expenseCount: 2, templateCount: 3 }),
+    commitAccountsMigration: () => { throw Object.assign(new Error('failed'), { code: 'PRIMARY_WRITE_FAILED' }); },
+    getStatus: () => ({ state: 'ready' })
+  };
+  const { view, modalOptions, trigger, errors, nodes } = loadView({ store });
+  view.previewAccountsMigration(trigger);
+  const first = view.accountsPreview;
+  assert.ok(first);
+  assert.equal(modalOptions.at(-1).initialFocus(), nodes['modal-cancel']);
+  assert.equal(modalOptions.at(-1).onSave(), true);
+  assert.equal(view.accountsPreview, null);
+  assert.equal(errors.length, 1);
+  assert.equal(nodes['review-accounts-migration'].focused, true);
+
+  view.previewAccountsMigration(trigger);
+  assert.ok(view.accountsPreview);
+  assert.notStrictEqual(view.accountsPreview, first);
+  modalOptions.at(-1).onClose('cancel');
+  assert.equal(view.accountsPreview, null);
 });
 
 test('failed confirm closes, rerenders fresh summary, and requires a new preview', () => {

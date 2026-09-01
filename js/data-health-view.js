@@ -5,6 +5,7 @@ const DataHealthView = {
   exactMoneyPreview: null,
   exactMoneyTrigger: null,
   monthShardedPreview: null,
+  accountsPreview: null,
   purgePreview: null,
 
   init() {
@@ -23,12 +24,14 @@ const DataHealthView = {
 
   render() {
     const container = document.getElementById('data-health-content'); container.replaceChildren();
-    let health; let moneyAudit; let migration; let shardedSummary; let shardedMigration;
+    let health; let moneyAudit; let migration; let shardedSummary; let shardedMigration; let accountsSummary; let accountsMigration;
     try {
       health = Store.getDataHealth(); moneyAudit = Store.getExactMoneyAudit();
       migration = ZeroBudgetDataHealth.buildExactMoneyMigration(Store.getExactMoneyMigrationSummary());
       shardedSummary = Store.getShardedPersistenceSummary();
       shardedMigration = ZeroBudgetDataHealth.buildShardedPersistenceMigration(shardedSummary);
+      accountsSummary = Store.getAccountsMigrationSummary();
+      accountsMigration = ZeroBudgetDataHealth.buildAccountsMigration(accountsSummary);
     }
     catch (error) { App.showError(error); return; }
 
@@ -48,6 +51,7 @@ const DataHealthView = {
       overview.append(counts);
     }
     container.append(overview);
+    container.append(this.accountsMigrationSection(accountsSummary, accountsMigration));
     container.append(this.monthShardedMigrationSection(shardedSummary, shardedMigration));
     container.append(this.exactMoneyMigrationSection(migration));
     container.append(this.moneyPrecisionDisclosure(moneyAudit));
@@ -57,6 +61,84 @@ const DataHealthView = {
     if (health.missingDates.length) container.append(this.dateResolutionSection(health.missingDates));
     if (health.fundingMismatches.length) container.append(this.fundingSection(health.fundingMismatches));
     container.append(this.moreToolsSection(health));
+  },
+
+  accountsMigrationSection(summary, migration) {
+    const section = this.node('section', `budget-section data-health-section accounts-migration state-${migration.state}`);
+    section.setAttribute('aria-labelledby', 'accounts-migration-heading');
+    const heading = this.node('h3', '', migration.title); heading.id = 'accounts-migration-heading'; heading.tabIndex = -1;
+    section.append(heading, this.node('p', '', migration.description));
+    if (migration.canPreview) {
+      section.append(this.node('p', 'muted-text',
+        'Download a JSON backup first. When you confirm, Warm Ledger also creates a local safety snapshot before changing storage.'));
+      const actions = this.node('div', 'accounts-migration-actions');
+      const backup = this.node('button', 'btn', 'Download JSON backup'); backup.type = 'button';
+      backup.addEventListener('click', () => App.downloadBackup());
+      const review = this.node('button', 'btn btn-primary', migration.buttonLabel); review.type = 'button';
+      review.id = 'review-accounts-migration';
+      review.addEventListener('click', () => this.previewAccountsMigration(review));
+      actions.append(backup, review); section.append(actions);
+    }
+    return section;
+  },
+
+  accountsSummaryList(summary) {
+    const list = this.node('dl', 'accounts-migration-summary');
+    [['Saved paychecks', String(summary.paycheckCount)], ['Saved expenses', String(summary.expenseCount)],
+      ['Saved templates', String(summary.templateCount)]].forEach(([label, value]) => {
+      list.append(this.node('dt', '', label), this.node('dd', '', value));
+    });
+    return list;
+  },
+
+  previewAccountsMigration(trigger) {
+    try {
+      this.accountsPreview = Store.previewAccountsMigration();
+      const preview = this.accountsPreview;
+      App.showModal({
+        title: 'Add local accounts to this ledger?',
+        submitLabel: 'Add local accounts',
+        initialFocus: () => document.getElementById('modal-cancel'),
+        onClose: reason => { if (reason !== 'confirm') this.accountsPreview = null; },
+        buildBody: () => {
+          const body = this.node('div', 'accounts-migration-preview');
+          body.append(
+            this.node('p', '', 'This adds optional account labels without changing saved budget values.'),
+            this.node('p', '', 'Accounts are local planning labels only. They do not connect to a bank, prove payment, or reconcile activity.'),
+            this.node('p', '', 'Warm Ledger creates a local safety snapshot before saving.'),
+            this.accountsSummaryList(preview)
+          );
+          return body;
+        },
+        onSave: () => {
+          if (!this.accountsPreview) { App.showErrorCode('INVALID_ACCOUNTS_MIGRATION_PREVIEW'); return false; }
+          this.commitAccountsMigration();
+          return true;
+        }
+      });
+      App.modalTrigger = trigger; ModalView.trigger = trigger;
+    } catch (error) {
+      this.accountsPreview = null; App.showError(error); trigger.focus();
+    }
+  },
+
+  commitAccountsMigration() {
+    const preview = this.accountsPreview; this.accountsPreview = null;
+    return App.runMutation(() => Store.commitAccountsMigration(preview), {
+      onSuccess: () => {
+        App.refreshAllViews(); App.switchView('data-health');
+        App.announceStatus('Local accounts are now available. Saved budget values did not change.');
+        requestAnimationFrame(() => document.getElementById('accounts-migration-heading').focus({ preventScroll: true }));
+      },
+      onFailure: () => {
+        this.render();
+        if (Store.getStatus().state === 'recovery-required') App.showRecovery(Store.reload());
+        requestAnimationFrame(() => {
+          const target = document.getElementById('review-accounts-migration') || document.getElementById('accounts-migration-heading');
+          target?.focus({ preventScroll: true });
+        });
+      }
+    });
   },
 
   totalIssues(health) { return Object.values(health.counts).reduce((sum, count) => sum + count, 0); },

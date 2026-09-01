@@ -84,6 +84,25 @@ test('month-sharded migration stays preview-first, backup-first, and DOM-only', 
   assert.doesNotMatch(html, /month-sharded-storage-dialog/);
 });
 
+test('accounts upgrade is explicit, preview-first, local-label-only, and uses stable evidence hooks', () => {
+  assert.match(view, /Store\.getAccountsMigrationSummary\(\)/);
+  assert.match(view, /ZeroBudgetDataHealth\.buildAccountsMigration\(accountsSummary\)/);
+  assert.match(view, /review-accounts-migration/);
+  assert.match(view, /accounts-migration-heading/);
+  assert.match(view, /Store\.previewAccountsMigration\(\)/);
+  assert.match(view, /Store\.commitAccountsMigration\(preview\)/);
+  assert.match(view, /initialFocus:\s*\(\)\s*=>\s*document\.getElementById\('modal-cancel'\)/);
+  assert.match(view, /if \(reason !== 'confirm'\) this\.accountsPreview = null/);
+  assert.match(view, /Accounts are local planning labels only\. They do not connect to a bank, prove payment, or reconcile activity\./);
+  assert.match(view, /Saved paychecks/);
+  assert.match(view, /Saved expenses/);
+  assert.match(view, /Saved templates/);
+  assert.doesNotMatch(view.slice(view.indexOf('accountsSummaryList'), view.indexOf('previewMonthShardedMigration')), /monthKey|account\.name|accountName/);
+  assert.match(view, /Store\.getStatus\(\)\.state === 'recovery-required'/);
+  assert.match(view, /App\.showRecovery\(Store\.reload\(\)\)/);
+  assert.doesNotMatch(view, /actual transfer|bank transfer|balance confirmed/i);
+});
+
 test('expense deletion is Cancel-first and offers receipt-based session Undo', () => {
   const cancel = html.indexOf('id="expense-delete-cancel"');
   const confirm = html.indexOf('id="expense-delete-confirm"');
