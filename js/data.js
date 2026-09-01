@@ -38,6 +38,12 @@
     'Miscellaneous', 'Debt', 'Taxes', 'Subscriptions', 'Other'
   ]);
   const GENERIC_EARNER_NAMES = Object.freeze(['Primary', 'Secondary']);
+  const COMPARISON_PAYMENT_METHODS = Object.freeze([
+    Object.freeze({ key: 'bank', label: 'Bank' }),
+    Object.freeze({ key: 'credit_card', label: 'Credit Card' }),
+    Object.freeze({ key: 'savings', label: 'Savings' }),
+    Object.freeze({ key: 'investments', label: 'Investments' })
+  ]);
   const FUNDING_TOLERANCE = 0.009;
   const FUNDING_EPSILON = Number.EPSILON * 64;
   const TEMPLATE_ACTIVATION_SELECTION_LIMIT = 500;
@@ -1555,6 +1561,126 @@
     }
     function getAllMonthKeys() { requireReady(); return Object.keys(data.months).sort(); }
 
+    function compareSavedMonths(request = {}) {
+      requireReady();
+      const availableMonths = Object.keys(data.months).sort();
+      const basis = request && request.basis;
+      const baselineMonth = request && typeof request.baselineMonth === 'string' ? request.baselineMonth : '';
+      const comparisonMonth = request && typeof request.comparisonMonth === 'string' ? request.comparisonMonth : '';
+      const emptyRowModel = () => ({
+        columns: ['Section', 'Metric', 'Baseline', 'Comparison', 'Delta', 'Status'], rows: []
+      });
+      const response = (status, summaryLabel, rowModel = emptyRowModel()) => freezeDetached({
+        status, basis: basis === 'actual' ? 'actual' : 'planned', baselineMonth, comparisonMonth,
+        availableMonths, summaryLabel, rowModel
+      });
+
+      if (basis !== 'planned' && basis !== 'actual') return response('invalid-basis', 'Choose Planned or Actual.');
+      if (availableMonths.length < 2) return response(
+        'insufficient-saved-months', 'Save at least two months before comparing them.'
+      );
+      if (!baselineMonth || !comparisonMonth) return response('incomplete', 'Choose two saved months to compare.');
+      if (baselineMonth === comparisonMonth) return response('same-month', 'Choose two different saved months.');
+
+      const validMonthKey = value => {
+        const match = /^(\d{4})-(\d{2})$/.exec(value);
+        if (!match) return false;
+        try { Recurrence.daysInMonth(Number(match[1]), Number(match[2])); return true; }
+        catch { return false; }
+      };
+      if (!validMonthKey(baselineMonth) || !Object.hasOwn(data.months, baselineMonth)) {
+        return response('missing-baseline', 'The baseline month is no longer available.');
+      }
+      if (!validMonthKey(comparisonMonth) || !Object.hasOwn(data.months, comparisonMonth)) {
+        return response('missing-comparison', 'The comparison month is no longer available.');
+      }
+
+      const baseline = data.months[baselineMonth];
+      const comparison = data.months[comparisonMonth];
+      const row = (section, metric, baselineValue, comparisonValue) => {
+        const delta = baselineValue === null || comparisonValue === null ? null : comparisonValue - baselineValue;
+        return {
+          Section: section, Metric: metric, Baseline: baselineValue, Comparison: comparisonValue, Delta: delta,
+          Status: baselineValue === null || comparisonValue === null || delta === null ? 'Incomplete' : 'Complete'
+        };
+      };
+      const summaryValues = month => {
+        const plannedIncome = month.paychecks.reduce((sum, item) => sum + item.plannedAmount, 0);
+        const plannedExpenses = month.expenses.reduce((sum, item) => sum + item.plannedAmount, 0);
+        const allocations = Object.values(month.allocations).reduce((sum, value) => sum + value, 0);
+        if (basis === 'planned') return [plannedIncome, plannedExpenses, plannedIncome - plannedExpenses - allocations];
+        const incomeIncomplete = month.paychecks.some(item => item.actualAmount === null);
+        const expenseIncomplete = month.expenses.some(item => item.actualAmount === null);
+        const actualIncome = incomeIncomplete ? null
+          : month.paychecks.reduce((sum, item) => sum + item.actualAmount, 0);
+        const actualExpenses = expenseIncomplete ? null
+          : month.expenses.reduce((sum, item) => sum + item.actualAmount, 0);
+        return [actualIncome, actualExpenses,
+          actualIncome === null || actualExpenses === null ? null : actualIncome - actualExpenses];
+      };
+      const baselineSummary = summaryValues(baseline);
+      const comparisonSummary = summaryValues(comparison);
+      const summaryMetrics = basis === 'planned'
+        ? ['Planned income', 'Planned expenses', 'Planned remainder']
+        : ['Actual income', 'Actual expenses', 'Actual cash flow'];
+      const rows = summaryMetrics.map((metric, index) =>
+        row('Summary', metric, baselineSummary[index], comparisonSummary[index]));
+
+      for (const allocation of ALLOCATION_TYPES) rows.push(row(
+        'Allocations', `Planned ${allocation.label} allocation`,
+        baseline.allocations[allocation.key] || 0, comparison.allocations[allocation.key] || 0
+      ));
+
+      const categoryFacts = month => {
+        const facts = new Map();
+        for (const expense of month.expenses) {
+          if (!facts.has(expense.category)) facts.set(expense.category, { planned: 0, actual: 0, unresolved: false });
+          const fact = facts.get(expense.category);
+          fact.planned += expense.plannedAmount;
+          if (expense.actualAmount === null) fact.unresolved = true;
+          else fact.actual += expense.actualAmount;
+        }
+        return facts;
+      };
+      const baselineCategories = categoryFacts(baseline);
+      const comparisonCategories = categoryFacts(comparison);
+      const categories = [...new Set([...baselineCategories.keys(), ...comparisonCategories.keys()])]
+        .sort((left, right) => left.localeCompare(right));
+      const categoryValue = (facts, category) => {
+        const fact = facts.get(category);
+        if (!fact) return 0;
+        return basis === 'planned' ? fact.planned : (fact.unresolved ? null : fact.actual);
+      };
+      for (const category of categories) rows.push(row(
+        'Categories', category, categoryValue(baselineCategories, category),
+        categoryValue(comparisonCategories, category)
+      ));
+
+      const paymentFacts = month => {
+        const facts = Object.fromEntries(COMPARISON_PAYMENT_METHODS.map(({ key }) =>
+          [key, { planned: 0, actual: 0, unresolved: false }]));
+        for (const expense of month.expenses) {
+          const fact = facts[expense.paymentMethod];
+          fact.planned += expense.plannedAmount;
+          if (expense.actualAmount === null) fact.unresolved = true;
+          else fact.actual += expense.actualAmount;
+        }
+        return facts;
+      };
+      const baselineMethods = paymentFacts(baseline);
+      const comparisonMethods = paymentFacts(comparison);
+      const methodValue = (facts, key) => basis === 'planned'
+        ? facts[key].planned : (facts[key].unresolved ? null : facts[key].actual);
+      for (const method of COMPARISON_PAYMENT_METHODS) rows.push(row(
+        'Payment methods', method.label, methodValue(baselineMethods, method.key),
+        methodValue(comparisonMethods, method.key)
+      ));
+
+      return response('ready', `${comparisonMonth} compared with ${baselineMonth}.`, {
+        columns: ['Section', 'Metric', 'Baseline', 'Comparison', 'Delta', 'Status'], rows
+      });
+    }
+
     function validateMonthKey(monthKey) {
       const match = typeof monthKey === 'string' && /^(\d{4})-(\d{2})$/.exec(monthKey);
       if (!match) throw new StoreError('INVALID_MONTH');
@@ -2150,7 +2276,7 @@
       fundingDirection,
       getDataHealth, getExactMoneyAudit, getExactMoneyMigrationSummary, previewExactMoneyMigration, commitExactMoneyMigration,
       getTemplateReadiness, previewActualResolutions, applyActualResolutions, previewDefaultDateResolutions, applyDefaultDateResolutions, compareAdditiveBackup,
-      calcMonthSummary, calcPaycheckRemaining, calcCategoryTotals, calcPaymentMethodTotals,
+      calcMonthSummary, calcPaycheckRemaining, calcCategoryTotals, calcPaymentMethodTotals, compareSavedMonths,
       buildExport, exportData, previewImport, commitImport, importData, listSnapshots,
       listSnapshotMetadata, restoreSnapshot, startFresh, getCorruptEvidence
     });

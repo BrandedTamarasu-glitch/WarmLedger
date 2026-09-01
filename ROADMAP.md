@@ -144,6 +144,19 @@ Status: published on 2026-09-01.
 
 The lean ceiling is the existing fixed-window scan and passive route to existing controls. Do not add persistence, indexes, caches, durable summaries, or background work without a measured performance need and a separately reviewed contract.
 
+### Saved Month Comparison
+
+Status: published on 2026-09-01.
+
+- Compare exactly two explicit, distinct saved months, passively defaulting to the two most recent saved months when available.
+- Apply the Dashboard's global Planned or Actual basis and define every absolute delta as comparison minus baseline.
+- Preserve incomplete actuals rather than treating them as zero, while keeping entered zero complete and allocations explicitly planned-only.
+- Present summary, allocation, category, and payment-method rows in one accessible table with local CSV export and print output.
+- Keep comparison deterministic, transient, read-only, write-free, and limited to the two selected saved months.
+- Make no payment, account, bank-activity, reconciliation, or month-lifecycle claim.
+
+The lean ceiling is one chart-free table over two saved months using existing projections and report paths. Do not add persistence, comparison history, caches, indexes, background processing, or schema changes without measured need and a separately reviewed contract.
+
 ## Global release gates
 
 - No financial data, labels, amounts, or raw backups enter tests, logs, screenshots, or Git.

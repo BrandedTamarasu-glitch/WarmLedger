@@ -457,6 +457,98 @@ const SCENARIO = `(async () => {
     'Dashboard print context did not preserve range and basis.');
   assert(localStorage.getItem(primaryKey) === dashboardBytes, 'Dashboard basis, CSV, or print changed storage bytes.');
 
+  const comparisonDisclosure = document.getElementById('dashboard-saved-month-comparison');
+  assert(!comparisonDisclosure.open, 'Saved month comparison must be initially closed.');
+  const savedComparisonMonths = Store.getAllMonthKeys().slice().sort();
+  const expectedComparisonMonths = savedComparisonMonths.slice(-2);
+  const baselineSelect = document.getElementById('dashboard-comparison-baseline');
+  const comparisonSelect = document.getElementById('dashboard-comparison-month');
+  assert(expectedComparisonMonths.length === 2 && baselineSelect.value === expectedComparisonMonths[0] &&
+    comparisonSelect.value === expectedComparisonMonths[1],
+    'Saved month comparison did not default to the two most recent distinct saved months.');
+  assert([...baselineSelect.options].some(option => option.value === month) === savedComparisonMonths.includes(month),
+    'Current month availability did not exactly match saved-month membership.');
+  comparisonDisclosure.open = true;
+  baselineSelect.value = expectedComparisonMonths[1];
+  baselineSelect.dispatchEvent(new Event('change', { bubbles: true }));
+  comparisonSelect.value = expectedComparisonMonths[0];
+  comparisonSelect.dispatchEvent(new Event('change', { bubbles: true }));
+  const draftComparisonBytes = localStorage.getItem(primaryKey);
+  document.getElementById('dash-from').value = month;
+  document.getElementById('dash-to').value = month;
+  DashboardView.render(); await settle();
+  document.querySelector('[data-dashboard-basis="planned"]').click(); await settle();
+  assert(document.getElementById('dashboard-comparison-output').hidden &&
+    document.getElementById('dashboard-comparison-status').textContent.includes('Choose Compare') &&
+    baselineSelect.value === expectedComparisonMonths[1] && comparisonSelect.value === expectedComparisonMonths[0],
+    'An unrelated Dashboard range/render/basis update ran or discarded the unconfirmed picker draft.');
+  csvCapture = null; App.download = (content, filename, type) => { csvCapture = { content, filename, type }; };
+  printCount = 0; globalThis.print = () => { printCount++; };
+  document.getElementById('btn-dashboard-comparison-csv').click(); await settle();
+  document.getElementById('btn-dashboard-comparison-print').click(); await settle();
+  App.download = originalDownload; globalThis.print = originalPrint;
+  assert(csvCapture === null && printCount === 0 &&
+    document.getElementById('dashboard-comparison-output').hidden &&
+    document.getElementById('dashboard-comparison-status').textContent.includes('Choose Compare') &&
+    localStorage.getItem(primaryKey) === draftComparisonBytes,
+    'CSV or print ran an unconfirmed comparison draft or changed storage bytes.');
+  const comparisonBytes = localStorage.getItem(primaryKey);
+  document.getElementById('dashboard-saved-month-comparison-form').requestSubmit(); await settle();
+  assert(DashboardView.savedMonthComparisonRequest.baselineMonth === expectedComparisonMonths[1] &&
+    DashboardView.savedMonthComparisonRequest.comparisonMonth === expectedComparisonMonths[0] &&
+    DashboardView.savedMonthComparisonRequest.basis === 'planned' &&
+    !document.getElementById('dashboard-comparison-output').hidden,
+    'Compare did not commit and render the exact picker draft.');
+  const plannedComparison = Store.compareSavedMonths({ baselineMonth: baselineSelect.value,
+    comparisonMonth: comparisonSelect.value, basis: 'planned' });
+  const comparisonRows = [...document.querySelectorAll('.dashboard-comparison-table tbody tr')];
+  const firstPlannedRow = plannedComparison.rowModel.rows[0];
+  assert(plannedComparison.status === 'ready' && comparisonRows.length === plannedComparison.rowModel.rows.length &&
+    comparisonRows[0]?.cells[1]?.textContent === firstPlannedRow.Metric &&
+    comparisonRows[0]?.cells[4]?.textContent === BudgetView.fmt(firstPlannedRow.Delta) &&
+    document.querySelector('.dashboard-comparison-context')?.textContent.includes('comparison minus baseline'),
+    'Planned saved-month comparison did not render its canonical rows and deltas.');
+  assert(localStorage.getItem(primaryKey) === comparisonBytes, 'Compare or planned comparison render changed storage bytes.');
+
+  document.querySelector('[data-dashboard-basis="actual"]').click(); await settle();
+  document.getElementById('dashboard-saved-month-comparison-form').requestSubmit(); await settle();
+  const actualComparison = Store.compareSavedMonths({ baselineMonth: baselineSelect.value,
+    comparisonMonth: comparisonSelect.value, basis: 'actual' });
+  assert(actualComparison.status === 'ready' && actualComparison.rowModel.rows.some(row => row.Status === 'Incomplete') &&
+    document.querySelector('.dashboard-comparison-table')?.textContent.includes('— Incomplete'),
+    'Actual saved-month comparison did not preserve incomplete values in the UI.');
+  csvCapture = null; App.download = (content, filename, type) => { csvCapture = { content, filename, type }; };
+  document.getElementById('btn-dashboard-comparison-csv').click(); await settle();
+  assert(csvCapture?.filename.endsWith('-actual.csv') && csvCapture.type === 'text/csv;charset=utf-8' &&
+    csvCapture.content === DashboardView.savedMonthComparisonCsv(actualComparison) &&
+    csvCapture.content.includes('"Incomplete"'),
+    'Actual saved-month comparison CSV did not exactly preserve canonical incomplete rows.');
+  App.download = originalDownload;
+  printCount = 0; globalThis.print = () => { printCount++; };
+  document.getElementById('btn-dashboard-comparison-print').click(); await settle(); globalThis.print = originalPrint;
+  assert(printCount === 1 && !document.body.classList.contains('printing-saved-month-comparison'),
+    'Saved month comparison print did not invoke print exactly once and clean up its print scope.');
+  assert(localStorage.getItem(primaryKey) === comparisonBytes,
+    'Saved month comparison render, CSV, or print changed storage bytes.');
+
+  baselineSelect.value = comparisonSelect.value;
+  document.getElementById('dashboard-saved-month-comparison-form').requestSubmit(); await settle();
+  assert(document.getElementById('dashboard-comparison-output').hidden &&
+    document.getElementById('dashboard-comparison-status').textContent.includes('different saved months'),
+    'Same-month comparison validation did not clear output and explain the error.');
+  baselineSelect.value = expectedComparisonMonths[0]; comparisonSelect.value = expectedComparisonMonths[1];
+  document.getElementById('dashboard-saved-month-comparison-form').requestSubmit(); await settle();
+  const replacementPreview = Store.previewImport(Store.exportData());
+  delete replacementPreview.data.months[expectedComparisonMonths[1]];
+  Store.commitImport(replacementPreview);
+  const staleComparisonBytes = localStorage.getItem(primaryKey);
+  DashboardView.compareSavedMonths({ announce: true }); await settle();
+  assert(document.getElementById('dashboard-comparison-output').hidden &&
+    document.getElementById('dashboard-comparison-status').textContent.includes('no longer available') &&
+    baselineSelect.value === expectedComparisonMonths[0] && comparisonSelect.value === '' &&
+    localStorage.getItem(primaryKey) === staleComparisonBytes,
+    'A removed selected month did not clear comparison output and status without fallback or write.');
+
   const finder = document.getElementById('dashboard-record-finder'); finder.open = true;
   const finderQuery = document.getElementById('dashboard-record-query');
   const finderBytes = localStorage.getItem(primaryKey); finderQuery.value = 'Synthetic long unfunded bill';
@@ -583,6 +675,9 @@ const SCENARIO = `(async () => {
     payPeriodsFourDigitFunding: true, payPeriodsStaleAndZeroPaycheckRoutes: true,
     previewCancelApply: true, backupRoundTrip: true, dashboardBasisCsvPrintPassive: true,
     dashboardSavedMonthForecastPassive: true, savedRecordFinderTransientRouteStaleSafe: true,
+    savedMonthComparisonDefaultsValidationRowsPassiveStaleSafe: true,
+    savedMonthComparisonActualIncompleteCsvPrintByteExact: true,
+    savedMonthComparisonDraftRequiresExplicitCompare: true,
     reviewNavigationClosedPassiveLookbacksRoutesStaleSafe: true,
     reviewNavigationBudgetOriginStaleFocusByteExact: true,
     exactMoneyEligiblePreviewCancelConfirm: true,
@@ -633,6 +728,65 @@ async function run(options) {
     assertEvidence(escapeDelete.closed && escapeDelete.preserved && escapeDelete.byteExact && escapeDelete.focusReturned,
       `Expense delete Escape failed: ${JSON.stringify(escapeDelete)}`);
     scenario.expenseDeleteEscape = true;
+    const comparisonResponsiveSetup = await evaluate(cdp, `(async () => {
+      App.switchView('dashboard'); DashboardView.render();
+      const disclosure = document.getElementById('dashboard-saved-month-comparison'); disclosure.open = true;
+      const months = Store.getAllMonthKeys().slice().sort();
+      const baseline = document.getElementById('dashboard-comparison-baseline');
+      const comparison = document.getElementById('dashboard-comparison-month');
+      if (months.length < 2) return { ready: false };
+      baseline.value = months[0]; comparison.value = months[1];
+      document.getElementById('dashboard-saved-month-comparison-form').requestSubmit();
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      return { ready: !document.getElementById('dashboard-comparison-output').hidden };
+    })()`);
+    assertEvidence(comparisonResponsiveSetup.ready, 'Saved Month Comparison responsive setup failed.');
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width: 320, height: 900, deviceScaleFactor: 1, mobile: false });
+    const comparisonNarrow = await evaluate(cdp, `(() => {
+      const disclosure = document.getElementById('dashboard-saved-month-comparison');
+      const tableRegion = disclosure.querySelector('.dashboard-comparison-table');
+      const viewport = document.documentElement.clientWidth;
+      const targets = [...disclosure.querySelectorAll('summary, select, button')]
+        .filter(element => element.getClientRects().length);
+      const regionRect = tableRegion?.getBoundingClientRect();
+      return { visible: Boolean(disclosure.getClientRects().length),
+        noPageOverflow: document.documentElement.scrollWidth <= viewport,
+        tableContained: Boolean(regionRect && regionRect.left >= -0.5 && regionRect.right <= viewport + 0.5 &&
+          tableRegion.scrollWidth >= tableRegion.clientWidth),
+        targetsAtLeast44: targets.length >= 6 && targets.every(element => element.getBoundingClientRect().height >= 44) };
+    })()`);
+    assertEvidence(comparisonNarrow.visible && comparisonNarrow.noPageOverflow && comparisonNarrow.tableContained &&
+      comparisonNarrow.targetsAtLeast44,
+      `Saved Month Comparison 320px evidence failed: ${JSON.stringify(comparisonNarrow)}`);
+    await cdp.send('Emulation.setEmulatedMedia', { media: 'screen', features: [{ name: 'forced-colors', value: 'active' }] });
+    const comparisonForcedColors = await evaluate(cdp, `(() => {
+      const disclosure = document.getElementById('dashboard-saved-month-comparison');
+      const table = disclosure.querySelector('.dashboard-comparison-table');
+      const focus = document.getElementById('btn-dashboard-comparison-csv'); focus.focus();
+      return { active: matchMedia('(forced-colors: active)').matches,
+        disclosureBoundary: getComputedStyle(disclosure).borderColor !== 'rgba(0, 0, 0, 0)',
+        tableBoundary: getComputedStyle(table).borderColor !== 'rgba(0, 0, 0, 0)',
+        focusVisible: !['none', 'hidden'].includes(getComputedStyle(focus).outlineStyle) };
+    })()`);
+    assertEvidence(comparisonForcedColors.active && comparisonForcedColors.disclosureBoundary &&
+      comparisonForcedColors.tableBoundary && comparisonForcedColors.focusVisible,
+      `Saved Month Comparison forced-colors evidence failed: ${JSON.stringify(comparisonForcedColors)}`);
+    await cdp.send('Emulation.setEmulatedMedia', { media: 'print', features: [] });
+    const comparisonPrint = await evaluate(cdp, `(() => {
+      document.body.classList.add('printing-saved-month-comparison');
+      const disclosure = document.getElementById('dashboard-saved-month-comparison');
+      const result = { printMedia: matchMedia('print').matches,
+        disclosureVisible: getComputedStyle(disclosure).display !== 'none',
+        controlsHidden: getComputedStyle(document.getElementById('dashboard-saved-month-comparison-form')).display === 'none',
+        contextVisible: getComputedStyle(disclosure.querySelector('.dashboard-comparison-context')).display !== 'none',
+        tableVisible: getComputedStyle(disclosure.querySelector('.dashboard-comparison-table')).display !== 'none' };
+      document.body.classList.remove('printing-saved-month-comparison'); return result;
+    })()`);
+    assertEvidence(comparisonPrint.printMedia && comparisonPrint.disclosureVisible && comparisonPrint.controlsHidden &&
+      comparisonPrint.contextVisible && comparisonPrint.tableVisible,
+      `Saved Month Comparison print evidence failed: ${JSON.stringify(comparisonPrint)}`);
+    await cdp.send('Emulation.setEmulatedMedia', { media: 'screen', features: [{ name: 'forced-colors', value: 'none' }] });
+    scenario.savedMonthComparisonNarrowForcedColorsPrint = true;
     await evaluate(cdp, `(async () => {
       App.switchView('dashboard'); const queue = document.getElementById('dashboard-review-queue'); queue.open = true;
       DashboardView.renderMonthReviewQueue();

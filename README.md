@@ -17,7 +17,7 @@ See [ROADMAP.md](ROADMAP.md) for planned work and the boundaries of future phase
 - Preview-first recurring generation that shows additions and skips before making one atomic change.
 - A compact, write-free **Monthly Review** dashboard showing recurring work, missing actuals, expense funding, checklist readiness, and balance at a glance, with details available on demand.
 - Manual cleared-record marks for eligible saved records, kept explicitly separate from payment confirmation, bank verification, reconciliation, and month close.
-- Saved-only future-month forecasting, upcoming bills and paydays, a transient Saved-Record Finder, and a bounded saved-month review queue.
+- Saved-only future-month forecasting, upcoming bills and paydays, a transient Saved-Record Finder, a bounded saved-month review queue, and two-month comparison.
 - A write-free **Data Health** view for incomplete or unusual ledger records and compare-only backup analysis.
 - Explicit, preview-first migration of eligible ledgers to exact integer-cent persistence, protected by a verified safety snapshot.
 - Internal recurrence safeguards that keep deliberately removed generated occurrences from returning unexpectedly.
@@ -60,6 +60,14 @@ Each result shows only its saved identity, kind, month, neutral saved date or **
 The initially closed Dashboard **Months needing attention** disclosure is a bounded, read-only review aid over saved months only. Choose an exact lookback of 6, 12, or 24 months to see saved-month facts that may be useful to review. Opening the disclosure, changing its lookback, and following its actions are passive: they do not create, edit, save, migrate, snapshot, generate identifiers, or otherwise change the ledger.
 
 Before routing, an action revalidates its exact current item. A current item can focus only its existing Budget or Monthly Review control; a stale item refreshes safely instead of routing to an outdated target. The queue does not assign priority, prove completion or payment, verify a bank, reconcile an account, or close a month.
+
+### Compare saved months
+
+The initially closed Dashboard **Compare saved months** disclosure compares exactly two distinct saved months without changing the ledger. Its separate baseline and comparison pickers passively default to the two most recent saved months when available; changing either picker clears stale output until **Compare** is chosen. The Dashboard's global Planned or Actual spending basis applies to the comparison, and every absolute delta is calculated as comparison minus baseline.
+
+The accessible table includes summary, allocation, category, and payment-method rows. Allocations remain explicitly planned-only even when the global basis is Actual. A missing actual makes only the affected result and delta **Incomplete**—it is never treated as zero—while an entered zero remains a complete value. The current result can be downloaded as a local CSV or printed with the selected months, basis, delta direction, and incomplete states intact.
+
+Comparison reads only the two explicitly selected saved months and remains transient and write-free. It adds no charts, persistence, history, cache, index, background processing, schema changes, account activity, payment claims, or reconciliation behavior.
 
 ## Run locally
 

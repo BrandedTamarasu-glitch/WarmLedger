@@ -104,6 +104,28 @@ test('browser evidence proves Review Navigation is passive, revalidating, respon
   assert.doesNotMatch(source, /evidence = \{ passed: true, browser/);
 });
 
+test('browser evidence proves Saved Month Comparison defaults, validation, exact output, and stale safety', () => {
+  for (const marker of ['savedMonthComparisonDefaultsValidationRowsPassiveStaleSafe',
+    'savedMonthComparisonActualIncompleteCsvPrintByteExact',
+    'savedMonthComparisonDraftRequiresExplicitCompare',
+    'savedMonthComparisonNarrowForcedColorsPrint']) assert.match(source, new RegExp(marker));
+  assert.match(source, /assert\(!comparisonDisclosure\.open/);
+  assert.match(source, /savedComparisonMonths\.slice\(-2\)/);
+  assert.match(source, /savedComparisonMonths\.includes\(month\)/);
+  assert.match(source, /different saved months/);
+  assert.match(source, /DashboardView\.render\(\); await settle\(\)/);
+  assert.match(source, /csvCapture === null && printCount === 0/);
+  assert.match(source, /DashboardView\.savedMonthComparisonRequest\.baselineMonth === expectedComparisonMonths\[1\]/);
+  assert.match(source, /localStorage\.getItem\(primaryKey\) === draftComparisonBytes/);
+  assert.match(source, /actualComparison\.rowModel\.rows\.some\(row => row\.Status === 'Incomplete'\)/);
+  assert.match(source, /csvCapture\.content === DashboardView\.savedMonthComparisonCsv\(actualComparison\)/);
+  assert.match(source, /delete replacementPreview\.data\.months\[expectedComparisonMonths\[1\]\]/);
+  assert.match(source, /localStorage\.getItem\(primaryKey\) === staleComparisonBytes/);
+  assert.match(source, /Saved Month Comparison 320px evidence failed/);
+  assert.match(source, /Saved Month Comparison forced-colors evidence failed/);
+  assert.match(source, /Saved Month Comparison print evidence failed/);
+});
+
 test('browser evidence toggles and reloads one eligible entered-zero Manual Cleared record', () => {
   assert.match(source, /manualClearedZeroToggleFocusReload/);
   assert.match(source, /Passive Manual Cleared render changed storage bytes/);

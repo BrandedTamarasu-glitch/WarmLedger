@@ -57,6 +57,8 @@ const DashboardView = {
   upcomingDayCount: 30,
   reviewQueueLookback: 12,
   savedRecordSearchRequest: null,
+  savedMonthComparisonRequest: null,
+  savedMonthComparisonDirty: false,
 
   init() {
     this.bindEvents();
@@ -69,6 +71,18 @@ const DashboardView = {
     document.getElementById('btn-dashboard-csv').addEventListener('click', () => this.exportCsv());
     document.getElementById('btn-dashboard-print').addEventListener('click', () => this.printReport());
     document.getElementById('btn-dashboard-forecast-csv').addEventListener('click', () => this.exportForecastCsv());
+    const comparisonForm = document.getElementById('dashboard-saved-month-comparison-form');
+    if (comparisonForm?.addEventListener) comparisonForm.addEventListener('submit', event => {
+      event.preventDefault(); this.compareSavedMonths({ announce: true });
+    });
+    for (const id of ['dashboard-comparison-baseline', 'dashboard-comparison-month']) {
+      const control = document.getElementById(id);
+      if (control?.addEventListener) control.addEventListener('change', () => this.changeSavedMonthComparison());
+    }
+    const comparisonCsv = document.getElementById('btn-dashboard-comparison-csv');
+    if (comparisonCsv?.addEventListener) comparisonCsv.addEventListener('click', () => this.exportSavedMonthComparisonCsv());
+    const comparisonPrint = document.getElementById('btn-dashboard-comparison-print');
+    if (comparisonPrint?.addEventListener) comparisonPrint.addEventListener('click', () => this.printSavedMonthComparison());
     const finderForm = document.getElementById('dashboard-record-finder-form');
     if (finderForm?.addEventListener) finderForm.addEventListener('submit', event => {
       event.preventDefault(); this.submitSavedRecordSearch();
@@ -270,6 +284,171 @@ const DashboardView = {
     if (className) node.className = className;
     if (text !== undefined) node.textContent = text;
     return node;
+  },
+
+  savedMonthComparisonFromControls() {
+    return Object.freeze({
+      baselineMonth: document.getElementById('dashboard-comparison-baseline')?.value || '',
+      comparisonMonth: document.getElementById('dashboard-comparison-month')?.value || '',
+      basis: this.basis
+    });
+  },
+
+  changeSavedMonthComparison() {
+    this.savedMonthComparisonDirty = true;
+    this.clearSavedMonthComparisonOutput();
+    this.setSavedMonthComparisonStatus('Choose Compare to update this saved-month comparison.', false);
+  },
+
+  setSavedMonthComparisonStatus(message, isError) {
+    const status = document.getElementById('dashboard-comparison-status');
+    if (!status) return;
+    status.textContent = message;
+    status.classList.toggle('is-error', Boolean(isError));
+  },
+
+  clearSavedMonthComparisonOutput() {
+    const output = document.getElementById('dashboard-comparison-output');
+    if (output) { output.hidden = true; output.replaceChildren(); }
+  },
+
+  populateSavedMonthComparisonPickers(availableMonths, request) {
+    for (const [id, selected, label] of [
+      ['dashboard-comparison-baseline', request.baselineMonth, 'Choose baseline month'],
+      ['dashboard-comparison-month', request.comparisonMonth, 'Choose comparison month']
+    ]) {
+      const select = document.getElementById(id);
+      if (!select || typeof document.createElement !== 'function') continue;
+      select.replaceChildren();
+      const prompt = document.createElement('option'); prompt.value = ''; prompt.textContent = label; select.append(prompt);
+      for (const monthKey of availableMonths) {
+        const option = document.createElement('option'); option.value = monthKey;
+        option.textContent = App.formatMonth(monthKey); select.append(option);
+      }
+      select.value = availableMonths.includes(selected) ? selected : '';
+    }
+  },
+
+  savedMonthComparisonResult({ initialize = false } = {}) {
+    let request = this.savedMonthComparisonRequest;
+    let result = Store.compareSavedMonths(request || { baselineMonth: '', comparisonMonth: '', basis: this.basis });
+    if (!request && initialize && result.availableMonths.length >= 2) {
+      request = Object.freeze({ baselineMonth: result.availableMonths.at(-2),
+        comparisonMonth: result.availableMonths.at(-1), basis: this.basis });
+      this.savedMonthComparisonRequest = request;
+      result = Store.compareSavedMonths(request);
+    }
+    this.populateSavedMonthComparisonPickers(result.availableMonths, request || {
+      baselineMonth: '', comparisonMonth: ''
+    });
+    return result;
+  },
+
+  comparisonAmount(value) {
+    return value === null ? '— Incomplete' : BudgetView.fmt(value);
+  },
+
+  renderSavedMonthComparisonTable(result) {
+    const output = document.getElementById('dashboard-comparison-output');
+    if (!output) return;
+    const context = this.upcomingNode('p', 'dashboard-comparison-context',
+      `${App.formatMonth(result.comparisonMonth)} compared with ${App.formatMonth(result.baselineMonth)}. Basis: ${result.basis === 'planned' ? 'Planned' : 'Actual'}. Deltas are comparison minus baseline.`);
+    if (result.basis === 'actual') context.append(document.createTextNode(
+      ' Allocation rows remain planned-only; incomplete actual amounts are not treated as zero.'
+    ));
+    const region = this.upcomingNode('div', 'dashboard-data-table table-scroll dashboard-comparison-table');
+    region.setAttribute('role', 'region'); region.setAttribute('aria-label', 'Saved month comparison table');
+    const table = document.createElement('table');
+    const caption = document.createElement('caption'); caption.textContent = 'Saved month comparison'; table.append(caption);
+    const thead = table.createTHead(); const heading = thead.insertRow();
+    for (const column of result.rowModel.columns) {
+      const th = document.createElement('th'); th.scope = 'col';
+      th.textContent = column === 'Baseline' ? `Baseline (${result.baselineMonth})`
+        : column === 'Comparison' ? `Comparison (${result.comparisonMonth})` : column;
+      heading.append(th);
+    }
+    const tbody = table.createTBody();
+    for (const row of result.rowModel.rows) {
+      const tr = tbody.insertRow();
+      result.rowModel.columns.forEach((column, index) => {
+        const cell = document.createElement(index === 1 ? 'th' : 'td');
+        if (index === 1) cell.scope = 'row';
+        cell.textContent = ['Baseline', 'Comparison', 'Delta'].includes(column)
+          ? this.comparisonAmount(row[column]) : row[column];
+        tr.append(cell);
+      });
+    }
+    region.append(table); output.replaceChildren(context, region); output.hidden = false;
+  },
+
+  compareSavedMonths({ announce = false, initialize = false } = {}) {
+    if (typeof Store.compareSavedMonths !== 'function') return null;
+    if (initialize && (this.savedMonthComparisonDirty || (this.savedMonthComparisonRequest &&
+      this.savedMonthComparisonRequest.basis !== this.basis))) {
+      this.savedMonthComparisonDirty = true;
+      this.clearSavedMonthComparisonOutput();
+      this.setSavedMonthComparisonStatus('Choose Compare to update this saved-month comparison.', false);
+      return null;
+    }
+    if (!initialize) {
+      this.savedMonthComparisonRequest = this.savedMonthComparisonFromControls();
+      this.savedMonthComparisonDirty = false;
+    }
+    const result = this.savedMonthComparisonResult({ initialize });
+    if (result.status !== 'ready') {
+      this.clearSavedMonthComparisonOutput();
+      this.setSavedMonthComparisonStatus(result.summaryLabel, true);
+      if (announce) App.announceStatus(result.summaryLabel);
+      return result;
+    }
+    this.renderSavedMonthComparisonTable(result);
+    this.setSavedMonthComparisonStatus(result.summaryLabel, false);
+    if (announce) App.announceStatus(`Saved month comparison updated. ${result.summaryLabel}`);
+    return result;
+  },
+
+  savedMonthComparisonCsv(result) {
+    return dashboardCsv([
+      result.rowModel.columns,
+      ...result.rowModel.rows.map(row => result.rowModel.columns.map(column => row[column]))
+    ]);
+  },
+
+  exportSavedMonthComparisonCsv() {
+    if (this.savedMonthComparisonDirty || !this.savedMonthComparisonRequest) {
+      const message = 'Choose Compare before downloading this saved-month comparison.';
+      this.clearSavedMonthComparisonOutput(); this.setSavedMonthComparisonStatus(message, true);
+      App.announceStatus(message); return false;
+    }
+    const result = this.savedMonthComparisonResult();
+    if (result.status !== 'ready') {
+      this.clearSavedMonthComparisonOutput(); this.setSavedMonthComparisonStatus(result.summaryLabel, true);
+      App.announceStatus(result.summaryLabel); return false;
+    }
+    this.renderSavedMonthComparisonTable(result);
+    App.download(this.savedMonthComparisonCsv(result),
+      `warm-ledger-comparison-${result.baselineMonth}-to-${result.comparisonMonth}-${result.basis}.csv`,
+      'text/csv;charset=utf-8');
+    App.announceStatus(`Saved month comparison CSV downloaded for ${result.baselineMonth} and ${result.comparisonMonth} using ${result.basis}.`);
+    return true;
+  },
+
+  printSavedMonthComparison() {
+    if (this.savedMonthComparisonDirty || !this.savedMonthComparisonRequest) {
+      const message = 'Choose Compare before printing this saved-month comparison.';
+      this.clearSavedMonthComparisonOutput(); this.setSavedMonthComparisonStatus(message, true);
+      App.announceStatus(message); return false;
+    }
+    const result = this.savedMonthComparisonResult();
+    if (result.status !== 'ready') {
+      this.clearSavedMonthComparisonOutput(); this.setSavedMonthComparisonStatus(result.summaryLabel, true);
+      App.announceStatus(result.summaryLabel); return false;
+    }
+    this.renderSavedMonthComparisonTable(result);
+    document.body?.classList.add('printing-saved-month-comparison');
+    try { globalThis.print(); }
+    finally { document.body?.classList.remove('printing-saved-month-comparison'); }
+    return true;
   },
 
   renderUpcoming() {
@@ -808,6 +987,7 @@ const DashboardView = {
   render() {
     this.renderUpcoming();
     this.renderMonthReviewQueue();
+    this.compareSavedMonths({ initialize: true });
     this.clearRenderedOutput();
     this.renderForecast();
     const range = this.validateDateRange(this.getDateRange());

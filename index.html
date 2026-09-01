@@ -177,6 +177,29 @@
           <div id="dashboard-review-queue-content"></div>
         </div>
       </details>
+      <details id="dashboard-saved-month-comparison" class="dashboard-saved-month-comparison dash-card">
+        <summary>Compare saved months</summary>
+        <div class="dashboard-comparison-body">
+          <p>Compare exactly two saved months using the Dashboard spending basis. Results are read-only, stay on this device, and show absolute deltas as comparison minus baseline.</p>
+          <form id="dashboard-saved-month-comparison-form" autocomplete="off">
+            <div class="dashboard-comparison-fields">
+              <label for="dashboard-comparison-baseline">Baseline saved month
+                <select id="dashboard-comparison-baseline" required></select>
+              </label>
+              <label for="dashboard-comparison-month">Comparison saved month
+                <select id="dashboard-comparison-month" required></select>
+              </label>
+            </div>
+            <div class="dashboard-comparison-actions">
+              <button class="btn btn-primary" type="submit">Compare</button>
+              <button id="btn-dashboard-comparison-csv" class="btn btn-secondary" type="button">Download comparison CSV</button>
+              <button id="btn-dashboard-comparison-print" class="btn btn-secondary" type="button">Print comparison</button>
+            </div>
+          </form>
+          <p id="dashboard-comparison-status" class="dashboard-comparison-status" role="status" aria-live="polite" aria-atomic="true"></p>
+          <div id="dashboard-comparison-output" class="dashboard-comparison-output" hidden></div>
+        </div>
+      </details>
       <fieldset class="dashboard-controls" aria-describedby="dashboard-range-help dashboard-state">
         <legend>Reporting range</legend>
         <div class="date-range">
