@@ -2348,6 +2348,12 @@
           month.expenses.forEach(record => { delete record.accountId; });
         }
       }
+      if (residentSchemaVersion >= Schema.V7_SCHEMA_VERSION) {
+        for (const month of Object.values(result.months)) {
+          month.paychecks.forEach(record => { delete record.actualAccountId; });
+          month.expenses.forEach(record => { delete record.actualAccountId; });
+        }
+      }
       return result;
     }
 

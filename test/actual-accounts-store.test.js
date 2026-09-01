@@ -114,3 +114,18 @@ test('copy and recurring generation always reset actual account references', () 
   store.applyRecurringPreview(store.previewRecurringMonth('2026-11'));
   assert.equal(store.getMonth('2026-11').paychecks[0].actualAccountId, null);
 });
+
+test('schema 7 Data Health analysis ignores actual account fields without removing persisted labels', () => {
+  const { store, storage } = ready();
+  const bank = store.createAccount({ name: 'Checking', kind: 'bank' });
+  const paycheck = store.addPaycheck('2026-09', { earnerId: 'earner-example-1', plannedAmount: 100,
+    actualAmount: 100, date: '2026-09-01', accountId: null, actualAccountId: bank.id });
+
+  const reloaded = createStore({ storage, now: makeClock(), uuid: () => 'unused' });
+  assert.equal(reloaded.load().state, 'ready');
+  assert.doesNotThrow(() => reloaded.getDataHealth());
+  assert.doesNotThrow(() => reloaded.getExactMoneyAudit());
+  assert.equal(reloaded.getMonth('2026-09').paychecks.find(record => record.id === paycheck.id).actualAccountId, bank.id);
+  assert.equal(JSON.parse(storage.getItem(STORAGE_KEY)).months['2026-09'].paychecks
+    .find(record => record.id === paycheck.id).actualAccountId, bank.id);
+});
