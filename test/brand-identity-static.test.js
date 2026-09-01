@@ -10,6 +10,7 @@ const read = relative => fs.readFileSync(path.join(root, relative), 'utf8');
 const html = read('index.html');
 const app = read('js/app.js');
 const data = read('js/data.js');
+const storageEngine = read('js/storage-engine.js');
 const schema = read('js/data-schema.js');
 const recurrence = read('js/recurrence.js');
 const evidence = read('scripts/browser-evidence.js');
@@ -48,6 +49,14 @@ test('storage origins, keys, global APIs, and compatibility evidence identifiers
   assert.match(data, /const STORAGE_KEY = 'zeroBudget_data'/);
   assert.match(data, /const CORRUPT_KEY = 'zeroBudget_corrupt'/);
   assert.match(data, /const SNAPSHOT_PREFIX = 'zeroBudget_snapshot:'/);
+  assert.match(storageEngine, /JOURNAL_KEY='zeroBudget_journal'/);
+  assert.match(storageEngine, /MANIFEST_PREFIX='zeroBudget_manifest:'/);
+  assert.match(storageEngine, /GLOBAL_PREFIX='zeroBudget_global:'/);
+  assert.match(storageEngine, /MONTH_PREFIX='zeroBudget_month:'/);
+  assert.match(evidence, /primaryKey === 'zeroBudget_data'/);
+  for (const namespace of ['zeroBudget_manifest:', 'zeroBudget_global:', 'zeroBudget_month:', 'zeroBudget_journal']) {
+    assert.match(evidence, new RegExp(namespace));
+  }
   assert.match(evidence, /const primaryKey = Store\.STORAGE_KEY \|\| ZeroBudgetStore\.STORAGE_KEY/);
   assert.doesNotMatch(evidence, /zeroBudgetData/);
   assert.match(schema, /root\.ZeroBudgetSchema = api/);

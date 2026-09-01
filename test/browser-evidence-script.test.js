@@ -142,6 +142,31 @@ test('browser evidence covers prepared dashboards, multi-tab recovery, and local
   assert.match(source, /snapshotCount === snapshotCountBefore \+ snapshotKeys\.length/);
 });
 
+test('browser evidence covers month-sharded preview, migration, reload, corruption recovery, and complete purge', () => {
+  for (const marker of ['shardedMigrationPreviewNoWriteCancelConfirm',
+    'shardedReloadCorruptionEvidenceSnapshotRecovery', 'zerobudget-corrupt-evidence']) {
+    assert.match(source, new RegExp(marker));
+  }
+  assert.match(source, /beforePreview === allBytes\(\)/);
+  assert.match(source, /primaryKey === 'zeroBudget_data'/);
+  assert.match(source, /rootPointer\?\.format === 'zerobudget-active-layout'/);
+  assert.match(source, /manifest\.monthOrder\.every\(monthKey => localStorage\.getItem\(manifest\.months\[monthKey\]\.key\)\)/);
+  assert.match(source, /ZeroBudgetStorageEngine\.validateGlobalReference/);
+  assert.match(source, /ZeroBudgetStorageEngine\.validateMonthReference/);
+  assert.match(source, /Store\.getShardedPersistenceSummary\(\)\.state === 'already-sharded'/);
+  assert.match(source, /allBytes\(\) === sessionStorage\.getItem\('browser-evidence-sharded-bytes'\)/);
+  assert.match(source, /sessionStorage\.getItem\('browser-evidence-sharded-semantic'\)/);
+  assert.match(source, /Store\.restoreSnapshot\(safety\.id\)/);
+  assert.match(source, /const evidenceRaw = Store\.getCorruptEvidence\(\)/);
+  assert.doesNotMatch(source, /Store\.getCorruptEvidence\(\) \|\|/);
+  assert.match(source, /localStorage\.getItem\(corruptKey\) === null/);
+  assert.match(source, /evidence\.failingKey === monthShardKey/);
+  for (const namespace of ['zeroBudget_manifest:', 'zeroBudget_global:', 'zeroBudget_month:', 'zeroBudget_journal']) {
+    assert.match(source, new RegExp(namespace));
+  }
+  assert.match(source, /orphanedShardingKeys\.every\(key => localStorage\.getItem\(key\) === null\)/);
+});
+
 test('browser evidence proves Explain change is lazy, transient, routable, and export-neutral', () => {
   for (const marker of ['savedMonthComparisonExplainLazyReplaceCloseTransitions',
     'savedMonthComparisonExplainNullZeroStaleSuccessCsvByteExact']) assert.match(source, new RegExp(marker));

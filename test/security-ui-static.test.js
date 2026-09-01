@@ -48,6 +48,13 @@ test('Data Health exposes explicit plaintext disclosure and previewed purge', ()
   assert.match(readme, /Local Warm Ledger data was removed from this browser\. Restore a backup or start fresh to continue\./);
 });
 
+test('month-sharded storage remains explicit, previewed, and uses the shared safe modal', () => {
+  assert.match(health, /Store\.previewShardedPersistenceMigration\(\)/);
+  assert.match(health, /Store\.commitShardedPersistenceMigration\(preview\)/);
+  assert.match(health, /review-month-sharded-storage/);
+  assert.match(health, /initialFocus: \(\) => document\.getElementById\('modal-cancel'\)/);
+});
+
 test('multi-tab changes reload and stale or busy writes fail closed with exact messages', () => {
   assert.match(app, /window\.addEventListener\('storage'/);
   assert.match(app, /Store\.reload\(\)/);

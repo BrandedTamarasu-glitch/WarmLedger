@@ -110,6 +110,8 @@ It uses synthetic data in a disposable browser profile and writes JSON evidence 
 npm run test:browser -- --output PATH
 ```
 
+The browser suite exercises the explicit month-sharded migration, verifies byte-exact and value-preserving reloads, validates every referenced shard, tests corrupt-shard snapshot recovery, and confirms that local-data purge removes active and orphaned storage keys. Its published scenario and check maps contain boolean results only; the disposable synthetic ledger is not written to the evidence file.
+
 ### Large-ledger performance profiling
 
 The dependency-free benchmark harness builds deterministic, generic synthetic ledgers and measures startup/load, an ordinary expense edit and commit, prepared Dashboard range generation, saved-record search, saved-month comparison, and Explain change:

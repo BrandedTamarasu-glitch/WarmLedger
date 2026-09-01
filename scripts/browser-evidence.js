@@ -1134,17 +1134,100 @@ async function run(options) {
     assertEvidence(multiTab.busy && multiTab.stale && multiTab.reloadChanged && multiTab.byteExact && multiTab.recovered,
       `Multi-tab stale or busy write did not fail closed and recover by reload: ${JSON.stringify(multiTab)}`);
     scenario.multiTabStaleBusyReloadRecovery = true;
+    const shardedMigration = await evaluate(cdp, `(async () => {
+      App.switchView('data-health'); DataHealthView.render();
+      const primaryKey = ZeroBudgetStore.STORAGE_KEY || Store.STORAGE_KEY;
+      const allBytes = () => JSON.stringify(Object.keys(localStorage).sort().map(key => [key, localStorage.getItem(key)]));
+      const beforePreview = allBytes();
+      const trigger = document.getElementById('review-month-sharded-storage');
+      if (!trigger) return { available: false };
+      trigger.click();
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const previewWriteFree = beforePreview === allBytes();
+      const cancel = document.getElementById('modal-cancel');
+      const cancelFocused = document.activeElement === cancel;
+      cancel.click();
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const cancelWriteFree = beforePreview === allBytes() && document.activeElement === trigger;
+      trigger.click();
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      document.getElementById('modal-save').click();
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const rootRaw = localStorage.getItem(primaryKey);
+      const rootPointer = rootRaw ? JSON.parse(rootRaw) : null;
+      const manifestRaw = rootPointer ? localStorage.getItem(rootPointer.manifestKey) : null;
+      const manifest = manifestRaw ? JSON.parse(manifestRaw) : null;
+      const referencesResolve = Boolean(manifest && localStorage.getItem(manifest.global.key) &&
+        manifest.monthOrder.every(monthKey => localStorage.getItem(manifest.months[monthKey].key)));
+      const referencesValidate = Boolean(referencesResolve &&
+        ZeroBudgetStorageEngine.validateGlobalReference(manifest.global, localStorage.getItem(manifest.global.key)) &&
+        manifest.monthOrder.every(monthKey => ZeroBudgetStorageEngine.validateMonthReference(
+          manifest.months[monthKey], localStorage.getItem(manifest.months[monthKey].key))));
+      sessionStorage.setItem('browser-evidence-sharded-bytes', allBytes());
+      sessionStorage.setItem('browser-evidence-sharded-semantic', JSON.stringify(Store.getData()));
+      return { available: true, previewWriteFree, cancelFocused, cancelWriteFree,
+        rootKeyFrozen: primaryKey === 'zeroBudget_data',
+        rootPresent: rootPointer !== null,
+        migrated: rootPointer?.format === 'zerobudget-active-layout' && rootPointer.layout === 'month-sharded' &&
+          rootPointer.manifestKey === 'zeroBudget_manifest:' + rootPointer.generation,
+        referencesResolve, referencesValidate,
+        summaryActive: Store.getStatus().state === 'ready' &&
+          Store.getShardedPersistenceSummary().state === 'already-sharded' };
+    })()`);
+    assertEvidence(shardedMigration.available && shardedMigration.previewWriteFree && shardedMigration.cancelFocused &&
+      shardedMigration.cancelWriteFree && shardedMigration.rootKeyFrozen && shardedMigration.rootPresent &&
+      shardedMigration.migrated && shardedMigration.referencesResolve && shardedMigration.referencesValidate &&
+      shardedMigration.summaryActive, `Month-sharded migration evidence failed: ${JSON.stringify(shardedMigration)}`);
+    scenario.shardedMigrationPreviewNoWriteCancelConfirm = true;
+    await cdp.send('Page.reload', { ignoreCache: true }); await new Promise(resolve => setTimeout(resolve, 700));
+    const shardedReloadRecovery = await evaluate(cdp, `(() => {
+      const primaryKey = ZeroBudgetStore.STORAGE_KEY || Store.STORAGE_KEY;
+      const corruptKey = ZeroBudgetStore.CORRUPT_KEY || Store.CORRUPT_KEY || 'zeroBudget_corrupt';
+      const rootPointer = JSON.parse(localStorage.getItem(primaryKey));
+      const manifest = JSON.parse(localStorage.getItem(rootPointer.manifestKey));
+      const monthShardKey = manifest.months[manifest.monthOrder[0]].key;
+      const snapshots = Store.listSnapshots();
+      const safety = snapshots.find(snapshot => snapshot.reason === 'pre-sharding');
+      const reloadActive = Store.getShardedPersistenceSummary().state === 'already-sharded';
+      const allBytes = () => JSON.stringify(Object.keys(localStorage).sort().map(key => [key, localStorage.getItem(key)]));
+      const reloadByteExact = allBytes() === sessionStorage.getItem('browser-evidence-sharded-bytes');
+      const reloadSemanticExact = JSON.stringify(Store.getData()) ===
+        sessionStorage.getItem('browser-evidence-sharded-semantic');
+      localStorage.setItem(monthShardKey, '{corrupt-browser-evidence');
+      const damaged = Store.reload();
+      const evidenceRaw = Store.getCorruptEvidence();
+      const evidence = evidenceRaw ? JSON.parse(evidenceRaw) : null;
+      const recoveryRequired = damaged.state === 'recovery-required' &&
+        evidence?.format === 'zerobudget-corrupt-evidence' && evidence.layout === 'month-sharded' &&
+        evidence.rootRaw === localStorage.getItem(primaryKey) && evidence.manifestKey === rootPointer.manifestKey &&
+        evidence.failingKey === monthShardKey && evidence.failingRaw === '{corrupt-browser-evidence' &&
+        localStorage.getItem(corruptKey) === null;
+      Store.restoreSnapshot(safety.id);
+      const restored = Store.getStatus().state === 'ready' && Store.getShardedPersistenceSummary().state === 'available';
+      const preview = Store.previewShardedPersistenceMigration(); Store.commitShardedPersistenceMigration(preview);
+      return { reloadActive, reloadByteExact, reloadSemanticExact, recoveryRequired, restored,
+        remigrated: Store.getShardedPersistenceSummary().state === 'already-sharded' };
+    })()`);
+    assertEvidence(shardedReloadRecovery.reloadActive && shardedReloadRecovery.reloadByteExact &&
+      shardedReloadRecovery.reloadSemanticExact && shardedReloadRecovery.recoveryRequired &&
+      shardedReloadRecovery.restored && shardedReloadRecovery.remigrated,
+      `Sharded reload or recovery evidence failed: ${JSON.stringify(shardedReloadRecovery)}`);
+    scenario.shardedReloadCorruptionEvidenceSnapshotRecovery = true;
     const purge = await evaluate(cdp, `(async () => {
       App.switchView('data-health'); DataHealthView.render();
       const primaryKey = ZeroBudgetStore.STORAGE_KEY || Store.STORAGE_KEY;
       const corruptKey = ZeroBudgetStore.CORRUPT_KEY || Store.CORRUPT_KEY || 'zeroBudget_corrupt';
       const lockKey = ZeroBudgetStore.WRITE_LOCK_KEY || Store.WRITE_LOCK_KEY || 'zeroBudget_write_lock';
       const snapshotKeys = ['zeroBudget_snapshot:browser-evidence-a', 'zeroBudget_snapshot:browser-evidence-b'];
+      const orphanedShardingKeys = ['zeroBudget_manifest:orphan-browser-evidence',
+        'zeroBudget_global:orphan-browser-evidence',
+        'zeroBudget_month:orphan-browser-evidence:1999-01', 'zeroBudget_journal'];
       const trigger = document.getElementById('review-local-data-purge');
       const before = localStorage.getItem(primaryKey);
       const snapshotCountBefore = Object.keys(localStorage).filter(key => key.startsWith('zeroBudget_snapshot:')).length;
       localStorage.setItem(corruptKey, 'browser-evidence');
       snapshotKeys.forEach(key => localStorage.setItem(key, before));
+      orphanedShardingKeys.forEach(key => localStorage.setItem(key, 'orphan-browser-evidence'));
       localStorage.setItem(lockKey, JSON.stringify({ ownerId: 'purge-evidence', expiresAt: Date.now() - 1000 }));
       const preview = Store.previewLocalDataPurge();
       trigger.click();
@@ -1167,7 +1250,11 @@ async function run(options) {
       await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       await new Promise(resolve => setTimeout(resolve, 50));
       const purgeRemoved = localStorage.getItem(primaryKey) === null && localStorage.getItem(corruptKey) === null &&
-        snapshotKeys.every(key => localStorage.getItem(key) === null) && localStorage.getItem(lockKey) === null;
+        snapshotKeys.every(key => localStorage.getItem(key) === null) &&
+        orphanedShardingKeys.every(key => localStorage.getItem(key) === null) &&
+        !Object.keys(localStorage).some(key => key.startsWith('zeroBudget_manifest:') ||
+          key.startsWith('zeroBudget_global:') || key.startsWith('zeroBudget_month:')) &&
+        localStorage.getItem(lockKey) === null;
       const focusRestored = document.activeElement.id === 'current-month-label' || document.activeElement.id === 'recovery-title';
       return { previewed: preview.activeDataPresent && preview.corruptEvidencePresent &&
         preview.snapshotCount === snapshotCountBefore + snapshotKeys.length &&
