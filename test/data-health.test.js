@@ -126,3 +126,20 @@ test('accounts migration summary helper keeps upgrade states truthful and local-
   assert.equal(active.canPreview, false);
   assert.throws(() => Health.buildAccountsMigration({ state: 'unknown' }), /Invalid accounts migration summary/);
 });
+
+test('actual account migration summary helper exposes only the explicit schema upgrade states', () => {
+  const eligible = Health.buildActualAccountMigration({ state: 'eligible', paycheckCount: 2, expenseCount: 3, accountCount: 4 });
+  assert.deepEqual({ state: eligible.state, title: eligible.title, buttonLabel: eligible.buttonLabel, canPreview: eligible.canPreview },
+    { state: 'eligible', title: 'Actual account labels are ready', buttonLabel: 'Review actual account upgrade', canPreview: true });
+  assert.equal(eligible.description, 'This ledger can add optional actual-account labels for saved paychecks and expenses. Planned account labels stay unchanged.');
+
+  const message = 'Actual account labels require the current local-accounts data format. Complete the accounts upgrade before adding actual account labels.';
+  const blocked = Health.buildActualAccountMigration({ state: 'blocked', message });
+  assert.equal(blocked.description, message);
+  assert.equal(blocked.canPreview, false);
+
+  const active = Health.buildActualAccountMigration({ state: 'already-migrated' });
+  assert.equal(active.title, 'Actual account labels are available');
+  assert.equal(active.canPreview, false);
+  assert.throws(() => Health.buildActualAccountMigration({ state: 'unknown' }), /Invalid actual account migration summary/);
+});

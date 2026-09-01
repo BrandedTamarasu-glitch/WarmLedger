@@ -1171,9 +1171,56 @@ async function run(options) {
     assertEvidence(accountsReload.schema6 && accountsReload.semantic && accountsReload.primary && accountsReload.selectors,
       `Accounts did not survive byte-exact reload: ${JSON.stringify(accountsReload)}`);
     scenario.accountsSchema6ReloadByteExact = true;
+    const actualAccountsMigration = await evaluate(cdp, `(async () => {
+      const settle = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const primaryKey = ZeroBudgetStore.STORAGE_KEY || Store.STORAGE_KEY;
+      const allBytes = () => JSON.stringify(Object.keys(localStorage).sort().map(key => [key, localStorage.getItem(key)]));
+      App.switchView('data-health'); DataHealthView.render(); await settle();
+      const section = document.querySelector('.actual-account-migration');
+      const trigger = document.getElementById('review-actual-account-migration');
+      const summary = Store.getActualAccountMigrationSummary();
+      const cardCopyExact = Boolean(section && trigger &&
+        section.querySelector('h3')?.textContent === 'Actual account labels are ready' &&
+        section.querySelector('p')?.textContent === 'This ledger can add optional actual-account labels for saved paychecks and expenses. Planned account labels stay unchanged.' &&
+        trigger.textContent === 'Review actual account upgrade');
+      const beforePreview = allBytes(); trigger.click(); await settle();
+      const dialog = document.getElementById('modal-overlay');
+      const cancel = document.getElementById('modal-cancel');
+      const previewSummary = [...dialog.querySelectorAll('.actual-account-migration-summary dt')].map(node => node.textContent).join('|') ===
+          'Saved paychecks|Saved expenses|Accounts' &&
+        [...dialog.querySelectorAll('.actual-account-migration-summary dd')].map(node => node.textContent).join('|') ===
+          [summary.paycheckCount, summary.expenseCount, summary.accountCount].join('|');
+      const modalCopyExact = document.getElementById('modal-title')?.textContent === 'Add actual account labels to this ledger?' &&
+        document.getElementById('modal-save')?.textContent === 'Add actual account labels' &&
+        dialog.textContent.includes('This adds optional actual-account labels to saved paychecks and expenses without changing saved budget values.') &&
+        dialog.textContent.includes('Actual account labels are entered manually. They do not connect to a bank, prove payment, or reconcile activity.') &&
+        dialog.textContent.includes('Warm Ledger creates a local safety snapshot before saving.');
+      const previewWriteFree = beforePreview === allBytes() && document.activeElement === cancel;
+      cancel.click(); await settle();
+      const cancelWriteFree = beforePreview === allBytes() && document.activeElement === trigger;
+
+      trigger.click(); await settle();
+      const operations = []; const originalSetItem = Storage.prototype.setItem;
+      Storage.prototype.setItem = function(key, value) { operations.push({ key, value }); return originalSetItem.call(this, key, value); };
+      try { document.getElementById('modal-save').click(); await settle(); }
+      finally { Storage.prototype.setItem = originalSetItem; }
+      const activeWriteIndex = operations.findIndex(item => item.key === primaryKey);
+      const snapshotWriteIndex = operations.findIndex(item => item.key.startsWith('zeroBudget_snapshot:') &&
+        (() => { try { const value = JSON.parse(item.value); return value.reason === 'pre-actual-accounts' && value.data.schemaVersion === 6; }
+          catch (_) { return false; } })());
+      const verifiedSnapshotBeforeSingleActiveWrite = snapshotWriteIndex >= 0 && activeWriteIndex > snapshotWriteIndex &&
+        operations.filter(item => item.key === primaryKey).length === 1;
+      const resultingSchema7 = Store.getStatus().residentSchemaVersion === 7 &&
+        Store.getActualAccountMigrationSummary().state === 'already-migrated' &&
+        JSON.parse(localStorage.getItem(primaryKey)).schemaVersion === 7;
+      return { cardCopyExact, previewSummary, modalCopyExact, previewWriteFree, cancelWriteFree,
+        verifiedSnapshotBeforeSingleActiveWrite, resultingSchema7 };
+    })()`);
+    assertEvidence(Object.values(actualAccountsMigration).every(Boolean),
+      `Actual account migration evidence failed: ${JSON.stringify(actualAccountsMigration)}`);
+    scenario.actualAccountsMigrationPreviewCancelSnapshotConfirm = true;
     const actualAccountsUi = await evaluate(cdp, `(async () => {
       const settle = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-      Store.commitActualAccountMigration(Store.previewActualAccountMigration());
       const monthKey = BudgetView.currentMonth;
       const bank = Store.getAccounts().find(item => item.kind === 'bank');
       const card = Store.getAccounts().find(item => item.kind === 'credit_card');
@@ -1320,18 +1367,23 @@ async function run(options) {
     const blocked = await evaluate(cdp, `(() => {
       App.switchView('data-health'); const before = localStorage.getItem(ZeroBudgetStore.STORAGE_KEY); DataHealthView.render();
       const section = document.querySelector('.exact-money-migration');
+      const actualSection = document.querySelector('.actual-account-migration');
       const result = { state: Store.getExactMoneyMigrationSummary().state,
         residentSchemaVersion: Store.getStatus().residentSchemaVersion,
         actionAbsent: !document.getElementById('review-exact-money-migration'),
         usable: document.getElementById('application-shell').hidden === false && section?.textContent.includes('remains usable'),
         byteExact: localStorage.getItem(ZeroBudgetStore.STORAGE_KEY) === before,
-        plannedAmount: Store.getMonth(${JSON.stringify(scenario.month)}).paychecks[0].plannedAmount };
+        plannedAmount: Store.getMonth(${JSON.stringify(scenario.month)}).paychecks[0].plannedAmount,
+        actualAccountsBlocked: Store.getActualAccountMigrationSummary().state === 'blocked' &&
+          actualSection?.textContent.includes('Actual account labels require the current local-accounts data format. Complete the accounts upgrade before adding actual account labels.') &&
+          !document.getElementById('review-actual-account-migration') };
       Store.getDataHealth(); result.byteExact = result.byteExact && localStorage.getItem(ZeroBudgetStore.STORAGE_KEY) === before; return result;
     })()`);
     assertEvidence(blocked.state === 'blocked' && blocked.residentSchemaVersion === 3 && blocked.actionAbsent &&
-      blocked.usable && blocked.byteExact && blocked.plannedAmount === 321.001,
+      blocked.usable && blocked.byteExact && blocked.plannedAmount === 321.001 && blocked.actualAccountsBlocked,
       `Blocked sub-cent v3 evidence failed: ${JSON.stringify(blocked)}`);
     scenario.exactMoneyBlockedSubCentWriteFreeUsable = true;
+    scenario.actualAccountsBlockedLegacyWriteFree = true;
     const multiTab = await evaluate(cdp, `(() => {
       const primaryKey = ZeroBudgetStore.STORAGE_KEY || Store.STORAGE_KEY;
       const lockKey = ZeroBudgetStore.WRITE_LOCK_KEY || Store.WRITE_LOCK_KEY || 'zeroBudget_write_lock';
@@ -1502,7 +1554,7 @@ async function run(options) {
     delete scenario.blockedV3Bytes; delete scenario.clearedRecordId;
     const errors = cdp.events.filter(event => event.method === 'Runtime.exceptionThrown' ||
       (event.method === 'Runtime.consoleAPICalled' && event.params.type === 'error'));
-    assertEvidence(errors.length === 0, 'Console or page exceptions were captured.');
+    assertEvidence(errors.length === 0, `Console or page exceptions were captured: ${JSON.stringify(errors)}`);
     const publicScenario = Object.fromEntries(Object.entries(scenario)
       .filter(([, value]) => typeof value === 'boolean'));
     evidence = { passed: true, disposableProfile: true, scenario: publicScenario,

@@ -103,6 +103,27 @@ test('accounts upgrade is explicit, preview-first, local-label-only, and uses st
   assert.doesNotMatch(view, /actual transfer|bank transfer|balance confirmed/i);
 });
 
+test('actual account upgrade is schema-gated, preview-first, Cancel-first, and count-only', () => {
+  assert.match(view, /Store\.getActualAccountMigrationSummary\(\)/);
+  assert.match(view, /ZeroBudgetDataHealth\.buildActualAccountMigration\(actualAccountSummary\)/);
+  assert.match(view, /actualAccountMigration\.state !== 'already-migrated'/);
+  assert.match(view, /review-actual-account-migration/);
+  assert.match(view, /actual-account-migration-heading/);
+  assert.match(view, /Store\.previewActualAccountMigration\(\)/);
+  assert.match(view, /Store\.commitActualAccountMigration\(preview\)/);
+  assert.match(view, /title:\s*'Add actual account labels to this ledger\?'/);
+  assert.match(view, /submitLabel:\s*'Add actual account labels'/);
+  assert.match(view, /initialFocus:\s*\(\)\s*=>\s*document\.getElementById\('modal-cancel'\)/);
+  assert.match(view, /if \(reason !== 'confirm'\) this\.actualAccountPreview = null/);
+  assert.match(view, /Actual account labels are entered manually\. They do not connect to a bank, prove payment, or reconcile activity\./);
+  const summaryStart = view.indexOf('actualAccountSummaryList(summary)');
+  const summary = view.slice(summaryStart, view.indexOf('previewActualAccountMigration(trigger)', summaryStart));
+  for (const label of ['Saved paychecks', 'Saved expenses', 'Accounts']) assert.match(summary, new RegExp(label));
+  assert.doesNotMatch(summary, /Saved templates|monthKey|account\.name|accountName/);
+  assert.match(css, /\.actual-account-migration-actions \.btn\s*\{[^}]*min-height:\s*44px/s);
+  assert.match(css, /@media \(forced-colors:\s*active\)[\s\S]*\.actual-account-migration/s);
+});
+
 test('expense deletion is Cancel-first and offers receipt-based session Undo', () => {
   const cancel = html.indexOf('id="expense-delete-cancel"');
   const confirm = html.indexOf('id="expense-delete-confirm"');

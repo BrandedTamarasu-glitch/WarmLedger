@@ -1498,6 +1498,13 @@ label:has(> #field-template-enabled) { display: flex; align-items: center; min-h
 .exact-money-migration h3 { overflow-wrap: anywhere; }
 .exact-money-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
 .exact-money-actions .btn { min-height: 44px; }
+.actual-account-migration { border-inline-start: 4px solid var(--color-accent); }
+.actual-account-migration h3 { overflow-wrap: anywhere; }
+.actual-account-migration-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+.actual-account-migration-actions .btn { min-height: 44px; }
+.actual-account-migration-summary { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 16px; margin-top: 14px; }
+.actual-account-migration-summary dt, .actual-account-migration-summary dd { min-width: 0; overflow-wrap: anywhere; }
+.actual-account-migration-summary dd { font-variant-numeric: tabular-nums; font-weight: 700; }
 .exact-money-migration-dialog { width: min(92vw, 600px); }
 .template-shortcut { display: flex; align-items: center; gap: 8px; margin-top: 4px; font-weight: 700; }
 .data-health-overview > p, .data-health-section > p { margin-top: 6px; line-height: 1.55; }
@@ -1894,7 +1901,8 @@ label:has(> #field-template-enabled) { display: flex; align-items: center; min-h
   .dashboard-data-table caption, .dashboard-data-table th, .dashboard-data-table tbody th { color: CanvasText; }
   .data-health-overview, .data-health-section, .health-counts li, .actual-resolution-row,
   .backup-comparison, .undo-notice, .money-precision-audit, .money-precision-content,
-  .exact-money-migration, .exact-money-actions, .exact-money-migration-dialog {
+  .exact-money-migration, .exact-money-actions, .exact-money-migration-dialog,
+  .actual-account-migration, .actual-account-migration-actions, .actual-account-migration-summary {
     color: CanvasText; background: Canvas; border-color: CanvasText; box-shadow: none;
   }
   .money-precision-audit > summary, .money-precision-content p { color: CanvasText; }

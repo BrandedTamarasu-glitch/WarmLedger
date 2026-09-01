@@ -186,6 +186,16 @@ test('browser evidence covers explicit account migration, lifecycle, selectors, 
 });
 
 test('browser evidence covers schema 7 actual-account selectors and explicit-only disclosure', () => {
+  assert.match(source, /actualAccountsMigrationPreviewCancelSnapshotConfirm/);
+  assert.match(source, /actualAccountsBlockedLegacyWriteFree/);
+  assert.match(source, /review-actual-account-migration/);
+  assert.match(source, /beforePreview === allBytes\(\)/);
+  assert.match(source, /reason === 'pre-actual-accounts'/);
+  assert.match(source, /value\.data\.schemaVersion === 6/);
+  assert.match(source, /operations\.filter\(item => item\.key === primaryKey\)\.length === 1/);
+  assert.match(source, /JSON\.parse\(localStorage\.getItem\(primaryKey\)\)\.schemaVersion === 7/);
+  assert.match(source, /Saved paychecks\|Saved expenses\|Accounts/);
+  assert.match(source, /Actual account labels are entered manually\. They do not connect to a bank, prove payment, or reconcile activity\./);
   assert.match(source, /actualAccountsWave3SelectorsDisclosure/);
   assert.match(source, /actualAccountsWave3NarrowReflow/);
   assert.match(source, /field-paycheck-actual-account/);
@@ -204,6 +214,19 @@ test('browser evidence covers schema 7 actual-account selectors and explicit-onl
   assert.match(source, /Object\.values\(actualAccountsUi\)\.every\(Boolean\)/);
   assert.match(source, /Actual account disclosure overflows at 320px/);
   assert.match(source, /actualAccountsNarrow\.every|Object\.values\(actualAccountsNarrow\)\.every/);
+});
+
+test('actual-account evidence avoids positive transfer, payment, statement, balance, and reconciliation claims', () => {
+  const evidenceSurface = [
+    fs.readFileSync(path.join(__dirname, '..', 'js', 'data-health-view.js'), 'utf8'),
+    fs.readFileSync(path.join(__dirname, '..', 'js', 'transfers.js'), 'utf8')
+  ].join('\n');
+  for (const forbidden of [/payment verified/i, /marked paid/i, /marked settled/i, /statement balance/i,
+    /account balance/i, /reconciled (?:payment|activity|transaction)/i, /transfer (?:completed|confirmed|verified)/i]) {
+    assert.doesNotMatch(evidenceSurface, forbidden);
+  }
+  assert.match(evidenceSurface, /do not connect to a bank, prove payment, or reconcile activity/i);
+  assert.match(evidenceSurface, /Funding math difference/);
 });
 
 test('browser evidence proves Explain change is lazy, transient, routable, and export-neutral', () => {

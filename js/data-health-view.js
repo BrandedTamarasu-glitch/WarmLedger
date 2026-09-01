@@ -6,6 +6,7 @@ const DataHealthView = {
   exactMoneyTrigger: null,
   monthShardedPreview: null,
   accountsPreview: null,
+  actualAccountPreview: null,
   purgePreview: null,
 
   init() {
@@ -25,6 +26,7 @@ const DataHealthView = {
   render() {
     const container = document.getElementById('data-health-content'); container.replaceChildren();
     let health; let moneyAudit; let migration; let shardedSummary; let shardedMigration; let accountsSummary; let accountsMigration;
+    let actualAccountSummary; let actualAccountMigration;
     try {
       health = Store.getDataHealth(); moneyAudit = Store.getExactMoneyAudit();
       migration = ZeroBudgetDataHealth.buildExactMoneyMigration(Store.getExactMoneyMigrationSummary());
@@ -32,6 +34,8 @@ const DataHealthView = {
       shardedMigration = ZeroBudgetDataHealth.buildShardedPersistenceMigration(shardedSummary);
       accountsSummary = Store.getAccountsMigrationSummary();
       accountsMigration = ZeroBudgetDataHealth.buildAccountsMigration(accountsSummary);
+      actualAccountSummary = Store.getActualAccountMigrationSummary();
+      actualAccountMigration = ZeroBudgetDataHealth.buildActualAccountMigration(actualAccountSummary);
     }
     catch (error) { App.showError(error); return; }
 
@@ -52,6 +56,9 @@ const DataHealthView = {
     }
     container.append(overview);
     container.append(this.accountsMigrationSection(accountsSummary, accountsMigration));
+    if (actualAccountMigration.state !== 'already-migrated') {
+      container.append(this.actualAccountMigrationSection(actualAccountSummary, actualAccountMigration));
+    }
     container.append(this.monthShardedMigrationSection(shardedSummary, shardedMigration));
     container.append(this.exactMoneyMigrationSection(migration));
     container.append(this.moneyPrecisionDisclosure(moneyAudit));
@@ -135,6 +142,84 @@ const DataHealthView = {
         if (Store.getStatus().state === 'recovery-required') App.showRecovery(Store.reload());
         requestAnimationFrame(() => {
           const target = document.getElementById('review-accounts-migration') || document.getElementById('accounts-migration-heading');
+          target?.focus({ preventScroll: true });
+        });
+      }
+    });
+  },
+
+  actualAccountMigrationSection(summary, migration) {
+    const section = this.node('section', `budget-section data-health-section actual-account-migration state-${migration.state}`);
+    section.setAttribute('aria-labelledby', 'actual-account-migration-heading');
+    const heading = this.node('h3', '', migration.title); heading.id = 'actual-account-migration-heading'; heading.tabIndex = -1;
+    section.append(heading, this.node('p', '', migration.description));
+    if (migration.canPreview) {
+      section.append(this.node('p', 'muted-text',
+        'Download a JSON backup first. When you confirm, Warm Ledger also creates a local safety snapshot before changing storage.'));
+      const actions = this.node('div', 'actual-account-migration-actions');
+      const backup = this.node('button', 'btn', 'Download JSON backup'); backup.type = 'button';
+      backup.addEventListener('click', () => App.downloadBackup());
+      const review = this.node('button', 'btn btn-primary', migration.buttonLabel); review.type = 'button';
+      review.id = 'review-actual-account-migration';
+      review.addEventListener('click', () => this.previewActualAccountMigration(review));
+      actions.append(backup, review); section.append(actions);
+    }
+    return section;
+  },
+
+  actualAccountSummaryList(summary) {
+    const list = this.node('dl', 'actual-account-migration-summary');
+    [['Saved paychecks', String(summary.paycheckCount)], ['Saved expenses', String(summary.expenseCount)],
+      ['Accounts', String(summary.accountCount)]].forEach(([label, value]) => {
+      list.append(this.node('dt', '', label), this.node('dd', '', value));
+    });
+    return list;
+  },
+
+  previewActualAccountMigration(trigger) {
+    try {
+      this.actualAccountPreview = Store.previewActualAccountMigration();
+      const preview = this.actualAccountPreview;
+      App.showModal({
+        title: 'Add actual account labels to this ledger?',
+        submitLabel: 'Add actual account labels',
+        initialFocus: () => document.getElementById('modal-cancel'),
+        onClose: reason => { if (reason !== 'confirm') this.actualAccountPreview = null; },
+        buildBody: () => {
+          const body = this.node('div', 'actual-account-migration-preview');
+          body.append(
+            this.node('p', '', 'This adds optional actual-account labels to saved paychecks and expenses without changing saved budget values.'),
+            this.node('p', '', 'Actual account labels are entered manually. They do not connect to a bank, prove payment, or reconcile activity.'),
+            this.node('p', '', 'Warm Ledger creates a local safety snapshot before saving.'),
+            this.actualAccountSummaryList(preview)
+          );
+          return body;
+        },
+        onSave: () => {
+          if (!this.actualAccountPreview) { App.showErrorCode('INVALID_ACTUAL_ACCOUNT_MIGRATION_PREVIEW'); return false; }
+          this.commitActualAccountMigration();
+          return true;
+        }
+      });
+      App.modalTrigger = trigger; ModalView.trigger = trigger;
+    } catch (error) {
+      this.actualAccountPreview = null; App.showError(error); trigger.focus();
+    }
+  },
+
+  commitActualAccountMigration() {
+    const preview = this.actualAccountPreview; this.actualAccountPreview = null;
+    return App.runMutation(() => Store.commitActualAccountMigration(preview), {
+      onSuccess: () => {
+        App.refreshAllViews(); App.switchView('data-health');
+        App.announceStatus('Actual account labels are now available. Saved budget values did not change.');
+        requestAnimationFrame(() => document.getElementById('data-health-heading')?.focus({ preventScroll: true }));
+      },
+      onFailure: () => {
+        this.render();
+        if (Store.getStatus().state === 'recovery-required') App.showRecovery(Store.reload());
+        requestAnimationFrame(() => {
+          const target = document.getElementById('review-actual-account-migration') || document.getElementById('actual-account-migration-heading');
           target?.focus({ preventScroll: true });
         });
       }

@@ -262,6 +262,34 @@
     });
   }
 
+  function buildActualAccountMigration(summary) {
+    if (!summary || typeof summary !== 'object' || Array.isArray(summary) ||
+        !['eligible', 'blocked', 'already-migrated'].includes(summary.state)) {
+      throw new TypeError('Invalid actual account migration summary');
+    }
+    if (summary.state === 'eligible') return result({
+      state: 'eligible',
+      title: 'Actual account labels are ready',
+      description: 'This ledger can add optional actual-account labels for saved paychecks and expenses. Planned account labels stay unchanged.',
+      buttonLabel: 'Review actual account upgrade',
+      canPreview: true
+    });
+    if (summary.state === 'blocked') return result({
+      state: 'blocked',
+      title: 'Actual account labels are not available yet',
+      description: summary.message,
+      buttonLabel: null,
+      canPreview: false
+    });
+    return result({
+      state: 'already-migrated',
+      title: 'Actual account labels are available',
+      description: 'This ledger can use optional actual-account labels. No upgrade action is needed.',
+      buttonLabel: null,
+      canPreview: false
+    });
+  }
+
   return Object.freeze({ analyze, buildTemplateReadiness, buildExactMoneyMigration, buildShardedPersistenceMigration,
-    buildAccountsMigration });
+    buildAccountsMigration, buildActualAccountMigration });
 });

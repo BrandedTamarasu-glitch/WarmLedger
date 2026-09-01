@@ -113,7 +113,7 @@ Status: published on 2026-09-01.
 
 ### Phase 6B2A — Explicit actual account labels
 
-Status: schema, Store, Budget, Pay periods, and browser evidence published on 2026-09-01; final Data Health presentation and publication documentation remain in progress.
+Status: published on 2026-09-01.
 
 - Add resident schema version 7 with optional explicit `actualAccountId` fields on saved paychecks and expenses only.
 - Require an entered actual amount and saved date; clearing either clears the label atomically, while entered zero remains eligible.
