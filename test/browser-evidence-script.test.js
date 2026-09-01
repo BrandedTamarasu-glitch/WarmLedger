@@ -121,9 +121,28 @@ test('browser evidence proves Saved Month Comparison defaults, validation, exact
   assert.match(source, /csvCapture\.content === DashboardView\.savedMonthComparisonCsv\(actualComparison\)/);
   assert.match(source, /delete replacementPreview\.data\.months\[expectedComparisonMonths\[1\]\]/);
   assert.match(source, /localStorage\.getItem\(primaryKey\) === staleComparisonBytes/);
-  assert.match(source, /Saved Month Comparison 320px evidence failed/);
-  assert.match(source, /Saved Month Comparison forced-colors evidence failed/);
-  assert.match(source, /Saved Month Comparison print evidence failed/);
+  assert.match(source, /Saved Month Comparison explanation 320px evidence failed/);
+  assert.match(source, /Saved Month Comparison explanation forced-colors evidence failed/);
+  assert.match(source, /Saved Month Comparison explanation print evidence failed/);
+});
+
+test('browser evidence proves Explain change is lazy, transient, routable, and export-neutral', () => {
+  for (const marker of ['savedMonthComparisonExplainLazyReplaceCloseTransitions',
+    'savedMonthComparisonExplainNullZeroStaleSuccessCsvByteExact']) assert.match(source, new RegExp(marker));
+  assert.match(source, /!document\.getElementById\('dashboard-comparison-explanation'\)/);
+  assert.match(source, /dataset\.comparisonSection === 'categories'/);
+  assert.match(source, /dataset\.comparisonSection === 'payment_methods'/);
+  assert.match(source, /Actual: Not entered/);
+  assert.match(source, /Actual: \$0\.00 · Complete/);
+  assert.match(source, /Store\.updateExpense\(forecastMonth, comparisonZeroExpense\.id/);
+  assert.match(source, /changed or is no longer a contributor/);
+  assert.match(source, /localStorage\.getItem\(primaryKey\) === staleContributorBytes/);
+  assert.match(source, /document\.activeElement\.dataset\.recordId === comparisonZeroExpense\.id/);
+  assert.match(source, /csvCapture\?\.content === comparisonCsvBeforeExplain/);
+  assert.match(source, /!csvCapture\.content\.includes\('recordId'\)/);
+  assert.match(source, /Saved Month Comparison explanation 320px evidence failed/);
+  assert.match(source, /Saved Month Comparison explanation forced-colors evidence failed/);
+  assert.match(source, /Saved Month Comparison explanation print evidence failed/);
 });
 
 test('browser evidence toggles and reloads one eligible entered-zero Manual Cleared record', () => {

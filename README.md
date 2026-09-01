@@ -17,7 +17,7 @@ See [ROADMAP.md](ROADMAP.md) for planned work and the boundaries of future phase
 - Preview-first recurring generation that shows additions and skips before making one atomic change.
 - A compact, write-free **Monthly Review** dashboard showing recurring work, missing actuals, expense funding, checklist readiness, and balance at a glance, with details available on demand.
 - Manual cleared-record marks for eligible saved records, kept explicitly separate from payment confirmation, bank verification, reconciliation, and month close.
-- Saved-only future-month forecasting, upcoming bills and paydays, a transient Saved-Record Finder, a bounded saved-month review queue, and two-month comparison.
+- Saved-only future-month forecasting, upcoming bills and paydays, a transient Saved-Record Finder, a bounded saved-month review queue, and two-month comparison with on-demand expense contributors.
 - A write-free **Data Health** view for incomplete or unusual ledger records and compare-only backup analysis.
 - Explicit, preview-first migration of eligible ledgers to exact integer-cent persistence, protected by a verified safety snapshot.
 - Internal recurrence safeguards that keep deliberately removed generated occurrences from returning unexpectedly.
@@ -66,6 +66,10 @@ Before routing, an action revalidates its exact current item. A current item can
 The initially closed Dashboard **Compare saved months** disclosure compares exactly two distinct saved months without changing the ledger. Its separate baseline and comparison pickers passively default to the two most recent saved months when available; changing either picker clears stale output until **Compare** is chosen. The Dashboard's global Planned or Actual spending basis applies to the comparison, and every absolute delta is calculated as comparison minus baseline.
 
 The accessible table includes summary, allocation, category, and payment-method rows. Allocations remain explicitly planned-only even when the global basis is Actual. A missing actual makes only the affected result and delta **Incomplete**—it is never treated as zero—while an entered zero remains a complete value. The current result can be downloaded as a local CSV or printed with the selected months, basis, delta direction, and incomplete states intact.
+
+Category and payment-method rows offer an inline **Explain change** action. Contributor details are computed only when requested and group the matching saved expense records under baseline and comparison. They use the comparison's Planned or Actual basis, preserving **Not entered** separately from an entered zero, and show at most 200 records across both sides with truthful full and per-side counts plus a truncation notice. A contributor's **Edit** action revalidates that exact saved record before routing to its existing Budget Edit control; stale records refresh safely without opening an editor or changing the ledger.
+
+Contributor detail is interactive context only, so it is intentionally excluded from comparison CSV and print output. Explain change scans only the two selected saved months and adds no persistence, index, cache, background work, schema changes, charts, ranking, recommendations, or financial-activity claims.
 
 Comparison reads only the two explicitly selected saved months and remains transient and write-free. It adds no charts, persistence, history, cache, index, background processing, schema changes, account activity, payment claims, or reconciliation behavior.
 

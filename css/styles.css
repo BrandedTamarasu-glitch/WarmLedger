@@ -1370,6 +1370,18 @@ label:has(> #field-template-enabled) { display: flex; align-items: center; min-h
 .dashboard-comparison-context { margin-bottom: 10px; color: var(--color-text); line-height: 1.5; overflow-wrap: anywhere; }
 .dashboard-comparison-table { max-width: 100%; overflow-x: auto; }
 .dashboard-comparison-table table { min-width: 760px; }
+.dashboard-comparison-explain-action { display: block; min-height: 44px; margin-top: 8px; white-space: normal; }
+.dashboard-comparison-explanation { min-width: 0; margin-top: 14px; padding: 14px; border: 1px solid var(--color-divider); border-radius: var(--radius-control); background: var(--color-surface-raised); }
+.dashboard-comparison-explanation h3 { margin-bottom: 8px; overflow-wrap: anywhere; }
+.dashboard-comparison-explanation-summary, .dashboard-comparison-explanation-count,
+.dashboard-comparison-explanation-empty, .dashboard-comparison-explanation-truncated { color: var(--color-text-muted); line-height: 1.5; overflow-wrap: anywhere; }
+.dashboard-comparison-explanation-sides { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 12px; }
+.dashboard-comparison-explanation-side { min-width: 0; padding: 12px; border: 1px solid var(--color-divider); border-radius: var(--radius-control); }
+.dashboard-comparison-contributor-list { display: grid; gap: 8px; margin-top: 10px; list-style: none; }
+.dashboard-comparison-contributor { display: grid; gap: 5px; min-width: 0; padding: 10px; border: 1px solid var(--color-divider); border-radius: var(--radius-control); }
+.dashboard-comparison-contributor span, .dashboard-comparison-contributor strong { overflow-wrap: anywhere; }
+.dashboard-comparison-contributor-meta { color: var(--color-text-muted); }
+.dashboard-comparison-contributor-edit { justify-self: start; min-height: 44px; max-width: 100%; white-space: normal; }
 .dashboard-overview {
   display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px;
   min-width: 0; margin-bottom: 18px;
@@ -1626,6 +1638,8 @@ label:has(> #field-template-enabled) { display: flex; align-items: center; min-h
   .dashboard-comparison-fields { grid-template-columns: minmax(0, 1fr); }
   .dashboard-comparison-actions { display: grid; grid-template-columns: minmax(0, 1fr); }
   .dashboard-comparison-actions .btn { width: 100%; }
+  .dashboard-comparison-explanation-sides { grid-template-columns: minmax(0, 1fr); }
+  .dashboard-comparison-explain-action, .dashboard-comparison-contributor-edit { width: 100%; }
   .dashboard-basis-actions .btn, .dashboard-quick-range-actions .btn, .dashboard-export-actions .btn { width: 100%; }
   .dashboard-forecast-header { flex-direction: column; }
   .dashboard-forecast-controls { width: 100%; flex-basis: auto; }
@@ -1854,10 +1868,12 @@ label:has(> #field-template-enabled) { display: flex; align-items: center; min-h
   .dashboard-review-queue-controls input { color: ButtonText; background: ButtonFace; border: 1px solid ButtonText; forced-color-adjust: auto; }
   .monthly-review-next-action, .dashboard-review-actions .btn, .dashboard-review-item > .btn { color: ButtonText; background: ButtonFace; border-color: ButtonText; }
   .dashboard-saved-month-comparison, .dashboard-comparison-body, .dashboard-comparison-output,
-  .dashboard-comparison-table { color: CanvasText; background: Canvas; border-color: CanvasText; box-shadow: none; }
+  .dashboard-comparison-table, .dashboard-comparison-explanation, .dashboard-comparison-explanation-side,
+  .dashboard-comparison-contributor { color: CanvasText; background: Canvas; border-color: CanvasText; box-shadow: none; }
   .dashboard-comparison-body > p, .dashboard-comparison-context,
   .dashboard-comparison-status { color: CanvasText; }
-  .dashboard-comparison-fields select, .dashboard-comparison-actions .btn {
+  .dashboard-comparison-fields select, .dashboard-comparison-actions .btn,
+  .dashboard-comparison-explain-action, .dashboard-comparison-contributor-edit {
     color: ButtonText; background: ButtonFace; border-color: ButtonText;
   }
   .dashboard-basis, #dashboard-basis-label, .dashboard-basis-actions,
@@ -1926,6 +1942,7 @@ label:has(> #field-template-enabled) { display: flex; align-items: center; min-h
   .dashboard-comparison-context { color: #000; }
   .dashboard-comparison-table { overflow: visible; border-color: #777; }
   .dashboard-comparison-table table { width: 100%; min-width: 0; font-size: 8pt; }
+  .dashboard-comparison-explanation { display: none !important; }
   .dashboard-upcoming-body, #dashboard-upcoming-content { display: block !important; color: #000; background: #fff; }
   .dashboard-upcoming-disclaimer, .dashboard-upcoming-kind, .dashboard-upcoming-item .muted-text { color: #000; }
   .dashboard-upcoming-coverage, .dashboard-upcoming-timeline, .dashboard-upcoming-date-needed,

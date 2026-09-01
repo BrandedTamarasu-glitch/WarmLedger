@@ -88,8 +88,14 @@ test('planned comparison returns the canonical immutable row model and compariso
   assert.deepEqual(result.rowModel.rows.slice(0, 3).map(item => [item.Baseline, item.Comparison, item.Delta]),
     [[1050, 1200, 150], [500, 550, 50], [425, 480, 55]]);
   assert.deepEqual(result.rowModel.rows.find(item => item.Metric === 'Fun'), {
-    Section: 'Categories', Metric: 'Fun', Baseline: 0, Comparison: 50, Delta: 50, Status: 'Complete'
+    Section: 'Categories', Metric: 'Fun', Baseline: 0, Comparison: 50, Delta: 50, Status: 'Complete',
+    sectionKey: 'categories', dimensionKey: 'Fun', drilldownEligible: true
   });
+  assert.deepEqual(result.rowModel.rows[0], { Section: 'Summary', Metric: 'Planned income', Baseline: 1050,
+    Comparison: 1200, Delta: 150, Status: 'Complete', sectionKey: 'summary', dimensionKey: '',
+    drilldownEligible: false });
+  assert.deepEqual(result.rowModel.rows.find(item => item.Section === 'Payment methods' && item.Metric === 'Bank')
+    .dimensionKey, 'bank');
   assertFrozen(result);
 });
 
@@ -98,7 +104,8 @@ test('actual comparison propagates unresolved values narrowly while preserving e
   const rows = store.compareSavedMonths({ baselineMonth: '2026-01', comparisonMonth: '2026-02', basis: 'actual' }).rowModel.rows;
   const byMetric = metric => rows.find(row => row.Metric === metric);
   assert.deepEqual(byMetric('Actual income'), { Section: 'Summary', Metric: 'Actual income', Baseline: null,
-    Comparison: 1100, Delta: null, Status: 'Incomplete' });
+    Comparison: 1100, Delta: null, Status: 'Incomplete', sectionKey: 'summary', dimensionKey: '',
+    drilldownEligible: false });
   assert.equal(byMetric('Actual expenses').Baseline, null);
   assert.equal(byMetric('Actual cash flow').Baseline, null);
   assert.deepEqual([byMetric('Food').Baseline, byMetric('Food').Comparison, byMetric('Food').Delta], [null, 0, null]);
@@ -138,5 +145,105 @@ test('comparison is deterministic, detached, write-free, and schema-compatible a
     assert.deepEqual(store.getStatus(), status);
     assert.deepEqual(storage.operations.filter(operation => operation.op !== 'getItem'), []);
     assert.throws(() => { first.rowModel.rows[0].Metric = 'changed'; }, TypeError);
+  }
+});
+
+test('explanation validates exact current row identity and returns public expense contributors in saved order', () => {
+  const { store, storage, raw, status } = loaded();
+  const result = store.explainSavedMonthComparisonRow({ baselineMonth: '2026-01', comparisonMonth: '2026-02',
+    basis: 'planned', section: 'categories', dimensionKey: 'Home' });
+  assert.equal(result.status, 'ready');
+  assert.equal(result.rowLabel, 'Home');
+  assert.deepEqual(result.counts, { totalCount: 2, returnedCount: 2, truncated: false });
+  assert.deepEqual(result.baseline.records, [{
+    kind: 'expense', recordId: 'jan-home', monthKey: '2026-01', name: 'jan-home', category: 'Home', date: '',
+    plannedAmount: 400, actualAmount: 350, paymentMethod: 'bank', displayAmount: 400, displayStatus: 'Complete'
+  }]);
+  assert.deepEqual(result.comparison.records.map(record => record.recordId), ['feb-home']);
+  assert.deepEqual(Object.keys(result.baseline.records[0]).sort(), [
+    'actualAmount', 'category', 'date', 'displayAmount', 'displayStatus', 'kind', 'monthKey', 'name',
+    'paymentMethod', 'plannedAmount', 'recordId'
+  ]);
+  assertFrozen(result);
+  assert.equal(storage.getItem(STORAGE_KEY), raw);
+  assert.deepEqual(store.getStatus(), status);
+  assert.deepEqual(storage.operations.filter(operation => operation.op !== 'getItem'), []);
+});
+
+test('actual explanations preserve incomplete and entered-zero contributor semantics', () => {
+  const { store } = loaded();
+  const credit = store.explainSavedMonthComparisonRow({ baselineMonth: '2026-01', comparisonMonth: '2026-02',
+    basis: 'actual', section: 'payment_methods', dimensionKey: 'credit_card' });
+  assert.deepEqual(credit.baseline.records.map(record => [record.recordId, record.displayAmount, record.displayStatus]),
+    [['jan-food', null, 'Incomplete']]);
+  assert.deepEqual(credit.comparison.records.map(record => [record.recordId, record.displayAmount, record.displayStatus]),
+    [['feb-fun', 40, 'Complete']]);
+  const bank = store.explainSavedMonthComparisonRow({ baselineMonth: '2026-01', comparisonMonth: '2026-02',
+    basis: 'actual', section: 'payment_methods', dimensionKey: 'bank' });
+  assert.deepEqual(bank.comparison.records.map(record => [record.displayAmount, record.displayStatus]), [[0, 'Complete']]);
+});
+
+test('explanation rejects invalid requests and non-existent dimensional rows without scanning other months', () => {
+  const { store } = loaded();
+  const request = overrides => store.explainSavedMonthComparisonRow({ baselineMonth: '2026-01',
+    comparisonMonth: '2026-02', basis: 'planned', section: 'categories', dimensionKey: 'Home', ...overrides });
+  assert.equal(request({ basis: 'combined' }).status, 'invalid-basis');
+  assert.equal(request({ baselineMonth: '' }).status, 'missing-baseline');
+  assert.equal(request({ baselineMonth: '2026-13' }).status, 'missing-baseline');
+  assert.equal(request({ comparisonMonth: '' }).status, 'missing-comparison');
+  assert.equal(request({ comparisonMonth: '2026-01' }).status, 'same-month');
+  assert.equal(request({ section: 'summary' }).status, 'invalid-section');
+  assert.equal(request({ section: 'categories', dimensionKey: 'Missing' }).status, 'row-not-found');
+  assert.equal(request({ section: 'payment_methods', dimensionKey: 'cash' }).status, 'row-not-found');
+});
+
+function loadedWithContributorCounts(baselineCount, comparisonCount) {
+  const data = fixture();
+  data.months['2026-01'].expenses = Array.from({ length: baselineCount }, (_, index) =>
+    expense(`baseline-${String(index).padStart(3, '0')}`, 'Home', index + 1, index, 'bank'));
+  data.months['2026-02'].expenses = Array.from({ length: comparisonCount }, (_, index) =>
+    expense(`comparison-${String(index).padStart(3, '0')}`, 'Home', index + 1, index, 'bank'));
+  const raw = JSON.stringify(data);
+  const storage = new MemoryStorage({ [STORAGE_KEY]: raw });
+  const store = createStore({ storage, now: () => { throw new Error('explanation used clock'); },
+    uuid: () => { throw new Error('explanation used uuid'); } });
+  assert.equal(store.load().state, 'ready');
+  storage.operations.length = 0;
+  return { store, storage, raw };
+}
+
+test('explanation applies the fair hard cap with truthful counts and canonical per-side order', () => {
+  for (const [baselineCount, comparisonCount, baselineReturned, comparisonReturned] of [
+    [150, 150, 100, 100], [10, 250, 10, 190], [250, 10, 190, 10], [0, 250, 0, 200]
+  ]) {
+    const { store, storage, raw } = loadedWithContributorCounts(baselineCount, comparisonCount);
+    const result = store.explainSavedMonthComparisonRow({ baselineMonth: '2026-01', comparisonMonth: '2026-02',
+      basis: 'planned', section: 'categories', dimensionKey: 'Home' });
+    assert.deepEqual([result.baseline.returnedCount, result.comparison.returnedCount],
+      [baselineReturned, comparisonReturned]);
+    assert.deepEqual(result.counts, { totalCount: baselineCount + comparisonCount,
+      returnedCount: baselineReturned + comparisonReturned,
+      truncated: baselineReturned + comparisonReturned < baselineCount + comparisonCount });
+    assert.deepEqual(result.baseline.records.map(record => record.recordId),
+      Array.from({ length: baselineReturned }, (_, index) => `baseline-${String(index).padStart(3, '0')}`));
+    assert.deepEqual(result.comparison.records.map(record => record.recordId),
+      Array.from({ length: comparisonReturned }, (_, index) => `comparison-${String(index).padStart(3, '0')}`));
+    assert.equal(storage.getItem(STORAGE_KEY), raw);
+    assert.deepEqual(storage.operations.filter(operation => operation.op !== 'getItem'), []);
+  }
+});
+
+test('explanation is deterministic and schema-compatible across v3, v4, and v5', () => {
+  let expected;
+  for (const version of [3, 4, 5]) {
+    const { store, storage, raw } = loaded(version);
+    const request = { baselineMonth: '2026-01', comparisonMonth: '2026-02', basis: 'actual',
+      section: 'payment_methods', dimensionKey: 'credit_card' };
+    const first = store.explainSavedMonthComparisonRow(request);
+    const second = store.explainSavedMonthComparisonRow(request);
+    assert.deepEqual(first, second);
+    if (!expected) expected = first; else assert.deepEqual(first, expected);
+    assert.equal(storage.getItem(STORAGE_KEY), raw);
+    assert.deepEqual(storage.operations.filter(operation => operation.op !== 'getItem'), []);
   }
 });

@@ -507,6 +507,17 @@ const BudgetView = {
     });
   },
 
+  focusSavedMonthComparisonContributor(contributor) {
+    this.collapsedCategories.set(contributor.category, false);
+    this.render();
+    requestAnimationFrame(() => {
+      const controls = [...document.querySelectorAll('[data-edit-type][data-record-id]')];
+      const target = controls.find(control => control.dataset.editType === 'expense' &&
+        control.dataset.recordId === contributor.recordId);
+      (target || document.getElementById('expenses-heading'))?.focus({ preventScroll: true });
+    });
+  },
+
   focusMoveControl(type, action, id) {
     requestAnimationFrame(() => {
       const controls = [...document.querySelectorAll('[data-move-type][data-move-action]')];

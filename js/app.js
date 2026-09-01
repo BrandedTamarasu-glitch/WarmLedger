@@ -179,6 +179,79 @@ const App = {
     return true;
   },
 
+  savedMonthComparisonRequestFingerprint(request) {
+    if (!request || typeof request !== 'object') return null;
+    const keys = ['baselineMonth', 'comparisonMonth', 'basis', 'section', 'dimensionKey'];
+    if (!keys.every(key => Object.hasOwn(request, key) && typeof request[key] === 'string')) return null;
+    return JSON.stringify(keys.map(key => [key, request[key]]));
+  },
+
+  savedMonthComparisonContributorFingerprint(contributor) {
+    if (!contributor || typeof contributor !== 'object') return null;
+    const keys = ['kind', 'recordId', 'monthKey', 'name', 'category', 'date', 'plannedAmount',
+      'actualAmount', 'paymentMethod', 'displayAmount', 'displayStatus'];
+    if (!keys.every(key => Object.hasOwn(contributor, key))) return null;
+    const encode = value => {
+      if (value === null) return ['null'];
+      if (typeof value === 'number') return Number.isFinite(value)
+        ? ['number', Object.is(value, -0) ? '-0' : String(value)] : ['invalid-number'];
+      if (typeof value === 'string') return ['string', value];
+      return ['invalid-type'];
+    };
+    const encoded = keys.map(key => [key, encode(contributor[key])]);
+    return encoded.some(([, value]) => value[0].startsWith('invalid')) ? null : JSON.stringify(encoded);
+  },
+
+  failSavedMonthComparisonContributor(request, message) {
+    if (this.currentView !== 'dashboard') this.switchView('dashboard');
+    try {
+      if (request) DashboardView.refreshSavedMonthComparisonExplanation(request,
+        { announceMessage: message, focusFallback: true });
+      else {
+        this.announceStatus(message);
+        DashboardView.focusSavedMonthComparisonFallback(null);
+      }
+    } catch (_error) {
+      this.announceStatus('The comparison contributors could not be refreshed. Review the comparison and try again.');
+      DashboardView.focusSavedMonthComparisonFallback(request);
+    }
+    return false;
+  },
+
+  openSavedMonthComparisonContributor(contributor, request) {
+    if (this.currentView !== 'dashboard') this.switchView('dashboard');
+    const activeRequest = DashboardView.savedMonthComparisonExplainRequest;
+    const activeFingerprint = this.savedMonthComparisonRequestFingerprint(activeRequest);
+    const requestFingerprint = this.savedMonthComparisonRequestFingerprint(request);
+    const staleMessage = 'That saved expense changed or is no longer a contributor. Review the refreshed comparison details.';
+    if (!activeFingerprint || requestFingerprint !== activeFingerprint) {
+      this.failSavedMonthComparisonContributor(activeRequest, staleMessage); return false;
+    }
+
+    let explanation;
+    try { explanation = DashboardView.refreshSavedMonthComparisonExplanation(activeRequest); }
+    catch (_error) {
+      this.failSavedMonthComparisonContributor(activeRequest,
+        'The comparison contributors could not be refreshed. Review the comparison and try again.'); return false;
+    }
+    const fingerprint = this.savedMonthComparisonContributorFingerprint(contributor);
+    const sides = explanation?.status === 'ready' ? [explanation.baseline, explanation.comparison] : [];
+    const refreshed = fingerprint && sides
+      .filter(side => side?.monthKey === contributor.monthKey)
+      .flatMap(side => Array.isArray(side.records) ? side.records : [])
+      .find(candidate => candidate.kind === 'expense' && candidate.recordId === contributor.recordId &&
+        this.savedMonthComparisonContributorFingerprint(candidate) === fingerprint);
+    if (!refreshed) {
+      this.announceStatus(staleMessage);
+      DashboardView.focusSavedMonthComparisonFallback(activeRequest);
+      return false;
+    }
+    BudgetView.currentMonth = refreshed.monthKey;
+    this.switchView('budget');
+    BudgetView.focusSavedMonthComparisonContributor(refreshed);
+    return true;
+  },
+
   refreshAllViews() {
     BudgetView.render(); TransfersView.syncMonth(); TransfersView.render(); DashboardView.destroyAllCharts(); StructureView.render();
     this.initializeTemplateFeatures();

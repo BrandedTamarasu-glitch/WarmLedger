@@ -157,6 +157,19 @@ Status: published on 2026-09-01.
 
 The lean ceiling is one chart-free table over two saved months using existing projections and report paths. Do not add persistence, comparison history, caches, indexes, background processing, or schema changes without measured need and a separately reviewed contract.
 
+### Explain change
+
+Status: published on 2026-09-01.
+
+- Add a lazy, inline **Explain change** action only to category and payment-method comparison rows.
+- Group matching saved expense contributors under baseline and comparison, using the selected Planned or Actual basis and preserving `null` as **Not entered** separately from entered zero.
+- Scan only the two selected saved months and return at most 200 contributors across both sides with truthful full and per-side counts plus explicit truncation.
+- Revalidate the exact current contributor before routing to its existing Budget Edit control; stale contributors refresh safely without opening an editor or writing.
+- Keep contributor detail transient, write-free, and interactive-only; exclude it from comparison CSV and print output.
+- Add no persistence, index, cache, background processing, schema changes, charts, scoring, ranking, recommendations, payment claims, or reconciliation behavior.
+
+The lean ceiling is one on-demand two-month expense scan rendered beneath the selected comparison row. Broader drilldowns, cached aggregates, indexes, or recommendations require measured need and a separately reviewed contract.
+
 ## Global release gates
 
 - No financial data, labels, amounts, or raw backups enter tests, logs, screenshots, or Git.

@@ -59,6 +59,7 @@ const DashboardView = {
   savedRecordSearchRequest: null,
   savedMonthComparisonRequest: null,
   savedMonthComparisonDirty: false,
+  savedMonthComparisonExplainRequest: null,
 
   init() {
     this.bindEvents();
@@ -296,6 +297,7 @@ const DashboardView = {
 
   changeSavedMonthComparison() {
     this.savedMonthComparisonDirty = true;
+    this.closeSavedMonthComparisonExplanation();
     this.clearSavedMonthComparisonOutput();
     this.setSavedMonthComparisonStatus('Choose Compare to update this saved-month comparison.', false);
   },
@@ -308,6 +310,7 @@ const DashboardView = {
   },
 
   clearSavedMonthComparisonOutput() {
+    this.savedMonthComparisonExplainRequest = null;
     const output = document.getElementById('dashboard-comparison-output');
     if (output) { output.hidden = true; output.replaceChildren(); }
   },
@@ -349,6 +352,7 @@ const DashboardView = {
   },
 
   renderSavedMonthComparisonTable(result) {
+    this.savedMonthComparisonExplainRequest = null;
     const output = document.getElementById('dashboard-comparison-output');
     if (!output) return;
     const context = this.upcomingNode('p', 'dashboard-comparison-context',
@@ -375,6 +379,14 @@ const DashboardView = {
         if (index === 1) cell.scope = 'row';
         cell.textContent = ['Baseline', 'Comparison', 'Delta'].includes(column)
           ? this.comparisonAmount(row[column]) : row[column];
+        if (index === 1 && row.drilldownEligible) {
+          const button = this.upcomingNode('button', 'btn btn-sm dashboard-comparison-explain-action', 'Explain change');
+          button.type = 'button'; button.setAttribute('aria-expanded', 'false');
+          button.dataset.comparisonSection = row.sectionKey;
+          button.dataset.comparisonDimension = row.dimensionKey;
+          button.onclick = () => this.toggleSavedMonthComparisonExplanation(row, button);
+          cell.append(button);
+        }
         tr.append(cell);
       });
     }
@@ -391,6 +403,7 @@ const DashboardView = {
       return null;
     }
     if (!initialize) {
+      this.closeSavedMonthComparisonExplanation();
       this.savedMonthComparisonRequest = this.savedMonthComparisonFromControls();
       this.savedMonthComparisonDirty = false;
     }
@@ -405,6 +418,128 @@ const DashboardView = {
     this.setSavedMonthComparisonStatus(result.summaryLabel, false);
     if (announce) App.announceStatus(`Saved month comparison updated. ${result.summaryLabel}`);
     return result;
+  },
+
+  savedMonthComparisonExplainRequestFor(row) {
+    if (!this.savedMonthComparisonRequest || !row?.drilldownEligible) return null;
+    return Object.freeze({ ...this.savedMonthComparisonRequest,
+      section: row.sectionKey, dimensionKey: row.dimensionKey });
+  },
+
+  sameSavedMonthComparisonExplanation(left, right) {
+    return Boolean(left && right && ['baselineMonth', 'comparisonMonth', 'basis', 'section', 'dimensionKey']
+      .every(key => left[key] === right[key]));
+  },
+
+  closeSavedMonthComparisonExplanation() {
+    this.savedMonthComparisonExplainRequest = null;
+    const detail = document.getElementById('dashboard-comparison-explanation');
+    if (detail?.remove) detail.remove();
+    if (typeof document.querySelectorAll === 'function') {
+      document.querySelectorAll('.dashboard-comparison-explain-action[aria-expanded="true"]')
+        .forEach(button => button.setAttribute('aria-expanded', 'false'));
+    }
+  },
+
+  toggleSavedMonthComparisonExplanation(row, button) {
+    const request = this.savedMonthComparisonExplainRequestFor(row);
+    if (!request || typeof Store.explainSavedMonthComparisonRow !== 'function') return null;
+    if (this.sameSavedMonthComparisonExplanation(this.savedMonthComparisonExplainRequest, request)) {
+      this.closeSavedMonthComparisonExplanation(); return null;
+    }
+    this.closeSavedMonthComparisonExplanation();
+    const result = Store.explainSavedMonthComparisonRow(request);
+    if (result.status !== 'ready') {
+      this.setSavedMonthComparisonStatus(result.summaryLabel, true);
+      App.announceStatus(result.summaryLabel); return result;
+    }
+    this.savedMonthComparisonExplainRequest = request;
+    button?.setAttribute('aria-expanded', 'true');
+    this.renderSavedMonthComparisonExplanation(result);
+    return result;
+  },
+
+  savedMonthComparisonContributorItem(record, request) {
+    const paymentLabel = ({ bank: 'Bank', credit_card: 'Credit Card', savings: 'Savings',
+      investments: 'Investments' })[record.paymentMethod] || 'Other';
+    const item = this.upcomingNode('li', 'dashboard-comparison-contributor');
+    item.append(this.upcomingNode('strong', 'dashboard-comparison-contributor-name', record.name),
+      this.upcomingNode('span', 'dashboard-comparison-contributor-meta',
+        `${record.date || 'Date needed'} · ${record.category} · ${paymentLabel}`),
+      this.upcomingNode('span', 'dashboard-comparison-contributor-meta',
+        `Planned ${BudgetView.fmt(record.plannedAmount)} · ${record.actualAmount === null ? 'Actual: Not entered' : `Actual: ${BudgetView.fmt(record.actualAmount)}`}`),
+      this.upcomingNode('span', 'dashboard-comparison-contributor-amount',
+        `${request.basis === 'planned' ? 'Planned' : 'Actual'}: ${record.displayAmount === null ? 'Incomplete' : BudgetView.fmt(record.displayAmount)} · ${record.displayStatus}`));
+    const edit = this.upcomingNode('button', 'btn btn-sm dashboard-comparison-contributor-edit',
+      `Edit ${record.name} in ${App.formatMonth(record.monthKey)}`);
+    edit.type = 'button'; edit.onclick = () => {
+      if (typeof App.openSavedMonthComparisonContributor === 'function') {
+        App.openSavedMonthComparisonContributor(record, request);
+      }
+    };
+    item.append(edit); return item;
+  },
+
+  savedMonthComparisonExplanationSide(side, label, request) {
+    const section = this.upcomingNode('section', 'dashboard-comparison-explanation-side');
+    section.append(this.upcomingNode('h4', '', `${label}: ${App.formatMonth(side.monthKey)}`));
+    section.append(this.upcomingNode('p', 'dashboard-comparison-explanation-count',
+      `${side.returnedCount} of ${side.totalCount} contributing ${side.totalCount === 1 ? 'expense' : 'expenses'} shown.`));
+    if (!side.totalCount) {
+      section.append(this.upcomingNode('p', 'dashboard-comparison-explanation-empty',
+        'No saved expenses contribute to this side of the comparison.'));
+      return section;
+    }
+    if (side.truncated) section.append(this.upcomingNode('p', 'dashboard-comparison-explanation-truncated',
+      'This list is truncated; the comparison total still includes every matching saved expense.'));
+    const list = this.upcomingNode('ul', 'dashboard-comparison-contributor-list');
+    side.records.forEach(record => list.append(this.savedMonthComparisonContributorItem(record, request)));
+    section.append(list); return section;
+  },
+
+  renderSavedMonthComparisonExplanation(result) {
+    const output = document.getElementById('dashboard-comparison-output');
+    if (!output || result.status !== 'ready') return false;
+    document.getElementById('dashboard-comparison-explanation')?.remove?.();
+    const detail = this.upcomingNode('section', 'dashboard-comparison-explanation');
+    detail.id = 'dashboard-comparison-explanation'; detail.setAttribute('role', 'region');
+    const heading = this.upcomingNode('h3', '', `Explain change: ${result.rowLabel}`);
+    heading.id = 'dashboard-comparison-explanation-heading'; detail.setAttribute('aria-labelledby', heading.id);
+    const summary = this.upcomingNode('p', 'dashboard-comparison-explanation-summary',
+      `${result.counts.returnedCount} of ${result.counts.totalCount} contributing expenses shown using the ${result.basis === 'planned' ? 'Planned' : 'Actual'} basis.`);
+    if (result.counts.truncated) summary.append(document.createTextNode(' Results are capped at 200; comparison totals remain complete.'));
+    const sides = this.upcomingNode('div', 'dashboard-comparison-explanation-sides');
+    sides.append(this.savedMonthComparisonExplanationSide(result.baseline, 'Baseline', result),
+      this.savedMonthComparisonExplanationSide(result.comparison, 'Comparison', result));
+    detail.append(heading, summary, sides); output.append(detail); return true;
+  },
+
+  refreshSavedMonthComparisonExplanation(request, { announceMessage = '', focusFallback = false } = {}) {
+    if (!request || typeof Store.explainSavedMonthComparisonRow !== 'function') return null;
+    const result = Store.explainSavedMonthComparisonRow(request);
+    this.closeSavedMonthComparisonExplanation();
+    if (result.status === 'ready') {
+      this.savedMonthComparisonExplainRequest = Object.freeze({ ...request });
+      this.renderSavedMonthComparisonExplanation(result);
+      const buttons = document.querySelectorAll?.('.dashboard-comparison-explain-action') || [];
+      [...buttons].find(button => button.dataset.comparisonSection === request.section &&
+        button.dataset.comparisonDimension === request.dimensionKey)?.setAttribute('aria-expanded', 'true');
+    } else this.setSavedMonthComparisonStatus(result.summaryLabel, true);
+    if (announceMessage) { this.setSavedMonthComparisonStatus(announceMessage, true); App.announceStatus(announceMessage); }
+    if (focusFallback) this.focusSavedMonthComparisonFallback(request);
+    return result;
+  },
+
+  focusSavedMonthComparisonFallback(request = this.savedMonthComparisonExplainRequest) {
+    if (typeof document.querySelector === 'function' && request) {
+      const buttons = document.querySelectorAll?.('.dashboard-comparison-explain-action') || [];
+      const match = [...buttons].find(button => button.dataset.comparisonSection === request.section &&
+        button.dataset.comparisonDimension === request.dimensionKey);
+      if (match?.focus) { match.focus({ preventScroll: true }); return true; }
+    }
+    const fallback = document.querySelector?.('#dashboard-saved-month-comparison > summary') ||
+      document.getElementById('dashboard-comparison-status');
+    fallback?.focus?.({ preventScroll: true }); return Boolean(fallback);
   },
 
   savedMonthComparisonCsv(result) {

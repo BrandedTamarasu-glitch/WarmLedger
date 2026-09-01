@@ -1597,11 +1597,13 @@
 
       const baseline = data.months[baselineMonth];
       const comparison = data.months[comparisonMonth];
-      const row = (section, metric, baselineValue, comparisonValue) => {
+      const row = (section, metric, baselineValue, comparisonValue, sectionKey, dimensionKey = '') => {
         const delta = baselineValue === null || comparisonValue === null ? null : comparisonValue - baselineValue;
         return {
           Section: section, Metric: metric, Baseline: baselineValue, Comparison: comparisonValue, Delta: delta,
-          Status: baselineValue === null || comparisonValue === null || delta === null ? 'Incomplete' : 'Complete'
+          Status: baselineValue === null || comparisonValue === null || delta === null ? 'Incomplete' : 'Complete',
+          sectionKey, dimensionKey,
+          drilldownEligible: sectionKey === 'categories' || sectionKey === 'payment_methods'
         };
       };
       const summaryValues = month => {
@@ -1624,11 +1626,12 @@
         ? ['Planned income', 'Planned expenses', 'Planned remainder']
         : ['Actual income', 'Actual expenses', 'Actual cash flow'];
       const rows = summaryMetrics.map((metric, index) =>
-        row('Summary', metric, baselineSummary[index], comparisonSummary[index]));
+        row('Summary', metric, baselineSummary[index], comparisonSummary[index], 'summary'));
 
       for (const allocation of ALLOCATION_TYPES) rows.push(row(
         'Allocations', `Planned ${allocation.label} allocation`,
-        baseline.allocations[allocation.key] || 0, comparison.allocations[allocation.key] || 0
+        baseline.allocations[allocation.key] || 0, comparison.allocations[allocation.key] || 0,
+        'allocations'
       ));
 
       const categoryFacts = month => {
@@ -1653,7 +1656,7 @@
       };
       for (const category of categories) rows.push(row(
         'Categories', category, categoryValue(baselineCategories, category),
-        categoryValue(comparisonCategories, category)
+        categoryValue(comparisonCategories, category), 'categories', category
       ));
 
       const paymentFacts = month => {
@@ -1673,11 +1676,87 @@
         ? facts[key].planned : (facts[key].unresolved ? null : facts[key].actual);
       for (const method of COMPARISON_PAYMENT_METHODS) rows.push(row(
         'Payment methods', method.label, methodValue(baselineMethods, method.key),
-        methodValue(comparisonMethods, method.key)
+        methodValue(comparisonMethods, method.key), 'payment_methods', method.key
       ));
 
       return response('ready', `${comparisonMonth} compared with ${baselineMonth}.`, {
         columns: ['Section', 'Metric', 'Baseline', 'Comparison', 'Delta', 'Status'], rows
+      });
+    }
+
+    function explainSavedMonthComparisonRow(request = {}) {
+      requireReady();
+      const basis = request && request.basis;
+      const baselineMonth = request && typeof request.baselineMonth === 'string' ? request.baselineMonth : '';
+      const comparisonMonth = request && typeof request.comparisonMonth === 'string' ? request.comparisonMonth : '';
+      const section = request && request.section;
+      const dimensionKey = request && typeof request.dimensionKey === 'string' ? request.dimensionKey : '';
+      const emptySide = monthKey => ({
+        monthKey, totalCount: 0, returnedCount: 0, truncated: false, records: []
+      });
+      const response = (status, summaryLabel, extra = {}) => freezeDetached({
+        status, summaryLabel, basis, baselineMonth, comparisonMonth, section, dimensionKey,
+        rowLabel: '', counts: { totalCount: 0, returnedCount: 0, truncated: false },
+        baseline: emptySide(baselineMonth), comparison: emptySide(comparisonMonth), ...extra
+      });
+
+      const validMonthKey = value => {
+        const match = /^(\d{4})-(\d{2})$/.exec(value);
+        if (!match) return false;
+        try { Recurrence.daysInMonth(Number(match[1]), Number(match[2])); return true; }
+        catch { return false; }
+      };
+      if (basis !== 'planned' && basis !== 'actual') return response('invalid-basis', 'Choose Planned or Actual.');
+      if (!validMonthKey(baselineMonth) || !Object.hasOwn(data.months, baselineMonth)) {
+        return response('missing-baseline', 'The baseline month is no longer available.');
+      }
+      if (!validMonthKey(comparisonMonth) || !Object.hasOwn(data.months, comparisonMonth)) {
+        return response('missing-comparison', 'The comparison month is no longer available.');
+      }
+      if (baselineMonth === comparisonMonth) return response('same-month', 'Choose two different saved months.');
+      if (section !== 'categories' && section !== 'payment_methods') {
+        return response('invalid-section', 'This comparison row cannot be explained.');
+      }
+
+      const comparisonResult = compareSavedMonths({ baselineMonth, comparisonMonth, basis });
+      const comparisonRow = comparisonResult.status === 'ready' && comparisonResult.rowModel.rows.find(item =>
+        item.sectionKey === section && item.dimensionKey === dimensionKey && item.drilldownEligible);
+      if (!comparisonRow) return response('row-not-found', 'That comparison row is no longer available.');
+
+      const matches = month => month.expenses.filter(expense => section === 'categories'
+        ? expense.category === dimensionKey : expense.paymentMethod === dimensionKey);
+      const baselineMatches = matches(data.months[baselineMonth]);
+      const comparisonMatches = matches(data.months[comparisonMonth]);
+      let baselineLimit = Math.min(100, baselineMatches.length);
+      let comparisonLimit = Math.min(100, comparisonMatches.length);
+      let unused = 200 - baselineLimit - comparisonLimit;
+      if (unused > 0 && baselineMatches.length > baselineLimit) {
+        const extra = Math.min(unused, baselineMatches.length - baselineLimit);
+        baselineLimit += extra; unused -= extra;
+      }
+      if (unused > 0 && comparisonMatches.length > comparisonLimit) {
+        comparisonLimit += Math.min(unused, comparisonMatches.length - comparisonLimit);
+      }
+      const contributor = (expense, monthKey) => {
+        const displayAmount = basis === 'planned' ? expense.plannedAmount : expense.actualAmount;
+        return {
+          kind: 'expense', recordId: expense.id, monthKey, name: expense.name,
+          category: expense.category, date: expense.date, plannedAmount: expense.plannedAmount,
+          actualAmount: expense.actualAmount, paymentMethod: expense.paymentMethod,
+          displayAmount, displayStatus: displayAmount === null ? 'Incomplete' : 'Complete'
+        };
+      };
+      const side = (monthKey, records, limit) => ({
+        monthKey, totalCount: records.length, returnedCount: limit, truncated: limit < records.length,
+        records: records.slice(0, limit).map(record => contributor(record, monthKey))
+      });
+      const baseline = side(baselineMonth, baselineMatches, baselineLimit);
+      const comparison = side(comparisonMonth, comparisonMatches, comparisonLimit);
+      const totalCount = baseline.totalCount + comparison.totalCount;
+      const returnedCount = baseline.returnedCount + comparison.returnedCount;
+      return response('ready', `${comparisonRow.Metric}: ${comparisonMonth} compared with ${baselineMonth}.`, {
+        rowLabel: comparisonRow.Metric,
+        counts: { totalCount, returnedCount, truncated: returnedCount < totalCount }, baseline, comparison
       });
     }
 
@@ -2276,7 +2355,8 @@
       fundingDirection,
       getDataHealth, getExactMoneyAudit, getExactMoneyMigrationSummary, previewExactMoneyMigration, commitExactMoneyMigration,
       getTemplateReadiness, previewActualResolutions, applyActualResolutions, previewDefaultDateResolutions, applyDefaultDateResolutions, compareAdditiveBackup,
-      calcMonthSummary, calcPaycheckRemaining, calcCategoryTotals, calcPaymentMethodTotals, compareSavedMonths,
+      calcMonthSummary, calcPaycheckRemaining, calcCategoryTotals, calcPaymentMethodTotals,
+      compareSavedMonths, explainSavedMonthComparisonRow,
       buildExport, exportData, previewImport, commitImport, importData, listSnapshots,
       listSnapshotMetadata, restoreSnapshot, startFresh, getCorruptEvidence
     });

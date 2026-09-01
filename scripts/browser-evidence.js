@@ -422,6 +422,12 @@ const SCENARIO = `(async () => {
 
   const forecastMonth = DashboardView.getForecastMonths()[0];
   Store.addPaycheck(forecastMonth, { earnerId, plannedAmount: 88, actualAmount: null, date: '' });
+  const comparisonZeroExpense = Store.addExpense(forecastMonth, { categoryId: category.id, categoryItemId: null,
+    name: 'Synthetic comparison entered zero', date: '', paycheckAmounts: {}, plannedAmount: 5,
+    actualAmount: 0, paymentMethod: 'bank' });
+  Store.addExpense(forecastMonth, { categoryId: category.id, categoryItemId: null,
+    name: 'Synthetic comparison incomplete', date: '', paycheckAmounts: {}, plannedAmount: 6,
+    actualAmount: null, paymentMethod: 'credit_card' });
   Store.updateAllocation(forecastMonth, 'savings', 8);
   const dashboardBytes = localStorage.getItem(primaryKey); let csvCapture = null; const originalDownload = App.download;
   App.download = (content, filename, type) => { csvCapture = { content, filename, type }; };
@@ -530,6 +536,79 @@ const SCENARIO = `(async () => {
     'Saved month comparison print did not invoke print exactly once and clean up its print scope.');
   assert(localStorage.getItem(primaryKey) === comparisonBytes,
     'Saved month comparison render, CSV, or print changed storage bytes.');
+
+  const comparisonCsvBeforeExplain = csvCapture.content;
+  const explainButtons = () => [...document.querySelectorAll('.dashboard-comparison-explain-action')];
+  const categoryExplain = () => explainButtons().find(button => button.dataset.comparisonSection === 'categories');
+  const paymentExplain = () => explainButtons().find(button => button.dataset.comparisonSection === 'payment_methods');
+  assert(!document.getElementById('dashboard-comparison-explanation'),
+    'Saved month comparison rendered contributor details before Explain change was requested.');
+  categoryExplain().click(); await settle();
+  let explanation = document.getElementById('dashboard-comparison-explanation');
+  assert(explanation && categoryExplain().getAttribute('aria-expanded') === 'true' &&
+    explanation.textContent.includes('Actual: Not entered') && explanation.textContent.includes('Actual: $0.00') &&
+    explanation.textContent.includes('Actual: Incomplete') && explanation.textContent.includes('Actual: $0.00 · Complete'),
+    'Lazy category explanation did not preserve incomplete and entered-zero contributor presentation.');
+  paymentExplain().click(); await settle();
+  explanation = document.getElementById('dashboard-comparison-explanation');
+  assert(explanation && paymentExplain().getAttribute('aria-expanded') === 'true' &&
+    categoryExplain().getAttribute('aria-expanded') === 'false' &&
+    DashboardView.savedMonthComparisonExplainRequest.section === 'payment_methods',
+    'Payment-method explanation did not replace the open category explanation.');
+  paymentExplain().click(); await settle();
+  assert(!document.getElementById('dashboard-comparison-explanation') &&
+    paymentExplain().getAttribute('aria-expanded') === 'false',
+    'Selecting the same Explain change row did not close its contributor detail.');
+
+  categoryExplain().click(); await settle();
+  baselineSelect.dispatchEvent(new Event('change', { bubbles: true })); await settle();
+  assert(!document.getElementById('dashboard-comparison-explanation'),
+    'Changing a saved-month picker did not close contributor detail.');
+  document.getElementById('dashboard-saved-month-comparison-form').requestSubmit(); await settle();
+  categoryExplain().click(); await settle();
+  document.querySelector('[data-dashboard-basis="planned"]').click(); await settle();
+  assert(!document.getElementById('dashboard-comparison-explanation'),
+    'Changing the Dashboard basis did not close contributor detail.');
+  document.getElementById('dashboard-saved-month-comparison-form').requestSubmit(); await settle();
+  categoryExplain().click(); await settle();
+  document.getElementById('dashboard-saved-month-comparison-form').requestSubmit(); await settle();
+  assert(!document.getElementById('dashboard-comparison-explanation'),
+    'Choosing Compare did not close contributor detail before rerendering.');
+
+  document.querySelector('[data-dashboard-basis="actual"]').click(); await settle();
+  document.getElementById('dashboard-saved-month-comparison-form').requestSubmit(); await settle();
+  categoryExplain().click(); await settle();
+  const staleContributorButton = [...document.querySelectorAll('.dashboard-comparison-contributor-edit')]
+    .find(button => button.textContent.includes('Synthetic comparison entered zero'));
+  assert(staleContributorButton, 'A contributor could not be prepared for stale-route evidence.');
+  Store.updateExpense(forecastMonth, comparisonZeroExpense.id, { plannedAmount: 5.5 });
+  const staleContributorBytes = localStorage.getItem(primaryKey); staleContributorButton.click(); await settle();
+  assert(document.getElementById('view-dashboard').classList.contains('active') &&
+    document.getElementById('app-status').textContent.includes('changed or is no longer a contributor') &&
+    document.getElementById('dashboard-comparison-explanation') &&
+    (document.activeElement.classList.contains('dashboard-comparison-explain-action') ||
+      document.activeElement === comparisonDisclosure.querySelector('summary')) &&
+    localStorage.getItem(primaryKey) === staleContributorBytes,
+    'A stale contributor Edit did not refresh, announce, restore safe focus, and remain byte-exact on Dashboard.');
+
+  const freshContributorButton = [...document.querySelectorAll('.dashboard-comparison-contributor-edit')]
+    .find(button => button.textContent.includes('Synthetic comparison entered zero'));
+  assert(freshContributorButton, 'The refreshed contributor detail did not retain the updated expense.');
+  freshContributorButton.click(); await settle();
+  assert(document.getElementById('view-budget').classList.contains('active') &&
+    document.activeElement.dataset.editType === 'expense' &&
+    document.activeElement.dataset.recordId === comparisonZeroExpense.id,
+    'A valid contributor Edit did not focus the exact existing Budget expense control.');
+  App.switchView('dashboard'); comparisonDisclosure.open = true; DashboardView.render(); await settle();
+  document.querySelector('[data-dashboard-basis="actual"]').click(); await settle();
+  document.getElementById('dashboard-saved-month-comparison-form').requestSubmit(); await settle();
+  categoryExplain().click(); await settle();
+  csvCapture = null; App.download = (content, filename, type) => { csvCapture = { content, filename, type }; };
+  document.getElementById('btn-dashboard-comparison-csv').click(); await settle(); App.download = originalDownload;
+  assert(csvCapture?.content === comparisonCsvBeforeExplain &&
+    !csvCapture.content.includes('Synthetic comparison entered zero') &&
+    !csvCapture.content.includes('recordId') && !csvCapture.content.includes('contributors'),
+    'Explain change altered the canonical comparison CSV or leaked contributor-only fields.');
 
   baselineSelect.value = comparisonSelect.value;
   document.getElementById('dashboard-saved-month-comparison-form').requestSubmit(); await settle();
@@ -678,6 +757,8 @@ const SCENARIO = `(async () => {
     savedMonthComparisonDefaultsValidationRowsPassiveStaleSafe: true,
     savedMonthComparisonActualIncompleteCsvPrintByteExact: true,
     savedMonthComparisonDraftRequiresExplicitCompare: true,
+    savedMonthComparisonExplainLazyReplaceCloseTransitions: true,
+    savedMonthComparisonExplainNullZeroStaleSuccessCsvByteExact: true,
     reviewNavigationClosedPassiveLookbacksRoutesStaleSafe: true,
     reviewNavigationBudgetOriginStaleFocusByteExact: true,
     exactMoneyEligiblePreviewCancelConfirm: true,
@@ -738,39 +819,66 @@ async function run(options) {
       baseline.value = months[0]; comparison.value = months[1];
       document.getElementById('dashboard-saved-month-comparison-form').requestSubmit();
       await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-      return { ready: !document.getElementById('dashboard-comparison-output').hidden };
+      const explain = [...document.querySelectorAll('.dashboard-comparison-explain-action')]
+        .find(button => button.dataset.comparisonSection === 'categories');
+      explain?.click();
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      return { ready: !document.getElementById('dashboard-comparison-output').hidden &&
+        Boolean(document.getElementById('dashboard-comparison-explanation')) };
     })()`);
     assertEvidence(comparisonResponsiveSetup.ready, 'Saved Month Comparison responsive setup failed.');
     await cdp.send('Emulation.setDeviceMetricsOverride', { width: 320, height: 900, deviceScaleFactor: 1, mobile: false });
     const comparisonNarrow = await evaluate(cdp, `(() => {
       const disclosure = document.getElementById('dashboard-saved-month-comparison');
       const tableRegion = disclosure.querySelector('.dashboard-comparison-table');
+      const explanation = document.getElementById('dashboard-comparison-explanation');
+      const explanationSides = explanation?.querySelector('.dashboard-comparison-explanation-sides');
       const viewport = document.documentElement.clientWidth;
       const targets = [...disclosure.querySelectorAll('summary, select, button')]
         .filter(element => element.getClientRects().length);
       const regionRect = tableRegion?.getBoundingClientRect();
+      const overflowing = [...disclosure.querySelectorAll('*')].filter(element => {
+        if (!element.getClientRects().length) return false; const rect = element.getBoundingClientRect();
+        return rect.left < -0.5 || rect.right > viewport + 0.5;
+      }).map(element => ({ tag: element.tagName, className: String(element.className || ''),
+        left: element.getBoundingClientRect().left, right: element.getBoundingClientRect().right })).slice(0, 12);
       return { visible: Boolean(disclosure.getClientRects().length),
         noPageOverflow: document.documentElement.scrollWidth <= viewport,
+        disclosureContained: disclosure.getBoundingClientRect().left >= -0.5 &&
+          disclosure.getBoundingClientRect().right <= viewport + 0.5,
+        explanationContained: explanation.getBoundingClientRect().left >= -0.5 &&
+          explanation.getBoundingClientRect().right <= viewport + 0.5,
         tableContained: Boolean(regionRect && regionRect.left >= -0.5 && regionRect.right <= viewport + 0.5 &&
           tableRegion.scrollWidth >= tableRegion.clientWidth),
-        targetsAtLeast44: targets.length >= 6 && targets.every(element => element.getBoundingClientRect().height >= 44) };
+        explanationVisible: Boolean(explanation?.getClientRects().length),
+        explanationStacked: getComputedStyle(explanationSides).gridTemplateColumns.split(' ').length === 1,
+        contributorTargetsAtLeast44: [...explanation.querySelectorAll('.dashboard-comparison-contributor-edit')]
+          .every(element => element.getBoundingClientRect().height >= 44),
+        targetsAtLeast44: targets.length >= 6 && targets.every(element => element.getBoundingClientRect().height >= 44), overflowing };
     })()`);
-    assertEvidence(comparisonNarrow.visible && comparisonNarrow.noPageOverflow && comparisonNarrow.tableContained &&
-      comparisonNarrow.targetsAtLeast44,
-      `Saved Month Comparison 320px evidence failed: ${JSON.stringify(comparisonNarrow)}`);
+    assertEvidence(comparisonNarrow.visible && comparisonNarrow.disclosureContained && comparisonNarrow.tableContained &&
+      comparisonNarrow.explanationContained &&
+      comparisonNarrow.explanationVisible && comparisonNarrow.explanationStacked &&
+      comparisonNarrow.contributorTargetsAtLeast44 && comparisonNarrow.targetsAtLeast44,
+      `Saved Month Comparison explanation 320px evidence failed: ${JSON.stringify(comparisonNarrow)}`);
     await cdp.send('Emulation.setEmulatedMedia', { media: 'screen', features: [{ name: 'forced-colors', value: 'active' }] });
     const comparisonForcedColors = await evaluate(cdp, `(() => {
       const disclosure = document.getElementById('dashboard-saved-month-comparison');
       const table = disclosure.querySelector('.dashboard-comparison-table');
-      const focus = document.getElementById('btn-dashboard-comparison-csv'); focus.focus();
+      const explanation = document.getElementById('dashboard-comparison-explanation');
+      const contributor = explanation.querySelector('.dashboard-comparison-contributor');
+      const focus = explanation.querySelector('.dashboard-comparison-contributor-edit'); focus.focus();
       return { active: matchMedia('(forced-colors: active)').matches,
         disclosureBoundary: getComputedStyle(disclosure).borderColor !== 'rgba(0, 0, 0, 0)',
         tableBoundary: getComputedStyle(table).borderColor !== 'rgba(0, 0, 0, 0)',
+        explanationBoundary: getComputedStyle(explanation).borderColor !== 'rgba(0, 0, 0, 0)',
+        contributorBoundary: getComputedStyle(contributor).borderColor !== 'rgba(0, 0, 0, 0)',
         focusVisible: !['none', 'hidden'].includes(getComputedStyle(focus).outlineStyle) };
     })()`);
     assertEvidence(comparisonForcedColors.active && comparisonForcedColors.disclosureBoundary &&
-      comparisonForcedColors.tableBoundary && comparisonForcedColors.focusVisible,
-      `Saved Month Comparison forced-colors evidence failed: ${JSON.stringify(comparisonForcedColors)}`);
+      comparisonForcedColors.tableBoundary && comparisonForcedColors.explanationBoundary &&
+      comparisonForcedColors.contributorBoundary && comparisonForcedColors.focusVisible,
+      `Saved Month Comparison explanation forced-colors evidence failed: ${JSON.stringify(comparisonForcedColors)}`);
     await cdp.send('Emulation.setEmulatedMedia', { media: 'print', features: [] });
     const comparisonPrint = await evaluate(cdp, `(() => {
       document.body.classList.add('printing-saved-month-comparison');
@@ -779,12 +887,13 @@ async function run(options) {
         disclosureVisible: getComputedStyle(disclosure).display !== 'none',
         controlsHidden: getComputedStyle(document.getElementById('dashboard-saved-month-comparison-form')).display === 'none',
         contextVisible: getComputedStyle(disclosure.querySelector('.dashboard-comparison-context')).display !== 'none',
-        tableVisible: getComputedStyle(disclosure.querySelector('.dashboard-comparison-table')).display !== 'none' };
+        tableVisible: getComputedStyle(disclosure.querySelector('.dashboard-comparison-table')).display !== 'none',
+        explanationHidden: getComputedStyle(document.getElementById('dashboard-comparison-explanation')).display === 'none' };
       document.body.classList.remove('printing-saved-month-comparison'); return result;
     })()`);
     assertEvidence(comparisonPrint.printMedia && comparisonPrint.disclosureVisible && comparisonPrint.controlsHidden &&
-      comparisonPrint.contextVisible && comparisonPrint.tableVisible,
-      `Saved Month Comparison print evidence failed: ${JSON.stringify(comparisonPrint)}`);
+      comparisonPrint.contextVisible && comparisonPrint.tableVisible && comparisonPrint.explanationHidden,
+      `Saved Month Comparison explanation print evidence failed: ${JSON.stringify(comparisonPrint)}`);
     await cdp.send('Emulation.setEmulatedMedia', { media: 'screen', features: [{ name: 'forced-colors', value: 'none' }] });
     scenario.savedMonthComparisonNarrowForcedColorsPrint = true;
     await evaluate(cdp, `(async () => {

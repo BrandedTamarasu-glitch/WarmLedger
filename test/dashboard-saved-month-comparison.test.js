@@ -18,23 +18,27 @@ function ready(overrides = {}) {
 }
 
 function load(responder = request => ready({ ...request })) {
-  const calls = []; const downloads = []; const announcements = []; let prints = 0;
+  const calls = []; const explainCalls = []; const downloads = []; const announcements = []; let prints = 0;
   const elements = new Map();
   const element = id => {
-    if (!elements.has(id)) elements.set(id, { id, value: '', hidden: false, textContent: '', focused: false,
+    if (!elements.has(id)) elements.set(id, { id, value: '', hidden: false, textContent: '', focused: false, dataset: {},
       children: [], addEventListener() {}, replaceChildren(...children) { this.children = children; },
       append(...children) { this.children.push(...children); }, focus() { this.focused = true; },
-      classList: { toggle() {} } });
+      setAttribute(name, value) { this[name] = value; }, remove() { this.removed = true; },
+      classList: { toggle() {}, add() {}, remove() {} } });
     return elements.get(id);
   };
   const context = vm.createContext({ console, Date, Chart: function() {}, ALLOCATION_TYPES: [],
     print() { prints++; }, BudgetView: { fmt: value => `$${value}` },
     document: { getElementById: element, querySelectorAll() { return []; },
-      createElement() { return { value: '', textContent: '', append() {}, setAttribute() {},
+      createElement() { return { value: '', textContent: '', children: [], dataset: {},
+        append(...children) { this.children.push(...children); }, setAttribute(name, value) { this[name] = value; },
+        addEventListener(name, handler) { this[`on${name}`] = handler; }, focus() { this.focused = true; }, remove() { this.removed = true; },
         createTHead() { return { insertRow() { return { append() {} }; } }; },
         createTBody() { return { insertRow() { return { append() {} }; } }; } }; },
       createTextNode(text) { return { textContent: text }; } },
-    Store: { compareSavedMonths(request) { calls.push({ ...request }); return responder(request); } },
+    Store: { compareSavedMonths(request) { calls.push({ ...request }); return responder(request); },
+      explainSavedMonthComparisonRow(request) { explainCalls.push({ ...request }); return load.explainResponder(request); } },
     App: { formatMonth: key => key, download(...args) { downloads.push(args); },
       announceStatus(message) { announcements.push(message); } }
   });
@@ -42,8 +46,15 @@ function load(responder = request => ready({ ...request })) {
   const dashboard = vm.runInContext('DashboardView', context);
   dashboard.populateSavedMonthComparisonPickers = () => {};
   dashboard.renderSavedMonthComparisonTable = result => { element('dashboard-comparison-output').hidden = false; dashboard.rendered = result; };
-  return { dashboard, element, calls, downloads, announcements, getPrints: () => prints };
+  return { dashboard, element, calls, explainCalls, downloads, announcements, getPrints: () => prints };
 }
+
+load.explainResponder = request => Object.freeze({ status: 'ready', summaryLabel: 'Ready.', rowLabel: 'Home',
+  ...request, counts: Object.freeze({ totalCount: 2, returnedCount: 2, truncated: false }),
+  baseline: Object.freeze({ monthKey: request.baselineMonth, totalCount: 1, returnedCount: 1, truncated: false,
+    records: Object.freeze([]) }),
+  comparison: Object.freeze({ monthKey: request.comparisonMonth, totalCount: 1, returnedCount: 1, truncated: false,
+    records: Object.freeze([]) }) });
 
 test('initial comparison passively defaults to the two most recent distinct saved months without focus movement', () => {
   const { dashboard, calls, element } = load(request => {
@@ -127,4 +138,62 @@ test('global basis changes require Compare and do not rewrite the last requested
   dashboard.compareSavedMonths();
   assert.equal(calls.at(-1).basis, 'actual');
   assert.equal(dashboard.savedMonthComparisonRequest.basis, 'actual');
+});
+
+test('explanation is lazy, replaces a different row, and toggles the same row closed', () => {
+  const { dashboard, explainCalls } = load();
+  dashboard.savedMonthComparisonRequest = Object.freeze({ baselineMonth: '2026-01', comparisonMonth: '2026-02', basis: 'planned' });
+  const rendered = []; dashboard.renderSavedMonthComparisonExplanation = result => { rendered.push(result.dimensionKey); return true; };
+  const home = { drilldownEligible: true, sectionKey: 'categories', dimensionKey: 'Home' };
+  const bank = { drilldownEligible: true, sectionKey: 'payment_methods', dimensionKey: 'bank' };
+  const button = { dataset: {}, setAttribute(name, value) { this[name] = value; } };
+  assert.equal(explainCalls.length, 0);
+  dashboard.toggleSavedMonthComparisonExplanation(home, button);
+  assert.equal(explainCalls.length, 1); assert.deepEqual(rendered, ['Home']); assert.equal(button['aria-expanded'], 'true');
+  dashboard.toggleSavedMonthComparisonExplanation(bank, button);
+  assert.equal(explainCalls.length, 2); assert.deepEqual(rendered, ['Home', 'bank']);
+  assert.equal(dashboard.savedMonthComparisonExplainRequest.dimensionKey, 'bank');
+  dashboard.toggleSavedMonthComparisonExplanation(bank, button);
+  assert.equal(explainCalls.length, 2); assert.equal(dashboard.savedMonthComparisonExplainRequest, null);
+});
+
+test('picker changes and Compare close explanation state before clearing or rerendering', () => {
+  const { dashboard, element } = load();
+  dashboard.savedMonthComparisonRequest = Object.freeze({ baselineMonth: '2026-01', comparisonMonth: '2026-02', basis: 'planned' });
+  dashboard.savedMonthComparisonExplainRequest = Object.freeze({ ...dashboard.savedMonthComparisonRequest,
+    section: 'categories', dimensionKey: 'Home' });
+  dashboard.changeSavedMonthComparison();
+  assert.equal(dashboard.savedMonthComparisonExplainRequest, null);
+  element('dashboard-comparison-baseline').value = '2026-01'; element('dashboard-comparison-month').value = '2026-02';
+  dashboard.savedMonthComparisonExplainRequest = Object.freeze({ ...dashboard.savedMonthComparisonRequest,
+    section: 'categories', dimensionKey: 'Home' });
+  dashboard.compareSavedMonths();
+  assert.equal(dashboard.savedMonthComparisonExplainRequest, null);
+});
+
+test('detail sides preserve truthful empty, truncated, and incomplete actual copy', () => {
+  const { dashboard } = load();
+  const empty = dashboard.savedMonthComparisonExplanationSide({ monthKey: '2026-01', totalCount: 0,
+    returnedCount: 0, truncated: false, records: [] }, 'Baseline', { basis: 'actual' });
+  assert.match(empty.children.map(child => child.textContent).join(' '), /No saved expenses contribute/);
+  const record = { monthKey: '2026-02', recordId: 'expense-1', name: 'Rent', category: 'Home', date: '',
+    paymentMethod: 'bank', plannedAmount: 100, actualAmount: null, displayAmount: null, displayStatus: 'Incomplete' };
+  const truncated = dashboard.savedMonthComparisonExplanationSide({ monthKey: '2026-02', totalCount: 250,
+    returnedCount: 200, truncated: true, records: [record] }, 'Comparison', { basis: 'actual' });
+  assert.match(truncated.children.map(child => child.textContent).join(' '), /truncated/);
+  const item = dashboard.savedMonthComparisonContributorItem(record, { basis: 'actual' });
+  assert.match(item.children.map(child => child.textContent).join(' '), /Actual: Incomplete · Incomplete/);
+});
+
+test('refresh helper reruns the exact request, renders current data, announces, and focuses fallback', () => {
+  const { dashboard, explainCalls, announcements } = load();
+  const request = Object.freeze({ baselineMonth: '2026-01', comparisonMonth: '2026-02', basis: 'planned',
+    section: 'categories', dimensionKey: 'Home' });
+  let rendered = 0; let focused = 0;
+  dashboard.renderSavedMonthComparisonExplanation = () => { rendered++; return true; };
+  dashboard.focusSavedMonthComparisonFallback = candidate => { assert.equal(candidate, request); focused++; return true; };
+  const result = dashboard.refreshSavedMonthComparisonExplanation(request,
+    { announceMessage: 'That saved expense changed. Review refreshed contributors.', focusFallback: true });
+  assert.equal(result.status, 'ready'); assert.deepEqual(explainCalls[0], { ...request });
+  assert.equal(rendered, 1); assert.equal(focused, 1); assert.match(announcements[0], /changed/);
 });
