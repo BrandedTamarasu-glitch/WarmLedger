@@ -358,6 +358,26 @@ const SCENARIO = `(async () => {
   resolutionForm.requestSubmit(); await settle(); document.getElementById('actual-resolution-confirm').click(); await settle();
   assert(Store.getMonth(month).expenses.find(item => item.id === hostile.id).actualAmount === 0, 'Selected actual zero was not applied.');
 
+  App.switchView('budget'); BudgetView.render(); await settle();
+  const clearedPassiveBytes = localStorage.getItem(primaryKey);
+  const clearedDetails = document.getElementById('monthly-review-cleared');
+  const clearedCheckbox = [...document.querySelectorAll('[data-cleared-kind="income"][data-record-id]')]
+    .find(input => input.dataset.recordId === income.id);
+  assert(clearedDetails && !clearedDetails.open && clearedCheckbox?.type === 'checkbox' && !clearedCheckbox.checked,
+    'Eligible entered-zero paycheck did not render as one initially unchecked native cleared control.');
+  assert(localStorage.getItem(primaryKey) === clearedPassiveBytes, 'Passive Manual Cleared render changed storage bytes.');
+  clearedDetails.open = true; clearedCheckbox.click(); await settle();
+  const clearedPersisted = JSON.parse(localStorage.getItem(primaryKey));
+  const clearedAfter = [...document.querySelectorAll('[data-cleared-kind="income"][data-record-id]')]
+    .find(input => input.dataset.recordId === income.id);
+  assert(Store.getStatus().residentSchemaVersion === 5 &&
+    clearedPersisted.schemaVersion === 5 &&
+    clearedPersisted.months[month].paychecks.find(item => item.id === income.id)?.cleared === true,
+  'Manual Cleared toggle did not atomically persist the entered-zero paycheck in schema v5.');
+  assert(clearedAfter?.checked && document.activeElement === clearedAfter &&
+    document.getElementById('monthly-review-cleared')?.open,
+  'Manual Cleared toggle did not restore the exact checkbox focus and open checklist state.');
+
   const staleActual = Store.addExpense(month, { categoryId: category.id, categoryItemId: null,
     name: 'Synthetic stale actual', date, paycheckAmounts: {}, plannedAmount: 4, actualAmount: null, paymentMethod: 'bank' });
   DataHealthView.render(); const staleCheck = [...document.querySelectorAll('.actual-resolution-row input[type="checkbox"]')]
@@ -445,7 +465,8 @@ const SCENARIO = `(async () => {
     payPeriodsFourDigitFunding: true, payPeriodsStaleAndZeroPaycheckRoutes: true,
     previewCancelApply: true, backupRoundTrip: true, dashboardBasisCsvPrintPassive: true,
     dashboardSavedMonthForecastPassive: true, exactMoneyEligiblePreviewCancelConfirm: true,
-    exactMoneyV4BackupImportSnapshotRoundTrip: true, blockedV3Bytes,
+    exactMoneyV4BackupImportSnapshotRoundTrip: true, manualClearedZeroToggleFocusReload: true,
+    clearedRecordId: income.id, blockedV3Bytes,
     generatedIncome: Store.getMonth(month).paychecks.length,
     generatedExpenses: Store.getMonth(month).expenses.length };
 })()`;
@@ -614,9 +635,18 @@ async function run(options) {
       `Forced-colors Data Health evidence failed: ${JSON.stringify(forcedColors)}`);
     await cdp.send('Emulation.setEmulatedMedia', { features: [{ name: 'forced-colors', value: 'none' }] });
     await cdp.send('Page.reload', { ignoreCache: true }); await new Promise(resolve => setTimeout(resolve, 700));
-    const reload = await evaluate(cdp, `({ schemaVersion: Store.getStatus().residentSchemaVersion,
-      additions: Store.previewRecurringMonth(BudgetView.currentMonth).counts.additions })`);
-    assertEvidence(reload.schemaVersion === 4 && reload.additions === 0, 'Reload did not preserve v4 canonical/idempotent state.');
+    const reload = await evaluate(cdp, `(() => {
+      App.switchView('budget'); BudgetView.render();
+      const checkbox = [...document.querySelectorAll('[data-cleared-kind="income"][data-record-id]')]
+        .find(input => input.dataset.recordId === ${JSON.stringify(scenario.clearedRecordId)});
+      return { schemaVersion: Store.getStatus().residentSchemaVersion,
+        additions: Store.previewRecurringMonth(BudgetView.currentMonth).counts.additions,
+        cleared: Store.getClearedChecklist(BudgetView.currentMonth).items.income
+          .find(item => item.recordId === ${JSON.stringify(scenario.clearedRecordId)})?.cleared,
+        nativeChecked: checkbox?.type === 'checkbox' && checkbox.checked };
+    })()`);
+    assertEvidence(reload.schemaVersion === 5 && reload.additions === 0 && reload.cleared && reload.nativeChecked,
+      `Reload did not preserve v5 Manual Cleared state: ${JSON.stringify(reload)}`);
     await evaluate(cdp, `localStorage.setItem(ZeroBudgetStore.STORAGE_KEY, ${JSON.stringify(scenario.blockedV3Bytes)})`);
     await cdp.send('Page.reload', { ignoreCache: true }); await new Promise(resolve => setTimeout(resolve, 700));
     const blocked = await evaluate(cdp, `(() => {
@@ -634,7 +664,7 @@ async function run(options) {
       blocked.usable && blocked.byteExact && blocked.plannedAmount === 321.001,
       `Blocked sub-cent v3 evidence failed: ${JSON.stringify(blocked)}`);
     scenario.exactMoneyBlockedSubCentWriteFreeUsable = true;
-    delete scenario.blockedV3Bytes;
+    delete scenario.blockedV3Bytes; delete scenario.clearedRecordId;
     const errors = cdp.events.filter(event => event.method === 'Runtime.exceptionThrown' ||
       (event.method === 'Runtime.consoleAPICalled' && event.params.type === 'error'));
     assertEvidence(errors.length === 0, 'Console or page exceptions were captured.');

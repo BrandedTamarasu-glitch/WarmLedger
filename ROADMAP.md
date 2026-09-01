@@ -55,7 +55,11 @@ Status: Phase 4B explicit exact-money migration published.
 
 ## Phase 5 — Reconciliation and month close
 
-- Add cleared and reconciled state plus statement comparison.
+Status: Phase 5A manual cleared-record checklist complete locally; reconciliation and month close remain deferred.
+
+- Add an explicit per-record manual cleared mark only for saved records with an entered actual and date; entered zero remains eligible.
+- Keep the checklist separate from paid, bank-verified, reconciled, matched, settled, balance-confirmed, and month-closed claims, with no bulk or automatic clearing.
+- Defer statements, bank connections, clearing timestamps, reconciliation, audit trail, and close/lock workflows to separately reviewed phases.
 - Introduce Open, Ready to Reconcile, Reconciled, and Closed month states.
 - Prevent closing incomplete or mismatched months.
 - Lock closed months and require an explicit snapshotted reopen flow.

@@ -65,7 +65,16 @@ test('browser evidence proves exact-money migration states and v4 recovery paths
   assert.match(source, /blocked\.actionAbsent/);
   assert.match(source, /blocked\.byteExact/);
   assert.match(source, /blocked\.plannedAmount === 321\.001/);
-  assert.match(source, /reload\.schemaVersion === 4/);
+  assert.match(source, /reload\.schemaVersion === 5/);
+});
+
+test('browser evidence toggles and reloads one eligible entered-zero Manual Cleared record', () => {
+  assert.match(source, /manualClearedZeroToggleFocusReload/);
+  assert.match(source, /Passive Manual Cleared render changed storage bytes/);
+  assert.match(source, /clearedCheckbox\?\.type === 'checkbox'/);
+  assert.match(source, /clearedPersisted\.schemaVersion === 5/);
+  assert.match(source, /document\.activeElement === clearedAfter/);
+  assert.match(source, /reload\.cleared && reload\.nativeChecked/);
 });
 
 test('browser evidence dynamically covers Pay periods semantics, routes, safety, and reflow', () => {

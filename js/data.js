@@ -120,7 +120,8 @@
   function normalizeMonthlyDate(monthKey, date) { return date === '' ? firstDayOfMonth(monthKey) : date; }
 
   function createStore({ storage, now = () => new Date(), uuid = () => crypto.randomUUID(), schemaPolicy = Schema.ACTIVE_SCHEMA_POLICY } = {}) {
-    if (schemaPolicy !== Schema.ACTIVE_SCHEMA_POLICY && schemaPolicy !== Schema.V3_SCHEMA_POLICY && schemaPolicy !== Schema.V4_SCHEMA_POLICY) {
+    if (schemaPolicy !== Schema.ACTIVE_SCHEMA_POLICY && schemaPolicy !== Schema.V3_SCHEMA_POLICY &&
+        schemaPolicy !== Schema.V4_SCHEMA_POLICY && schemaPolicy !== Schema.V5_SCHEMA_POLICY) {
       throw new StoreError('INVALID_SCHEMA_POLICY');
     }
     if (!storage || typeof storage.getItem !== 'function' || typeof storage.setItem !== 'function') {
@@ -141,18 +142,23 @@
     let generation = 0;
     let snapshotSequence = 0;
     let warnings = [];
-    let residentSchemaVersion = Schema.V3_SCHEMA_VERSION;
+    let residentSchemaVersion = schemaPolicy === Schema.ACTIVE_SCHEMA_POLICY
+      ? Schema.V3_SCHEMA_VERSION : schemaPolicy.SCHEMA_VERSION;
 
     function policyForVersion(version) {
       if (schemaPolicy !== Schema.ACTIVE_SCHEMA_POLICY) return schemaPolicy;
-      return version === Schema.V4_SCHEMA_VERSION ? Schema.V4_SCHEMA_POLICY : Schema.V3_SCHEMA_POLICY;
+      if (version === Schema.V5_SCHEMA_VERSION) return Schema.V5_SCHEMA_POLICY;
+      if (version === Schema.V4_SCHEMA_VERSION) return Schema.V4_SCHEMA_POLICY;
+      return Schema.V3_SCHEMA_POLICY;
     }
 
     function versionFromJson(text, fallback = Schema.V3_SCHEMA_VERSION) {
       try {
         const parsed = JSON.parse(text);
         const embedded = parsed && parsed.data ? parsed.data.schemaVersion : parsed && parsed.schemaVersion;
-        return embedded === Schema.V4_SCHEMA_VERSION ? Schema.V4_SCHEMA_VERSION : fallback;
+        if (embedded === Schema.V5_SCHEMA_VERSION) return Schema.V5_SCHEMA_VERSION;
+        if (embedded === Schema.V4_SCHEMA_VERSION) return Schema.V4_SCHEMA_VERSION;
+        return fallback;
       } catch { return fallback; }
     }
 
@@ -293,8 +299,10 @@
       targetSchemaVersion = residentSchemaVersion } = {}) {
       requireReady();
       const persisted = canonicalizeForWrite(targetSchemaVersion, candidate);
-      const canonical = targetSchemaVersion === Schema.V4_SCHEMA_VERSION
-        ? Schema.hydrateV4ExactMoney(persisted) : policyForVersion(targetSchemaVersion).migrateActive(candidate);
+      const canonical = targetSchemaVersion === Schema.V5_SCHEMA_VERSION
+        ? Schema.hydrateV5ExactMoney(persisted)
+        : targetSchemaVersion === Schema.V4_SCHEMA_VERSION
+          ? Schema.hydrateV4ExactMoney(persisted) : policyForVersion(targetSchemaVersion).migrateActive(candidate);
       const nextRaw = JSON.stringify(persisted);
       const priorData = schemaPolicy.clone(data);
       if (nextRaw === committedRaw) return schemaPolicy.clone(data);
@@ -339,7 +347,8 @@
       }
       if (raw === null) {
         data = defaultData(); committedRaw = null; corruptEvidence = null;
-        residentSchemaVersion = Schema.V3_SCHEMA_VERSION;
+        residentSchemaVersion = schemaPolicy === Schema.ACTIVE_SCHEMA_POLICY
+          ? Schema.V3_SCHEMA_VERSION : schemaPolicy.SCHEMA_VERSION;
         loadState = 'empty'; generation += 1;
         return { state: loadState, warnings: [], migrated: false };
       }
@@ -721,6 +730,7 @@
         const month = requireMonth(candidate, monthKey);
         const created = { id: newId(), earnerId: earner.id, earner: earner.name, plannedAmount: paycheck.plannedAmount,
           actualAmount: paycheck.actualAmount, date: normalizeMonthlyDate(monthKey, paycheck.date), sourceTemplateId: null, occurrenceKey: null };
+        if (residentSchemaVersion === Schema.V5_SCHEMA_VERSION) created.cleared = false;
         month.paychecks.push(created);
         return created;
       });
@@ -732,7 +742,11 @@
         if (!month) throw new StoreError('MONTH_NOT_FOUND');
         const paycheck = findOrThrow(month.paychecks, id, 'PAYCHECK_NOT_FOUND');
         if (Object.hasOwn(patch, 'date')) patch.date = normalizeMonthlyDate(monthKey, patch.date);
+        const resetCleared = residentSchemaVersion === Schema.V5_SCHEMA_VERSION &&
+          ((Object.hasOwn(patch, 'actualAmount') && patch.actualAmount !== paycheck.actualAmount) ||
+           (Object.hasOwn(patch, 'date') && patch.date !== paycheck.date));
         Object.assign(paycheck, patch);
+        if (resetCleared) paycheck.cleared = false;
         return paycheck;
       });
     }
@@ -757,8 +771,17 @@
           paycheck.earnerId = earner.id; paycheck.earner = earner.name;
         }
         if (Object.hasOwn(patch, 'plannedAmount')) paycheck.plannedAmount = patch.plannedAmount;
-        if (Object.hasOwn(patch, 'actualAmount')) paycheck.actualAmount = patch.actualAmount;
-        if (Object.hasOwn(patch, 'date')) paycheck.date = normalizeMonthlyDate(monthKey, patch.date);
+        if (Object.hasOwn(patch, 'actualAmount') && patch.actualAmount !== paycheck.actualAmount) {
+          paycheck.actualAmount = patch.actualAmount;
+          if (residentSchemaVersion === Schema.V5_SCHEMA_VERSION) paycheck.cleared = false;
+        }
+        if (Object.hasOwn(patch, 'date')) {
+          const date = normalizeMonthlyDate(monthKey, patch.date);
+          if (date !== paycheck.date) {
+            paycheck.date = date;
+            if (residentSchemaVersion === Schema.V5_SCHEMA_VERSION) paycheck.cleared = false;
+          }
+        }
         return paycheck;
       });
     }
@@ -797,6 +820,7 @@
         created.actualAmount = expense.actualAmount;
         created.paymentMethod = expense.paymentMethod;
         created.sourceTemplateId = null; created.occurrenceKey = null;
+        if (residentSchemaVersion === Schema.V5_SCHEMA_VERSION) created.cleared = false;
         requireMonth(candidate, monthKey).expenses.push(created);
         return created;
       });
@@ -810,11 +834,24 @@
         if (Object.hasOwn(patch, 'name') && patch.name !== expense.name) {
           expense.name = patch.name;
           expense.categoryItemId = null;
+          if (residentSchemaVersion === Schema.V5_SCHEMA_VERSION) expense.cleared = false;
         }
-        if (Object.hasOwn(patch, 'date')) expense.date = normalizeMonthlyDate(monthKey, patch.date);
+        if (Object.hasOwn(patch, 'date')) {
+          const date = normalizeMonthlyDate(monthKey, patch.date);
+          if (date !== expense.date) {
+            expense.date = date;
+            if (residentSchemaVersion === Schema.V5_SCHEMA_VERSION) expense.cleared = false;
+          }
+        }
         if (Object.hasOwn(patch, 'plannedAmount')) expense.plannedAmount = patch.plannedAmount;
-        if (Object.hasOwn(patch, 'actualAmount')) expense.actualAmount = patch.actualAmount;
-        if (Object.hasOwn(patch, 'paymentMethod')) expense.paymentMethod = patch.paymentMethod;
+        if (Object.hasOwn(patch, 'actualAmount') && patch.actualAmount !== expense.actualAmount) {
+          expense.actualAmount = patch.actualAmount;
+          if (residentSchemaVersion === Schema.V5_SCHEMA_VERSION) expense.cleared = false;
+        }
+        if (Object.hasOwn(patch, 'paymentMethod') && patch.paymentMethod !== expense.paymentMethod) {
+          expense.paymentMethod = patch.paymentMethod;
+          if (residentSchemaVersion === Schema.V5_SCHEMA_VERSION) expense.cleared = false;
+        }
         return expense;
       });
     }
@@ -825,7 +862,9 @@
         const month = candidate.months[monthKey];
         if (!month) throw new StoreError('MONTH_NOT_FOUND');
         const expense = findOrThrow(month.expenses, id, 'EXPENSE_NOT_FOUND');
+        const priorName = expense.name;
         applyExpenseStructure(expense, activeCategory(candidate, patch.categoryId), patch.categoryItemId, patch.name);
+        if (residentSchemaVersion === Schema.V5_SCHEMA_VERSION && expense.name !== priorName) expense.cleared = false;
         return expense;
       });
     }
@@ -839,14 +878,31 @@
         const month = candidate.months[monthKey];
         if (!month) throw new StoreError('MONTH_NOT_FOUND');
         const expense = findOrThrow(month.expenses, id, 'EXPENSE_NOT_FOUND');
-        if (structural) applyExpenseStructure(expense, activeCategory(candidate, patch.categoryId), patch.categoryItemId, patch.name);
+        if (structural) {
+          const priorName = expense.name;
+          applyExpenseStructure(expense, activeCategory(candidate, patch.categoryId), patch.categoryItemId, patch.name);
+          if (residentSchemaVersion === Schema.V5_SCHEMA_VERSION && expense.name !== priorName) expense.cleared = false;
+        }
         else if (Object.hasOwn(patch, 'name') && patch.name !== expense.name) {
           expense.name = patch.name; expense.categoryItemId = null;
+          if (residentSchemaVersion === Schema.V5_SCHEMA_VERSION) expense.cleared = false;
         }
-        if (Object.hasOwn(patch, 'date')) expense.date = normalizeMonthlyDate(monthKey, patch.date);
+        if (Object.hasOwn(patch, 'date')) {
+          const date = normalizeMonthlyDate(monthKey, patch.date);
+          if (date !== expense.date) {
+            expense.date = date;
+            if (residentSchemaVersion === Schema.V5_SCHEMA_VERSION) expense.cleared = false;
+          }
+        }
         if (Object.hasOwn(patch, 'plannedAmount')) expense.plannedAmount = patch.plannedAmount;
-        if (Object.hasOwn(patch, 'actualAmount')) expense.actualAmount = patch.actualAmount;
-        if (Object.hasOwn(patch, 'paymentMethod')) expense.paymentMethod = patch.paymentMethod;
+        if (Object.hasOwn(patch, 'actualAmount') && patch.actualAmount !== expense.actualAmount) {
+          expense.actualAmount = patch.actualAmount;
+          if (residentSchemaVersion === Schema.V5_SCHEMA_VERSION) expense.cleared = false;
+        }
+        if (Object.hasOwn(patch, 'paymentMethod') && patch.paymentMethod !== expense.paymentMethod) {
+          expense.paymentMethod = patch.paymentMethod;
+          if (residentSchemaVersion === Schema.V5_SCHEMA_VERSION) expense.cleared = false;
+        }
         return expense;
       });
     }
@@ -936,7 +992,8 @@
         const paychecks = source.paychecks.map(paycheck => {
           const id = newId(); idMap[paycheck.id] = id;
           return { ...paycheck, id, date: paycheck.date.startsWith(`${targetKey}-`) ? paycheck.date : firstDayOfMonth(targetKey),
-            actualAmount: null, sourceTemplateId: null, occurrenceKey: null };
+            actualAmount: null, sourceTemplateId: null, occurrenceKey: null,
+            ...(residentSchemaVersion === Schema.V5_SCHEMA_VERSION ? { cleared: false } : {}) };
         });
         const expenses = source.expenses.map(expense => {
           const paycheckAmounts = {};
@@ -944,7 +1001,8 @@
             if (idMap[paycheckId]) paycheckAmounts[idMap[paycheckId]] = amount;
           }
           return { ...expense, id: newId(), date: expense.date.startsWith(`${targetKey}-`) ? expense.date : firstDayOfMonth(targetKey),
-            actualAmount: null, sourceTemplateId: null, occurrenceKey: null, paycheckAmounts };
+            actualAmount: null, sourceTemplateId: null, occurrenceKey: null, paycheckAmounts,
+            ...(residentSchemaVersion === Schema.V5_SCHEMA_VERSION ? { cleared: false } : {}) };
         });
         candidate.months[targetKey] = { paychecks, expenses, allocations: { ...EMPTY_ALLOCATIONS } };
         candidate.months[targetKey].suppressedOccurrences = suppressedOccurrences;
@@ -1029,7 +1087,8 @@
           month.paychecks.push({
             id: newId(), earnerId: earner.id, earner: earner.name,
             plannedAmount: source.plannedAmount, actualAmount: null, date: item.scheduledDate,
-            sourceTemplateId: source.id, occurrenceKey: item.occurrenceKey
+            sourceTemplateId: source.id, occurrenceKey: item.occurrenceKey,
+            ...(residentSchemaVersion === Schema.V5_SCHEMA_VERSION ? { cleared: false } : {})
           });
         }
         for (const item of current.additions.expenses) {
@@ -1039,7 +1098,8 @@
             id: newId(), categoryId: category.id, category: category.name,
             categoryItemId: source.categoryItemId, name: source.name, date: item.scheduledDate,
             paycheckAmounts: {}, plannedAmount: source.plannedAmount, actualAmount: null,
-            paymentMethod: source.paymentMethod, sourceTemplateId: source.id, occurrenceKey: item.occurrenceKey
+            paymentMethod: source.paymentMethod, sourceTemplateId: source.id, occurrenceKey: item.occurrenceKey,
+            ...(residentSchemaVersion === Schema.V5_SCHEMA_VERSION ? { cleared: false } : {})
           });
         }
         return { addedIncome: current.additions.income.length, addedExpenses: current.additions.expenses.length };
@@ -1495,10 +1555,108 @@
     }
     function getAllMonthKeys() { requireReady(); return Object.keys(data.months).sort(); }
 
+    function validateMonthKey(monthKey) {
+      const match = typeof monthKey === 'string' && /^(\d{4})-(\d{2})$/.exec(monthKey);
+      if (!match) throw new StoreError('INVALID_MONTH');
+      try { Recurrence.daysInMonth(Number(match[1]), Number(match[2])); }
+      catch { throw new StoreError('INVALID_MONTH'); }
+      return monthKey;
+    }
+
+    function analysisData() {
+      const result = schemaPolicy.clone(data);
+      if (residentSchemaVersion !== Schema.V5_SCHEMA_VERSION) return result;
+      for (const month of Object.values(result.months)) {
+        month.paychecks.forEach(record => { delete record.cleared; });
+        month.expenses.forEach(record => { delete record.cleared; });
+      }
+      return result;
+    }
+
+    function clearedChecklistItem(kind, record) {
+      const actualEntered = record.actualAmount !== null;
+      const dateEntered = record.date !== '';
+      const eligible = actualEntered && dateEntered;
+      const eligibilityReason = eligible ? null : !actualEntered && !dateEntered
+        ? 'actual-and-date-needed' : !actualEntered ? 'actual-needed' : 'date-needed';
+      return kind === 'income' ? {
+        kind, recordId: record.id, earner: record.earner, date: record.date,
+        actualAmount: record.actualAmount, cleared: record.cleared === true,
+        eligible, eligibilityReason
+      } : {
+        kind, recordId: record.id, name: record.name, category: record.category,
+        paymentMethod: record.paymentMethod, date: record.date,
+        actualAmount: record.actualAmount, cleared: record.cleared === true,
+        eligible, eligibilityReason
+      };
+    }
+
+    function getClearedChecklist(monthKey) {
+      requireReady();
+      validateMonthKey(monthKey);
+      const emptyCounts = { paycheckCount: 0, expenseCount: 0, eligibleCount: 0,
+        ineligibleCount: 0, clearedCount: 0, unclearedCount: 0 };
+      if (residentSchemaVersion === Schema.V3_SCHEMA_VERSION) return freezeDetached({
+        monthKey, available: false, unavailableReason: 'exact-money-upgrade-required',
+        items: { income: [], expenses: [] }, counts: emptyCounts
+      });
+      const month = data.months[monthKey] || emptyMonth();
+      const income = month.paychecks.map(record => clearedChecklistItem('income', record));
+      const expenses = month.expenses.map(record => clearedChecklistItem('expense', record));
+      const items = [...income, ...expenses];
+      const clearedCount = items.filter(item => item.cleared).length;
+      const eligibleCount = items.filter(item => item.eligible).length;
+      return freezeDetached({
+        monthKey, available: true, unavailableReason: null, items: { income, expenses },
+        counts: {
+          paycheckCount: income.length, expenseCount: expenses.length, eligibleCount,
+          ineligibleCount: items.length - eligibleCount, clearedCount,
+          unclearedCount: items.length - clearedCount
+        }
+      });
+    }
+
+    function setRecordCleared(request) {
+      requireReady();
+      if (!exactObject(request, ['monthKey', 'kind', 'recordId', 'cleared']) ||
+          typeof request.monthKey !== 'string' || !['income', 'expense'].includes(request.kind) ||
+          typeof request.recordId !== 'string' || request.recordId.length === 0 ||
+          typeof request.cleared !== 'boolean') throw new StoreError('INVALID_CLEARED_REQUEST');
+      validateMonthKey(request.monthKey);
+      if (residentSchemaVersion === Schema.V3_SCHEMA_VERSION) throw new StoreError('CLEARED_CHECKLIST_UNAVAILABLE');
+      const currentMonth = data.months[request.monthKey];
+      if (!currentMonth) throw new StoreError('MONTH_NOT_FOUND');
+      const currentRecords = request.kind === 'income' ? currentMonth.paychecks : currentMonth.expenses;
+      const notFoundCode = request.kind === 'income' ? 'PAYCHECK_NOT_FOUND' : 'EXPENSE_NOT_FOUND';
+      const current = findOrThrow(currentRecords, request.recordId, notFoundCode);
+      const currentItem = clearedChecklistItem(request.kind, current);
+      if (request.cleared && !currentItem.eligible) throw new StoreError('CLEARED_RECORD_INELIGIBLE');
+      if (currentItem.cleared === request.cleared) return freezeDetached(currentItem);
+
+      let candidate;
+      let migrating = false;
+      if (residentSchemaVersion === Schema.V4_SCHEMA_VERSION) {
+        try {
+          const persistedV4 = Schema.buildActiveData(data, Schema.V4_SCHEMA_VERSION);
+          candidate = Schema.hydrateV5ExactMoney(Schema.migrateV4ToV5(persistedV4));
+          migrating = true;
+        } catch { throw new StoreError('CLEARED_MIGRATION_VALIDATION_FAILED'); }
+      } else candidate = schemaPolicy.clone(data);
+      const month = candidate.months[request.monthKey];
+      const records = request.kind === 'income' ? month.paychecks : month.expenses;
+      const record = findOrThrow(records, request.recordId, notFoundCode);
+      record.cleared = request.cleared;
+      commitCandidate(candidate, migrating ? {
+        snapshotReason: 'pre-import', requiredSnapshot: true, daily: false, prune: false,
+        targetSchemaVersion: Schema.V5_SCHEMA_VERSION
+      } : undefined);
+      return freezeDetached(clearedChecklistItem(request.kind, record));
+    }
+
     function getDataHealth() {
       requireReady();
       if (!DataHealth) throw new StoreError('DATA_HEALTH_UNAVAILABLE');
-      return DataHealth.analyze(schemaPolicy.clone(data));
+      return DataHealth.analyze(analysisData());
     }
 
     function getExactMoneyAudit() {
@@ -1506,12 +1664,14 @@
       if (!ExactMoney || typeof ExactMoney.audit !== 'function') {
         throw new StoreError('EXACT_MONEY_UNAVAILABLE');
       }
-      return freezeDetached(ExactMoney.audit(schemaPolicy.clone(data)));
+      return freezeDetached(ExactMoney.audit(analysisData()));
     }
 
     function getExactMoneyMigrationSummary() {
       requireReady();
-      if (residentSchemaVersion === Schema.V4_SCHEMA_VERSION) return freezeDetached({ state: 'already-migrated', subCentValueCount: 0, affectedMonthCount: 0, affectedTemplateCount: 0 });
+      if (residentSchemaVersion === Schema.V4_SCHEMA_VERSION || residentSchemaVersion === Schema.V5_SCHEMA_VERSION) {
+        return freezeDetached({ state: 'already-migrated', subCentValueCount: 0, affectedMonthCount: 0, affectedTemplateCount: 0 });
+      }
       const audit = getExactMoneyAudit();
       return freezeDetached({ state: audit.subCentValueCount === 0 ? 'eligible' : 'blocked', subCentValueCount: audit.subCentValueCount,
         affectedMonthCount: audit.affectedMonthCount, affectedTemplateCount: audit.affectedTemplateCount });
@@ -1554,7 +1714,7 @@
       if (!options || typeof options !== 'object' || Array.isArray(options)) {
         throw new StoreError('INVALID_REFERENCE_DATE');
       }
-      try { return DataHealth.buildTemplateReadiness(schemaPolicy.clone(data), options.referenceDate); }
+      try { return DataHealth.buildTemplateReadiness(analysisData(), options.referenceDate); }
       catch { throw new StoreError('INVALID_REFERENCE_DATE'); }
     }
 
@@ -1583,7 +1743,7 @@
         const stagedRecords = item.kind === 'income' ? stagedMonth.paychecks : stagedMonth.expenses;
         stagedRecords.find(entry => entry.id === item.recordId).actualAmount = item.actualAmount;
       }
-      try { schemaPolicy.migrateActive(staged); }
+      try { policyForVersion(residentSchemaVersion).migrateActive(staged); }
       catch { throw new StoreError('INVALID_ACTUAL_RESOLUTIONS'); }
       const preview = freezeDetached({ generation, resolutions: selections });
       actualResolutionCapabilities.set(preview, { generation, fingerprint: JSON.stringify(selections), selections });
@@ -1603,6 +1763,7 @@
           const record = records && records.find(entry => entry.id === item.recordId);
           if (!record || record.actualAmount !== null) throw new StoreError('STALE_ACTUAL_RESOLUTION_PREVIEW');
           record.actualAmount = item.actualAmount;
+          if (residentSchemaVersion === Schema.V5_SCHEMA_VERSION) record.cleared = false;
         }
         return capability.selections;
       });
@@ -1611,7 +1772,7 @@
     function previewDefaultDateResolutions() {
       requireReady();
       if (!DataHealth) throw new StoreError('DATA_HEALTH_UNAVAILABLE');
-      const resolutions = DataHealth.analyze(schemaPolicy.clone(data)).missingDates.map(reference => ({
+      const resolutions = DataHealth.analyze(analysisData()).missingDates.map(reference => ({
         ...reference, date: firstDayOfMonth(reference.monthKey)
       }));
       const preview = freezeDetached({ generation, resolutions });
@@ -1632,6 +1793,7 @@
           const record = records && records.find(entry => entry.id === item.recordId);
           if (!record || record.date !== '') throw new StoreError('STALE_DATE_RESOLUTION_PREVIEW');
           record.date = item.date;
+          if (residentSchemaVersion === Schema.V5_SCHEMA_VERSION) record.cleared = false;
         }
         return capability.resolutions;
       });
@@ -1689,7 +1851,10 @@
       requireReady();
       if (!preview || preview.generation !== generation) throw new StoreError('STALE_IMPORT_PREVIEW');
       let candidate;
-      try { candidate = schemaPolicy.migrateActive(preview.data); }
+      try {
+        candidate = policyForVersion(preview.residentSchemaVersion || Schema.V3_SCHEMA_VERSION)
+          .parseActive(JSON.stringify(canonicalizeForWrite(preview.residentSchemaVersion || Schema.V3_SCHEMA_VERSION, preview.data)));
+      }
       catch { throw new StoreError('INVALID_IMPORT'); }
       return commitCandidate(candidate, {
         snapshotReason: 'pre-import', requiredSnapshot: committedRaw !== null, daily: false,
@@ -1723,8 +1888,10 @@
       }
       if (loadState === 'recovery-required') {
         const persisted = canonicalizeForWrite(record.residentSchemaVersion, record.data);
-        const canonical = record.residentSchemaVersion === Schema.V4_SCHEMA_VERSION
-          ? Schema.hydrateV4ExactMoney(persisted) : policyForVersion(record.residentSchemaVersion).migrateActive(record.data);
+        const canonical = record.residentSchemaVersion === Schema.V5_SCHEMA_VERSION
+          ? Schema.hydrateV5ExactMoney(persisted)
+          : record.residentSchemaVersion === Schema.V4_SCHEMA_VERSION
+            ? Schema.hydrateV4ExactMoney(persisted) : policyForVersion(record.residentSchemaVersion).migrateActive(record.data);
         const nextRaw = JSON.stringify(persisted);
         write(STORAGE_KEY, nextRaw, 'PRIMARY_WRITE_FAILED');
         data = canonical; committedRaw = nextRaw; corruptEvidence = null; residentSchemaVersion = record.residentSchemaVersion;
@@ -1743,6 +1910,7 @@
         const nextRaw = JSON.stringify(candidate);
         write(STORAGE_KEY, nextRaw, 'PRIMARY_WRITE_FAILED');
         data = candidate; committedRaw = nextRaw; corruptEvidence = null;
+        residentSchemaVersion = Schema.V3_SCHEMA_VERSION;
         loadState = 'ready'; generation += 1; pruneSnapshots();
         return schemaPolicy.clone(data);
       }
@@ -1774,6 +1942,7 @@
       clearMonth, previewRecurringMonth, applyRecurringPreview,
       previewTemplateActivation, applyTemplateActivationPreview,
       getMonthReview, getPayPeriodPlan, getUpcomingBillsAndPaydays, getSuppressedOccurrences, unsuppressOccurrence,
+      getClearedChecklist, setRecordCleared,
       fundingDirection,
       getDataHealth, getExactMoneyAudit, getExactMoneyMigrationSummary, previewExactMoneyMigration, commitExactMoneyMigration,
       getTemplateReadiness, previewActualResolutions, applyActualResolutions, previewDefaultDateResolutions, applyDefaultDateResolutions, compareAdditiveBackup,

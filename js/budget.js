@@ -185,6 +185,10 @@ const BudgetView = {
     if (review.empty) stateText.push('This month is empty and is not ready.');
     stateText.forEach(text => states.append(this.element('li', '', text))); wrapper.append(states);
 
+    if (typeof Store.getClearedChecklist === 'function') {
+      wrapper.append(this.renderClearedChecklist(Store.getClearedChecklist(this.currentMonth)));
+    }
+
     const grid = this.element('div', 'monthly-review-grid'); wrapper.append(grid);
     if (review.empty) {
       const empty = this.reviewGroup(grid, 'monthly-review-empty-heading', 'Start this month', 'tile-start');
@@ -225,6 +229,57 @@ const BudgetView = {
     balance.append(balanceMetrics);
 
     container.replaceChildren(wrapper);
+  },
+
+  renderClearedChecklist(checklist) {
+    const details = this.element('details', 'monthly-review-cleared'); details.id = 'monthly-review-cleared';
+    details.append(this.element('summary', '', 'Manual cleared checklist'));
+    const content = this.element('div', 'monthly-review-cleared-content');
+    content.append(this.element('p', 'monthly-review-cleared-disclaimer',
+      'This is only a manual mark on a saved record. It does not mean paid, bank-verified, reconciled, matched, settled, balance-confirmed, or month closed.'));
+    if (!checklist.available) {
+      content.append(this.element('p', 'monthly-review-cleared-unavailable',
+        'Manual cleared marks are unavailable for this budget version. Complete the separate exact-money storage upgrade before using this checklist.'));
+      details.append(content); return details;
+    }
+    const counts = this.element('dl', 'monthly-review-cleared-counts');
+    [['Paychecks', checklist.counts.paycheckCount], ['Expenses', checklist.counts.expenseCount],
+      ['Eligible', checklist.counts.eligibleCount], ['Ineligible', checklist.counts.ineligibleCount],
+      ['Marked cleared', checklist.counts.clearedCount], ['Not marked cleared', checklist.counts.unclearedCount]]
+      .forEach(([label, value]) => this.reviewDetail(counts, label, String(value)));
+    content.append(counts);
+    const items = [...checklist.items.income, ...checklist.items.expenses];
+    if (!items.length) content.append(this.element('p', 'monthly-review-cleared-empty', 'No saved paychecks or expenses are in this month.'));
+    else {
+      const list = this.element('ul', 'monthly-review-cleared-list');
+      items.forEach(item => list.append(this.clearedChecklistItem(item)));
+      content.append(list);
+    }
+    details.append(content); return details;
+  },
+
+  clearedChecklistItem(item) {
+    const row = this.element('li', 'monthly-review-cleared-item');
+    const label = this.element(item.eligible ? 'label' : 'div', 'monthly-review-cleared-label');
+    const identity = item.kind === 'income' ? item.earner : `${item.name} — ${item.category}`;
+    let checkbox = null;
+    if (item.eligible) {
+      checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.checked = item.cleared;
+      checkbox.dataset.clearedKind = item.kind; checkbox.dataset.recordId = item.recordId;
+      label.append(checkbox);
+    }
+    label.append(this.element('span', 'break-anywhere', identity)); row.append(label);
+    row.append(this.element('span', 'monthly-review-cleared-meta',
+      `${item.kind === 'income' ? 'Paycheck' : 'Expense'} · ${item.date || 'Date not entered'} · ${item.actualAmount === null ? 'Actual not entered' : `Actual ${this.fmt(item.actualAmount)}`}`));
+    if (!item.eligible) row.append(this.element('span', 'monthly-review-cleared-reason', this.clearedEligibilityReason(item.eligibilityReason)));
+    else checkbox.addEventListener('change', () => this.setClearedMark(item, checkbox));
+    return row;
+  },
+
+  clearedEligibilityReason(reason) {
+    if (reason === 'actual-and-date-needed') return 'Actual amount and date must be entered before this record can be marked cleared.';
+    if (reason === 'actual-needed') return 'Actual amount must be entered before this record can be marked cleared.';
+    return 'Date must be entered before this record can be marked cleared.';
   },
 
   renderReviewActualGroup(wrapper, kind, group) {
@@ -268,6 +323,29 @@ const BudgetView = {
       const controls = [...document.querySelectorAll('[data-review-kind][data-record-id]')];
       const target = controls.find(control => control.dataset.reviewKind === kind && control.dataset.recordId === id);
       (target || document.getElementById(`monthly-review-${kind}-heading`))?.focus({ preventScroll: true });
+    });
+  },
+
+  setClearedMark(item, checkbox) {
+    const cleared = checkbox.checked;
+    App.runMutation(() => Store.setRecordCleared({ monthKey: this.currentMonth, kind: item.kind,
+      recordId: item.recordId, cleared }), {
+      onSuccess: () => {
+        App.refreshAllViews(); App.announceStatus(`Manual cleared mark ${cleared ? 'added' : 'removed'}.`);
+        this.restoreClearedFocus(item.kind, item.recordId);
+      },
+      onFailure: () => {
+        this.renderMonthlyReview(); this.restoreClearedFocus(item.kind, item.recordId);
+      }
+    });
+  },
+
+  restoreClearedFocus(kind, id) {
+    requestAnimationFrame(() => {
+      const details = document.getElementById('monthly-review-cleared'); if (details) details.open = true;
+      const controls = [...document.querySelectorAll('[data-cleared-kind][data-record-id]')];
+      const target = controls.find(control => control.dataset.clearedKind === kind && control.dataset.recordId === id && !control.disabled);
+      (target || details?.querySelector('summary') || document.getElementById('monthly-review-heading'))?.focus({ preventScroll: true });
     });
   },
 

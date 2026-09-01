@@ -321,6 +321,87 @@ test('schema v4 active, backup, and snapshot codecs preserve envelope version 1'
   assert.deepEqual(Schema.parseV4Snapshot(JSON.stringify(snapshot)).data, v3);
 });
 
+test('dormant schema v5 migrates only persisted v4 and defaults every record cleared false', () => {
+  const v4 = Schema.migrateV3ToV4ExactMoney(makeV3WithTemplates());
+  const before = JSON.stringify(v4);
+  const v5 = Schema.migrateV4ToV5(v4);
+  assert.equal(v5.schemaVersion, 5);
+  for (const month of Object.values(v5.months)) {
+    assert.equal(month.paychecks.every(record => record.cleared === false), true);
+    assert.equal(month.expenses.every(record => record.cleared === false), true);
+  }
+  assert.equal(JSON.stringify(v4), before);
+  assert.equal(Schema.validateV5(v5), true);
+  expectCode('UNSUPPORTED_SCHEMA_VERSION', () => Schema.migrateV4ToV5(makeV3WithTemplates()));
+  expectCode('UNSUPPORTED_SCHEMA_VERSION', () => Schema.migrateV4ToV5(makeBudget()));
+  expectCode('UNSUPPORTED_SCHEMA_VERSION', () => Schema.migrateV4ToV5(v5));
+});
+
+test('schema v5 hydrate/dehydrate preserves exact cents, cleared flags, and source graphs', () => {
+  const v3 = makeV3WithTemplates();
+  const month = v3.months[Object.keys(v3.months)[0]];
+  month.paychecks[0].plannedAmount = 2000.29;
+  month.paychecks[0].actualAmount = 0;
+  month.expenses[0].plannedAmount = 1200.03;
+  month.expenses[0].actualAmount = null;
+  month.expenses[0].paycheckAmounts[month.paychecks[0].id] = 1199.99;
+  const v4 = Schema.migrateV3ToV4ExactMoney(v3);
+  const persisted = Schema.migrateV4ToV5(v4);
+  persisted.months[Object.keys(persisted.months)[0]].paychecks[0].cleared = true;
+  const persistedBefore = JSON.stringify(persisted);
+  const runtime = Schema.hydrateV5ExactMoney(persisted);
+  assert.equal(runtime.schemaVersion, 3);
+  assert.equal(runtime.months[Object.keys(runtime.months)[0]].paychecks[0].plannedAmount, 2000.29);
+  assert.equal(runtime.months[Object.keys(runtime.months)[0]].paychecks[0].actualAmount, 0);
+  assert.equal(runtime.months[Object.keys(runtime.months)[0]].paychecks[0].cleared, true);
+  assert.equal(runtime.months[Object.keys(runtime.months)[0]].expenses[0].cleared, false);
+  assert.deepEqual(Schema.dehydrateV5ExactMoney(runtime), persisted);
+  assert.equal(JSON.stringify(persisted), persistedBefore);
+  const runtimeBefore = JSON.stringify(runtime);
+  assert.deepEqual(Schema.buildActiveData(runtime, Schema.V5_SCHEMA_VERSION), persisted);
+  assert.equal(JSON.stringify(runtime), runtimeBefore);
+  assert.deepEqual(Schema.parseActiveData(JSON.stringify(persisted)), runtime);
+});
+
+test('schema v5 strictly requires only boolean cleared additions and rejects sub-cent runtime conversion', () => {
+  const persisted = Schema.migrateV4ToV5(Schema.migrateV3ToV4ExactMoney(makeV3WithTemplates()));
+  const month = persisted.months[Object.keys(persisted.months)[0]];
+  const missing = structuredClone(persisted); delete missing.months[Object.keys(missing.months)[0]].paychecks[0].cleared;
+  expectCode('MISSING_FIELD', () => Schema.validateV5(missing));
+  const unknown = structuredClone(persisted); unknown.months[Object.keys(unknown.months)[0]].expenses[0].clearedAt = null;
+  expectCode('UNKNOWN_FIELD', () => Schema.validateV5(unknown));
+  const nonBoolean = structuredClone(persisted); nonBoolean.months[Object.keys(nonBoolean.months)[0]].expenses[0].cleared = 0;
+  expectCode('EXPECTED_BOOLEAN', () => Schema.validateV5(nonBoolean));
+  const fractionalCents = structuredClone(persisted); fractionalCents.months[Object.keys(fractionalCents.months)[0]].expenses[0].plannedAmount = 1.5;
+  expectCode('INVALID_CENTS', () => Schema.validateV5(fractionalCents));
+  const runtime = Schema.hydrateV5ExactMoney(persisted);
+  runtime.months[Object.keys(runtime.months)[0]].expenses[0].actualAmount = 12.345;
+  const before = JSON.stringify(runtime);
+  expectCode('SUB_CENT_AMOUNT', () => Schema.dehydrateV5ExactMoney(runtime));
+  assert.equal(JSON.stringify(runtime), before);
+  assert.equal(month.paychecks[0].cleared, false);
+});
+
+test('schema v5 policy and format-v1 backup/snapshot codecs round trip only explicit v5 data', () => {
+  const persisted = Schema.migrateV4ToV5(Schema.migrateV3ToV4ExactMoney(makeV3WithTemplates()));
+  persisted.months[Object.keys(persisted.months)[0]].expenses[0].cleared = true;
+  const runtime = Schema.hydrateV5ExactMoney(persisted);
+  assert.equal(Object.isFrozen(Schema.V5_SCHEMA_POLICY), true);
+  assert.equal(Schema.V5_SCHEMA_POLICY.SCHEMA_VERSION, 5);
+  assert.deepEqual(Schema.V5_SCHEMA_POLICY.parseActive(JSON.stringify(persisted)), runtime);
+  const backup = Schema.buildV5Backup(runtime, '2026-01-15T12:00:00.000Z');
+  assert.equal(backup.formatVersion, 1); assert.deepEqual(backup.data, persisted);
+  assert.deepEqual(Schema.parseV5Backup(JSON.stringify(backup)).data, runtime);
+  const snapshot = Schema.buildV5Snapshot(runtime, {
+    createdAt: '2026-01-15T12:00:00.000Z', localDate: '2026-01-15', reason: 'pre-import'
+  });
+  assert.equal(snapshot.formatVersion, 1); assert.deepEqual(snapshot.data, persisted);
+  assert.deepEqual(Schema.parseV5Snapshot(JSON.stringify(snapshot)).data, runtime);
+  expectCode('MISSING_FIELD', () => Schema.buildV5Backup(makeV3WithTemplates(), '2026-01-15T12:00:00.000Z'));
+  expectCode('UNSUPPORTED_SCHEMA_VERSION', () => Schema.parseV5Backup(JSON.stringify(Schema.buildV4Backup(
+    makeV3WithTemplates(), '2026-01-15T12:00:00.000Z'))));
+});
+
 test('legacy migration rejects missing months and backfills missing month collections', () => {
   expectCode('MISSING_FIELD', () => Schema.migrateActive({ categories: [], settings: { earners: [] } }));
   const legacy = {
@@ -519,10 +600,13 @@ test('classic-script and CommonJS expose the exact same public API and behavior'
   const expectedKeys = [
     'ACTIVE_SCHEMA_POLICY', 'BACKUP_FORMAT', 'BACKUP_FORMAT_VERSION', 'DataError', 'SCHEMA_VERSION', 'SNAPSHOT_FORMAT',
     'SNAPSHOT_FORMAT_VERSION', 'V2_SCHEMA_VERSION', 'V3_SCHEMA_POLICY', 'V3_SCHEMA_VERSION', 'V4_SCHEMA_POLICY', 'V4_SCHEMA_VERSION',
-    'buildActiveData', 'buildBackup', 'buildSnapshot', 'buildV4Backup', 'buildV4Snapshot', 'centsToDecimalMoney', 'clone',
-    'decimalMoneyToCents', 'dehydrateV4ExactMoney', 'hydrateV4ExactMoney', 'migrateActive', 'migrateToV2', 'migrateToV3',
-    'migrateV3ToV4ExactMoney', 'parseActive', 'parseActiveData', 'parseBackup', 'parseSnapshot', 'parseV4Active', 'parseV4Backup',
-    'parseV4Snapshot', 'validateActive', 'validateV2', 'validateV3', 'validateV4'
+    'V5_SCHEMA_POLICY', 'V5_SCHEMA_VERSION',
+    'buildActiveData', 'buildBackup', 'buildSnapshot', 'buildV4Backup', 'buildV4Snapshot', 'buildV5Backup', 'buildV5Snapshot',
+    'centsToDecimalMoney', 'clone', 'decimalMoneyToCents', 'dehydrateV4ExactMoney', 'dehydrateV5ExactMoney',
+    'hydrateV4ExactMoney', 'hydrateV5ExactMoney', 'migrateActive', 'migrateToV2', 'migrateToV3',
+    'migrateV3ToV4ExactMoney', 'migrateV4ToV5', 'parseActive', 'parseActiveData', 'parseBackup', 'parseSnapshot',
+    'parseV4Active', 'parseV4Backup', 'parseV4Snapshot', 'parseV5Active', 'parseV5Backup', 'parseV5Snapshot',
+    'validateActive', 'validateV2', 'validateV3', 'validateV4', 'validateV5'
   ].sort();
   assert.deepEqual(Object.keys(Schema).sort(), expectedKeys);
   assert.deepEqual(Array.from(Object.keys(browserApi).sort()), expectedKeys);

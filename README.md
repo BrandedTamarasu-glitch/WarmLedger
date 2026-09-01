@@ -84,6 +84,8 @@ An actual amount of **Not entered** means no value has been recorded (`null`). A
 
 “Complete” means the required actual amounts have been entered. It does not mean the month was matched to a bank statement, cleared, closed, or otherwise reconciled with a financial institution. Actual cash flow is entered income minus entered expenses only after both are complete; it is not a bank balance.
 
+Monthly Review also contains an initially closed **Manual cleared checklist** for budgets using the current cleared-record format. A checkbox records only that you manually marked a saved paycheck or expense cleared. Marking requires an entered actual amount and a saved date; entered zero is eligible, while missing requirements remain visible with an explanation. Changing outcome-defining fields can reset the mark. This state does not mean paid, bank-verified, reconciled, matched, settled, balance-confirmed, or month closed, and there are no bulk or automatic clearing controls. Older schema-version-3 budgets show the checklist as unavailable until the separate exact-money storage upgrade is completed.
+
 ## Pay periods
 
 Pay periods is a passive, read-only view of the selected month's paycheck funding plan. Each paycheck is a month-scoped funding envelope containing only the bills explicitly assigned to it in **Budget**. Warm Ledger supports any number of paychecks and earners in a month; it does not assume exactly two checks or one earner. Add or change assignments in Budget, including splitting a bill across multiple paychecks. Pay periods then shows the funded, partially funded, and unfunded results without changing the ledger.

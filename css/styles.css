@@ -882,6 +882,22 @@ button:disabled, input:disabled, select:disabled, textarea:disabled { cursor: no
 .monthly-review-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 9px; }
 .monthly-review-action { min-height: 44px; white-space: normal; }
 .monthly-review-action:focus-visible { outline: 3px solid var(--primary-hover); outline-offset: 3px; }
+.monthly-review-cleared { min-width: 0; margin: 14px 0; border-top: 1px solid var(--color-divider); border-bottom: 1px solid var(--color-divider); }
+.monthly-review-cleared > summary { display: flex; align-items: center; min-height: 44px; padding: 8px 4px; color: var(--color-accent); font-weight: 700; cursor: pointer; overflow-wrap: anywhere; }
+.monthly-review-cleared-content { min-width: 0; padding: 0 4px 14px; }
+.monthly-review-cleared-disclaimer, .monthly-review-cleared-unavailable,
+.monthly-review-cleared-empty { line-height: 1.55; overflow-wrap: anywhere; }
+.monthly-review-cleared-disclaimer { color: var(--color-text-muted); }
+.monthly-review-cleared-counts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; min-width: 0; margin: 12px 0; }
+.monthly-review-cleared-counts > div { min-width: 0; }
+.monthly-review-cleared-counts dt { color: var(--color-text-muted); font-size: 12px; overflow-wrap: anywhere; }
+.monthly-review-cleared-counts dd { margin-top: 2px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.monthly-review-cleared-list { display: grid; gap: 8px; min-width: 0; list-style: none; }
+.monthly-review-cleared-item { display: grid; gap: 4px; min-width: 0; padding: 10px 12px; border: 1px solid var(--color-divider); border-radius: var(--radius-control); background: var(--color-surface-raised); }
+.monthly-review-cleared-label { display: flex; align-items: center; min-width: 0; min-height: 44px; font-weight: 650; overflow-wrap: anywhere; }
+.monthly-review-cleared-label input { flex: 0 0 auto; width: 20px; height: 20px; margin-right: 10px; accent-color: var(--color-accent); }
+.monthly-review-cleared-meta, .monthly-review-cleared-reason { color: var(--color-text-muted); line-height: 1.45; overflow-wrap: anywhere; }
+.monthly-review-cleared-reason { font-weight: 600; }
 
 /* Recurring templates */
 .template-list { min-width: 0; list-style: none; display: grid; gap: 14px; }
@@ -1561,6 +1577,7 @@ label:has(> #field-template-enabled) { display: flex; align-items: center; min-h
   .category-total { text-align: left; }
   .monthly-review-header { align-items: flex-start; }
   .monthly-review-group { padding: 12px; }
+  .monthly-review-cleared-counts { grid-template-columns: minmax(0, 1fr); }
   .budget-actions { display: grid; grid-template-columns: minmax(0, 1fr); }
   .budget-actions .btn { width: 100%; min-height: 44px; }
   .budget-actions #btn-clear-month { margin-left: 0; }
@@ -1633,7 +1650,8 @@ label:has(> #field-template-enabled) { display: flex; align-items: center; min-h
   .recovery-snapshots li, .dashboard-range-status, .dashboard-empty, .dashboard-overview-card,
   .dashboard-report-details, .dashboard-report-details > summary,
   .dashboard-table-disclosure, .dashboard-table-disclosure > summary, .dashboard-yoy-state,
-  .dashboard-upcoming, .dashboard-upcoming > summary, .dashboard-upcoming-item {
+  .dashboard-upcoming, .dashboard-upcoming > summary, .dashboard-upcoming-item,
+  .monthly-review-cleared, .monthly-review-cleared > summary, .monthly-review-cleared-item {
     transition: none !important;
     animation: none !important;
   }
@@ -1665,6 +1683,13 @@ label:has(> #field-template-enabled) { display: flex; align-items: center; min-h
   .modal-header, .modal-footer, .summary-item, .monthly-review-drilldown,
   .category-header, .allocation-section, .allocation-footer, .budget-actions { border-color: CanvasText; }
   .monthly-review-group { border: 1px solid CanvasText; border-top-width: 3px; }
+  .monthly-review-cleared, .monthly-review-cleared-content, .monthly-review-cleared-item {
+    color: CanvasText; background: Canvas; border-color: CanvasText; box-shadow: none;
+  }
+  .monthly-review-cleared > summary, .monthly-review-cleared-disclaimer,
+  .monthly-review-cleared-meta, .monthly-review-cleared-reason,
+  .monthly-review-cleared-counts dt, .monthly-review-cleared-counts dd { color: CanvasText; }
+  .monthly-review-cleared-label input { color: ButtonText; background: ButtonFace; border: 1px solid ButtonText; forced-color-adjust: auto; }
   .monthly-review-status, .monthly-review-states li, .monthly-review-funding-alert, .monthly-review-metric-label,
   .monthly-review-metric-value, .monthly-review-destination dt, .monthly-review-destination dd,
   .monthly-review-drilldown summary { color: CanvasText; background: Canvas; }
