@@ -77,6 +77,33 @@ test('browser evidence proves Saved-Record Finder is transient, routable, and st
   assert.match(source, /localStorage\.getItem\(primaryKey\) === staleFinderBytes/);
 });
 
+test('browser evidence proves Review Navigation is passive, revalidating, responsive, and privacy-minimal', () => {
+  assert.match(source, /reviewNavigationClosedPassiveLookbacksRoutesStaleSafe/);
+  assert.match(source, /assert\(!reviewQueue\.open/);
+  assert.match(source, /for \(const lookback of \[6, 12, 24\]\)/);
+  assert.match(source, /localStorage\.getItem\(primaryKey\) === reviewQueueBytes/);
+  assert.match(source, /document\.activeElement === expectedClearedTarget/);
+  assert.match(source, /const refreshedStaleTarget =/);
+  assert.match(source, /reviewQueue\.querySelector\('summary'\)/);
+  assert.match(source, /document\.activeElement === refreshedStaleTarget/);
+  assert.match(source, /reviewNavigationBudgetOriginStaleFocusByteExact/);
+  assert.match(source, /data-review-step-kind="actuals"/);
+  assert.match(source, /document\.getElementById\('view-budget'\)\.classList\.contains\('active'\)/);
+  assert.match(source, /document\.activeElement\.id === 'monthly-review-next-steps-heading'/);
+  assert.match(source, /localStorage\.getItem\(primaryKey\) === staleBudgetBytes/);
+  assert.match(source, /localStorage\.getItem\(primaryKey\) === staleReviewBytes/);
+  assert.match(source, /document\.activeElement === reviewQueue\.querySelector\('summary'\)/);
+  assert.match(source, /localStorage\.getItem\(primaryKey\) === staleEmptyBytes/);
+  assert.match(source, /reviewNavigationNarrowTargetsForcedColorsPrint/);
+  assert.match(source, /Review Navigation 320px evidence failed/);
+  assert.match(source, /targetsAtLeast44/);
+  assert.match(source, /Review Navigation forced-colors evidence failed/);
+  assert.match(source, /Review Navigation print evidence failed/);
+  assert.match(source, /const publicScenario = Object\.fromEntries/);
+  assert.match(source, /filter\(\(\[, value\]\) => typeof value === 'boolean'\)/);
+  assert.doesNotMatch(source, /evidence = \{ passed: true, browser/);
+});
+
 test('browser evidence toggles and reloads one eligible entered-zero Manual Cleared record', () => {
   assert.match(source, /manualClearedZeroToggleFocusReload/);
   assert.match(source, /Passive Manual Cleared render changed storage bytes/);

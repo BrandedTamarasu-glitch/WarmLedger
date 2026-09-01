@@ -55,6 +55,12 @@ The query and results stay local and transient. They are not placed in storage, 
 
 Each result shows only its saved identity, kind, month, neutral saved date or **Date needed**, planned amount, and actual amount or **Not entered**. **Open** revalidates the exact current result before routing to that record's existing Budget **Edit** control; it does not open an editor or change the ledger. Finding or opening a result makes no claim about payment, due dates, cleared state, funding, accounts, balances, reconciliation, or month lifecycle.
 
+### Months needing attention
+
+The initially closed Dashboard **Months needing attention** disclosure is a bounded, read-only review aid over saved months only. Choose an exact lookback of 6, 12, or 24 months to see saved-month facts that may be useful to review. Opening the disclosure, changing its lookback, and following its actions are passive: they do not create, edit, save, migrate, snapshot, generate identifiers, or otherwise change the ledger.
+
+Before routing, an action revalidates its exact current item. A current item can focus only its existing Budget or Monthly Review control; a stale item refreshes safely instead of routing to an outdated target. The queue does not assign priority, prove completion or payment, verify a bank, reconcile an account, or close a month.
+
 ## Run locally
 
 Open `index.html` in a modern browser. From this directory on Linux, for example:

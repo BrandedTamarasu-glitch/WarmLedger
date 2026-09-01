@@ -485,6 +485,95 @@ const SCENARIO = `(async () => {
     document.activeElement.classList.contains('dashboard-record-result-action') &&
     localStorage.getItem(primaryKey) === staleFinderBytes,
   'Stale saved-record result did not refresh safely and restore result focus without writing.');
+
+  App.switchView('dashboard'); await settle();
+  const reviewQueue = document.getElementById('dashboard-review-queue');
+  assert(!reviewQueue.open, 'Months needing attention must be initially closed.');
+  const reviewAnchorMonth = DashboardView.localCivilMonth();
+  Store.addExpense(reviewAnchorMonth, { categoryId: category.id, categoryItemId: null,
+    name: 'Synthetic review navigation bill', date: '', paycheckAmounts: {}, plannedAmount: 1,
+    actualAmount: null, paymentMethod: 'bank' });
+  for (const paycheck of Store.getMonth(reviewAnchorMonth).paychecks) {
+    Store.updatePaycheck(reviewAnchorMonth, paycheck.id, { date, actualAmount: paycheck.plannedAmount });
+  }
+  for (const expense of Store.getMonth(reviewAnchorMonth).expenses) {
+    Store.updateExpense(reviewAnchorMonth, expense.id, { date, actualAmount: expense.plannedAmount });
+  }
+  const reviewQueueBytes = localStorage.getItem(primaryKey); reviewQueue.open = true;
+  DashboardView.renderMonthReviewQueue(); await settle();
+  assert(localStorage.getItem(primaryKey) === reviewQueueBytes,
+    'Opening or rendering Months needing attention changed storage bytes.');
+  for (const lookback of [6, 12, 24]) {
+    const control = document.querySelector('[name="dashboard-review-months"][value="' + lookback + '"]');
+    assert(control, 'A required saved-month lookback control is missing.');
+    control.click(); await settle();
+    assert(DashboardView.reviewQueueLookback === lookback && control.checked,
+      'A saved-month lookback control did not select its exact bounded window.');
+    assert(localStorage.getItem(primaryKey) === reviewQueueBytes,
+      'Changing a saved-month lookback changed storage bytes.');
+  }
+
+  document.querySelector('[name="dashboard-review-months"][value="12"]').click(); await settle();
+  const validReviewAction = [...document.querySelectorAll('[data-review-kind][data-month-key]')]
+    .find(button => button.dataset.reviewKind === 'manual-clearing');
+  assert(validReviewAction, 'A valid saved-month review action is missing.');
+  const reviewRouteMonth = validReviewAction.dataset.monthKey;
+  const validReviewBytes = localStorage.getItem(primaryKey); validReviewAction.click(); await settle(); await pause(50);
+  const expectedClearedTarget = document.querySelector('#monthly-review-cleared [data-cleared-kind][data-record-id]');
+  assert(document.getElementById('view-budget').classList.contains('active') &&
+    document.activeElement === expectedClearedTarget && localStorage.getItem(primaryKey) === validReviewBytes,
+  'A valid review action did not revalidate and focus the exact existing target without writing.');
+
+  App.switchView('dashboard'); reviewQueue.open = true; DashboardView.renderMonthReviewQueue(); await settle();
+  const staleReviewAction = [...document.querySelectorAll('[data-review-kind][data-month-key]')]
+    .find(button => button.dataset.reviewKind === 'manual-clearing' && button.dataset.monthKey === reviewRouteMonth);
+  assert(staleReviewAction, 'A stale-route review action could not be prepared.');
+  const clearedItems = Store.getClearedChecklist(reviewRouteMonth).items;
+  for (const [kind, items] of [['income', clearedItems.income], ['expense', clearedItems.expenses]]) {
+    for (const item of items) Store.setRecordCleared({ monthKey: reviewRouteMonth, kind,
+      recordId: item.recordId, cleared: true });
+  }
+  const staleReviewBytes = localStorage.getItem(primaryKey); staleReviewAction.click(); await settle(); await pause(50);
+  const refreshedStaleTarget = [...reviewQueue.querySelectorAll('[data-review-kind][data-month-key]')]
+    .find(control => control.dataset.reviewKind === 'manual-clearing' && control.dataset.monthKey === reviewRouteMonth) ||
+    reviewQueue.querySelector('summary');
+  assert(document.getElementById('view-dashboard').classList.contains('active') &&
+    refreshedStaleTarget?.getClientRects().length && document.activeElement === refreshedStaleTarget &&
+    document.getElementById('app-status').textContent.includes('changed') &&
+    localStorage.getItem(primaryKey) === staleReviewBytes,
+  'A stale review action did not refresh and restore safe focus without click-time writes.');
+
+  const budgetStaleExpense = Store.addExpense(reviewRouteMonth, { categoryId: category.id, categoryItemId: null,
+    name: 'Synthetic stale Budget review bill', date, paycheckAmounts: {}, plannedAmount: 2,
+    actualAmount: null, paymentMethod: 'bank' });
+  BudgetView.currentMonth = reviewRouteMonth; App.switchView('budget'); BudgetView.render(); await settle();
+  const staleBudgetAction = document.querySelector(
+    '[data-review-step-kind="actuals"][data-review-route-target="budget-actuals"]');
+  assert(staleBudgetAction, 'A Budget-origin stale review action could not be prepared.');
+  Store.updateExpense(reviewRouteMonth, budgetStaleExpense.id, { actualAmount: budgetStaleExpense.plannedAmount });
+  const staleBudgetBytes = localStorage.getItem(primaryKey); staleBudgetAction.click(); await settle(); await pause(50);
+  assert(document.getElementById('view-budget').classList.contains('active') &&
+    document.activeElement.id === 'monthly-review-next-steps-heading' &&
+    document.getElementById('app-status').textContent.includes('changed') &&
+    localStorage.getItem(primaryKey) === staleBudgetBytes,
+  'A Budget-origin stale review action did not retain Budget, focus its safe heading, and remain write-free.');
+
+  const emptyMonthIndex = Number(month.slice(0, 4)) * 12 + Number(month.slice(5, 7)) - 2;
+  const emptyMonth = String(Math.floor(emptyMonthIndex / 12)).padStart(4, '0') + '-' +
+    String(emptyMonthIndex % 12 + 1).padStart(2, '0');
+  Store.updateAllocation(emptyMonth, 'savings', 0);
+  App.switchView('dashboard'); reviewQueue.open = true; DashboardView.renderMonthReviewQueue(); await settle();
+  const staleEmptyAction = document.querySelector('[data-empty-month-key="' + emptyMonth + '"]');
+  assert(staleEmptyAction, 'A saved empty-month action could not be prepared.');
+  Store.addExpense(emptyMonth, { categoryId: category.id, categoryItemId: null,
+    name: 'Synthetic changed empty month', date: '', paycheckAmounts: {}, plannedAmount: 1,
+    actualAmount: null, paymentMethod: 'bank' });
+  const staleEmptyBytes = localStorage.getItem(primaryKey); staleEmptyAction.click(); await settle(); await pause(50);
+  assert(document.getElementById('view-dashboard').classList.contains('active') &&
+    document.activeElement === reviewQueue.querySelector('summary') &&
+    document.getElementById('app-status').textContent.includes('changed') &&
+    localStorage.getItem(primaryKey) === staleEmptyBytes,
+  'A stale empty-month route did not refresh and restore safe focus without click-time writes.');
   App.switchView('data-health'); await settle();
   return { month, passiveActionsByteExact: true, monthlyReviewEdit: true, expenseDeleteCancelUndoStale: true,
     generatedTombstoneUndo: true, dataHealthPassiveRoutes: true, actualZeroPreviewCancelApply: true, actualApplyFailureAlertFocus: true,
@@ -494,6 +583,8 @@ const SCENARIO = `(async () => {
     payPeriodsFourDigitFunding: true, payPeriodsStaleAndZeroPaycheckRoutes: true,
     previewCancelApply: true, backupRoundTrip: true, dashboardBasisCsvPrintPassive: true,
     dashboardSavedMonthForecastPassive: true, savedRecordFinderTransientRouteStaleSafe: true,
+    reviewNavigationClosedPassiveLookbacksRoutesStaleSafe: true,
+    reviewNavigationBudgetOriginStaleFocusByteExact: true,
     exactMoneyEligiblePreviewCancelConfirm: true,
     exactMoneyV4BackupImportSnapshotRoundTrip: true, manualClearedZeroToggleFocusReload: true,
     clearedRecordId: income.id, blockedV3Bytes,
@@ -542,6 +633,48 @@ async function run(options) {
     assertEvidence(escapeDelete.closed && escapeDelete.preserved && escapeDelete.byteExact && escapeDelete.focusReturned,
       `Expense delete Escape failed: ${JSON.stringify(escapeDelete)}`);
     scenario.expenseDeleteEscape = true;
+    await evaluate(cdp, `(async () => {
+      App.switchView('dashboard'); const queue = document.getElementById('dashboard-review-queue'); queue.open = true;
+      DashboardView.renderMonthReviewQueue();
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    })()`);
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width: 320, height: 900, deviceScaleFactor: 1, mobile: false });
+    const reviewNavigationNarrow = await evaluate(cdp, `(() => {
+      const queue = document.getElementById('dashboard-review-queue'); const viewport = document.documentElement.clientWidth;
+      const visibleTargets = [...queue.querySelectorAll('summary, button')]
+        .filter(element => element.getClientRects().length);
+      const overflowing = [...queue.querySelectorAll('*')].filter(element => {
+        if (!element.getClientRects().length) return false; const rect = element.getBoundingClientRect();
+        return rect.left < -0.5 || rect.right > viewport + 0.5;
+      });
+      return { visible: Boolean(queue.getClientRects().length), noPageOverflow: document.documentElement.scrollWidth <= viewport,
+        noQueueOverflow: overflowing.length === 0,
+        targetsAtLeast44: visibleTargets.length > 0 && visibleTargets.every(element => element.getBoundingClientRect().height >= 44) };
+    })()`);
+    assertEvidence(reviewNavigationNarrow.visible && reviewNavigationNarrow.noPageOverflow &&
+      reviewNavigationNarrow.noQueueOverflow && reviewNavigationNarrow.targetsAtLeast44,
+      `Review Navigation 320px evidence failed: ${JSON.stringify(reviewNavigationNarrow)}`);
+    await cdp.send('Emulation.setEmulatedMedia', { features: [{ name: 'forced-colors', value: 'active' }] });
+    const reviewNavigationForcedColors = await evaluate(cdp, `(() => {
+      const queue = document.getElementById('dashboard-review-queue'); const card = queue.querySelector('.dashboard-review-item');
+      const focus = queue.querySelector('[data-review-kind]') || queue.querySelector('summary'); focus.focus();
+      return { active: matchMedia('(forced-colors: active)').matches,
+        queueBoundary: getComputedStyle(queue).borderColor !== 'rgba(0, 0, 0, 0)',
+        cardBoundary: !card || getComputedStyle(card).borderColor !== 'rgba(0, 0, 0, 0)',
+        focusVisible: !['none', 'hidden'].includes(getComputedStyle(focus).outlineStyle) };
+    })()`);
+    assertEvidence(reviewNavigationForcedColors.active && reviewNavigationForcedColors.queueBoundary &&
+      reviewNavigationForcedColors.cardBoundary && reviewNavigationForcedColors.focusVisible,
+      `Review Navigation forced-colors evidence failed: ${JSON.stringify(reviewNavigationForcedColors)}`);
+    await cdp.send('Emulation.setEmulatedMedia', { media: 'print', features: [] });
+    const reviewNavigationPrint = await evaluate(cdp, `(() => {
+      const queue = document.getElementById('dashboard-review-queue');
+      return { printMedia: matchMedia('print').matches, hidden: getComputedStyle(queue).display === 'none' };
+    })()`);
+    assertEvidence(reviewNavigationPrint.printMedia && reviewNavigationPrint.hidden,
+      `Review Navigation print evidence failed: ${JSON.stringify(reviewNavigationPrint)}`);
+    await cdp.send('Emulation.setEmulatedMedia', { media: 'screen', features: [{ name: 'forced-colors', value: 'none' }] });
+    scenario.reviewNavigationNarrowTargetsForcedColorsPrint = true;
     await evaluate(cdp, `App.switchView('budget')`);
     await cdp.send('Emulation.setDeviceMetricsOverride', { width: 320, height: 900, deviceScaleFactor: 1, mobile: false });
     const monthlyReviewNarrow = await evaluate(cdp, `(() => {
@@ -698,10 +831,12 @@ async function run(options) {
     const errors = cdp.events.filter(event => event.method === 'Runtime.exceptionThrown' ||
       (event.method === 'Runtime.consoleAPICalled' && event.params.type === 'error'));
     assertEvidence(errors.length === 0, 'Console or page exceptions were captured.');
-    evidence = { passed: true, browser, disposableProfile: true, scenario, escapeDelete,
-      monthlyReviewNarrow, monthlyPaymentGuidance, monthlyReviewForcedColors, payPeriodNarrow, payPeriodForcedColors,
-      payPeriodReflow200Percent: { ...payPeriodReflow200Percent, method: '1280px viewport halved to 640 CSS pixels' }, narrow, forcedColors,
-      reflow200Percent: { ...reflow200Percent, method: '1280px viewport halved to 640 CSS pixels' }, reload, blocked, errors: [] };
+    const publicScenario = Object.fromEntries(Object.entries(scenario)
+      .filter(([, value]) => typeof value === 'boolean'));
+    evidence = { passed: true, disposableProfile: true, scenario: publicScenario,
+      checks: { expenseDeleteEscape: true, monthlyReviewResponsive: true, payPeriodsResponsive: true,
+        reviewNavigationResponsive: true, dataHealthResponsive: true, reloadPersistence: true,
+        blockedLedgerSafety: true, noConsoleErrors: true } };
   } finally {
     cdp?.close();
     await stopBrowser(child);

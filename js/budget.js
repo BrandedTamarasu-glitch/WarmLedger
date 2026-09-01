@@ -271,6 +271,15 @@ const BudgetView = {
     const current = Store.getNextReviewSteps(monthKey);
     const step = current.steps.find(item => item.kind === kind && item.routeTarget === routeTarget);
     if (!step) {
+      if (App.currentView === 'dashboard') {
+        DashboardView.renderMonthReviewQueue(); App.announceStatus('Review needs changed. Review the refreshed month.');
+        requestAnimationFrame(() => {
+          const controls = [...document.querySelectorAll('#dashboard-review-queue [data-review-kind][data-month-key]')];
+          (controls.find(control => control.dataset.reviewKind === kind && control.dataset.monthKey === monthKey) ||
+            document.querySelector('#dashboard-review-queue > summary'))?.focus({ preventScroll: true });
+        });
+        return false;
+      }
       this.currentMonth = monthKey; this.render(); App.announceStatus('Review needs changed. Review the refreshed month.');
       requestAnimationFrame(() => document.getElementById('monthly-review-next-steps-heading')?.focus({ preventScroll: true }));
       return false;

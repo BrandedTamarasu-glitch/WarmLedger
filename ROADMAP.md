@@ -133,6 +133,17 @@ Status: published on 2026-09-01.
 
 The lean ceiling is a bounded scan, one closed disclosure, and one existing-control focus route. Consider a rebuildable in-memory index only if measured ledger performance requires it; richer filters or saved queries require explicit user demand, and persistence requires a separate privacy and invalidation contract.
 
+### Months needing attention
+
+Status: published on 2026-09-01.
+
+- Provide one initially closed Dashboard disclosure over saved months only, bounded to an exact 6-, 12-, or 24-month lookback.
+- Keep the queue deterministic, read-only, and passive: rendering, lookback changes, stale handling, and routing do not write, migrate, snapshot, generate identifiers, or advance Store generations.
+- Revalidate the exact current item before routing, then focus only its existing Budget or Monthly Review target; stale items refresh safely instead of routing to outdated controls.
+- Make no priority, completion, payment, bank-verification, reconciliation, or month-close claim.
+
+The lean ceiling is the existing fixed-window scan and passive route to existing controls. Do not add persistence, indexes, caches, durable summaries, or background work without a measured performance need and a separately reviewed contract.
+
 ## Global release gates
 
 - No financial data, labels, amounts, or raw backups enter tests, logs, screenshots, or Git.
