@@ -581,8 +581,10 @@ const BudgetView = {
   showPaycheckModal(existing, reviewFocus = null) {
     const earners = Store.getEarners();
     const title = existing ? 'Edit Paycheck' : 'Add Paycheck';
+    const accountsAvailable = this.accountsAvailable();
     App.showModal({ title, buildBody: () => ModalView.fragment(
       ModalView.field('Earner', ModalView.select('field-earner')),
+      ...(accountsAvailable ? [ModalView.field('Deposit account', ModalView.select('field-paycheck-account'))] : []),
       ModalView.element('div', { className: 'form-row' }, [
         ModalView.field('Planned amount', ModalView.input('field-planned-amount', 'number', { step: '0.01', min: '0', max: '1000000000000', required: true })),
         ModalView.field('Actual amount', ModalView.input('field-actual-amount', 'number', { step: '0.01', min: '0', max: '1000000000000', placeholder: 'Not entered' })),
@@ -595,10 +597,12 @@ const BudgetView = {
       const actualInput = document.getElementById('field-actual-amount');
       if (!plannedInput.reportValidity() || !actualInput.reportValidity()) return false;
       const updates = { plannedAmount: Number(plannedInput.value), actualAmount: this.optionalAmount(actualInput), date };
+      if (accountsAvailable) updates.accountId = document.getElementById('field-paycheck-account').value || null;
       if (!existing || earnerId !== existing.earnerId) updates.earnerId = earnerId;
       return App.runMutation(() => {
         if (existing) return Store.editPaycheck(this.currentMonth, existing.id, updates);
-        return Store.addPaycheck(this.currentMonth, { earnerId, plannedAmount: updates.plannedAmount, actualAmount: updates.actualAmount, date });
+        return Store.addPaycheck(this.currentMonth, { earnerId, plannedAmount: updates.plannedAmount, actualAmount: updates.actualAmount, date,
+          ...(accountsAvailable ? { accountId: updates.accountId } : {}) });
       },
       { onSuccess: () => {
         this.render();
@@ -624,6 +628,27 @@ const BudgetView = {
     document.getElementById('field-planned-amount').value = existing ? existing.plannedAmount : '';
     document.getElementById('field-actual-amount').value = existing ? (existing.actualAmount ?? '') : '';
     document.getElementById('field-date').value = existing?.date || `${this.currentMonth}-01`;
+    if (accountsAvailable) this.populateAccountSelect(document.getElementById('field-paycheck-account'),
+      ['bank', 'savings', 'cash', 'investments', 'other'], existing?.accountId ?? null);
+  },
+
+  accountsAvailable() {
+    try { Store.getAccounts(); return true; } catch (error) { if (error.code === 'ACCOUNTS_UNAVAILABLE') return false; throw error; }
+  },
+
+  populateAccountSelect(select, kinds, selectedId) {
+    select.replaceChildren();
+    const empty = document.createElement('option'); empty.value = ''; empty.textContent = 'No account selected'; select.append(empty);
+    const active = Store.getAccounts().filter(account => kinds.includes(account.kind));
+    const current = selectedId ? Store.getAccounts({ includeArchived: true }).find(account => account.id === selectedId) : null;
+    if (current?.archived && kinds.includes(current.kind)) active.unshift(current);
+    active.forEach(account => { const option = document.createElement('option'); option.value = account.id;
+      option.textContent = `${account.name}${account.archived ? ' (Archived)' : ''}`; option.selected = account.id === selectedId; select.append(option); });
+    select.value = selectedId || '';
+  },
+
+  expenseAccountKinds(method) {
+    return ({ bank: ['bank', 'cash', 'other'], credit_card: ['credit_card'], savings: ['savings'], investments: ['investments'] })[method] || [];
   },
 
   deletePaycheck(id) {
@@ -869,6 +894,7 @@ const BudgetView = {
 
   showExpenseModal(existing, reviewFocus = null) {
     const categories = Store.getCategories();
+    const accountsAvailable = this.accountsAvailable();
     const title = existing ? 'Edit Expense' : 'Add Expense';
     App.showModal({ title, buildBody: () => {
       const nodes = [
@@ -880,7 +906,8 @@ const BudgetView = {
           ModalView.field('Actual amount', ModalView.input('field-actual-amount', 'number', { step: '0.01', min: '0', max: '1000000000000', placeholder: 'Not entered' }))
         ]),
         ModalView.field('Expense date (defaults to the 1st)', ModalView.input('field-expense-date', 'date')),
-        ModalView.field('Payment Method', ModalView.select('field-method', [['bank', 'Bank'], ['credit_card', 'Credit Card'], ['savings', 'Savings'], ['investments', 'Investments']]))
+        ModalView.field('Payment Method', ModalView.select('field-method', [['bank', 'Bank'], ['credit_card', 'Credit Card'], ['savings', 'Savings'], ['investments', 'Investments']])),
+        ...(accountsAvailable ? [ModalView.field('Payment account', ModalView.select('field-expense-account'))] : [])
       ];
       if (!existing) {
         const checkbox = ModalView.input('field-create-expense-template', 'checkbox');
@@ -907,6 +934,7 @@ const BudgetView = {
         actualAmount: this.optionalAmount(actualInput),
         date: document.getElementById('field-expense-date').value
       };
+      if (accountsAvailable) updates.accountId = document.getElementById('field-expense-account').value || null;
       const structureChanged = !existing || categoryId !== existing.categoryId || categoryItemId !== existing.categoryItemId;
       if (structureChanged) Object.assign(updates, { categoryId, categoryItemId, name: customName });
       else if (categoryItemId === null && customName !== existing.name) updates.name = customName;
@@ -914,7 +942,8 @@ const BudgetView = {
         if (existing) return Store.editExpense(this.currentMonth, existing.id, updates);
         const input = {
           categoryId, categoryItemId, name: customName, date: updates.date, paycheckAmounts: {},
-          plannedAmount: updates.plannedAmount, actualAmount: updates.actualAmount, paymentMethod
+          plannedAmount: updates.plannedAmount, actualAmount: updates.actualAmount, paymentMethod,
+          ...(accountsAvailable ? { accountId: updates.accountId } : {})
         };
         return Store.addExpense(this.currentMonth, input);
       }, { onSuccess: result => {
@@ -945,6 +974,11 @@ const BudgetView = {
 
     document.getElementById('field-name').value = existing && existing.categoryItemId === null ? existing.name : '';
     document.getElementById('field-method').value = existing ? existing.paymentMethod : 'bank';
+    if (accountsAvailable) {
+      const account = document.getElementById('field-expense-account'); const method = document.getElementById('field-method');
+      const refreshAccounts = selected => this.populateAccountSelect(account, this.expenseAccountKinds(method.value), selected);
+      refreshAccounts(existing?.accountId ?? null); method.addEventListener('change', () => refreshAccounts(null));
+    }
     const assigned = existing ? Object.values(existing.paycheckAmounts).reduce((sum, amount) => sum + amount, 0) : 0;
     const plannedInput = document.getElementById('field-planned-amount');
     plannedInput.min = String(assigned); plannedInput.value = existing ? existing.plannedAmount : '';

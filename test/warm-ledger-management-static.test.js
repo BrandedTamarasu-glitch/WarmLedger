@@ -86,7 +86,8 @@ test('management statuses remain textual badges without dimming whole cards', ()
 });
 
 test('action priority preserves renderer order and disabled controls', () => {
-  const structureActions = structureJs.slice(structureJs.indexOf('actions.append('), structureJs.indexOf('row.append('));
+  const buildRowStart = structureJs.indexOf('buildRow({');
+  const structureActions = structureJs.slice(structureJs.indexOf('actions.append(', buildRowStart), structureJs.indexOf('row.append(', buildRowStart));
   const structureRename = structureActions.indexOf("this.actionButton('Rename'");
   const structureArchive = structureActions.indexOf('this.actionButton(record.archived');
   const structureMoveUp = structureActions.indexOf("this.moveButton('↑'");

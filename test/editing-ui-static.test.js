@@ -25,7 +25,7 @@ test('create and edit saves use structural IDs and one atomic mutation boundary'
   const source = fs.readFileSync(budgetPath, 'utf8');
 
   assert.match(source, /Store\.editPaycheck\(this\.currentMonth, existing\.id, updates\)/);
-  assert.match(source, /Store\.addPaycheck\(this\.currentMonth, \{ earnerId, plannedAmount: updates\.plannedAmount, actualAmount: updates\.actualAmount, date \}\)/);
+  assert.match(source, /Store\.addPaycheck\(this\.currentMonth, \{ earnerId, plannedAmount: updates\.plannedAmount, actualAmount: updates\.actualAmount, date,/);
   assert.match(source, /Store\.editExpense\(this\.currentMonth, existing\.id, updates\)/);
   assert.match(source, /categoryId, categoryItemId, name: customName, date: updates\.date, paycheckAmounts: \{\}/);
   assert.doesNotMatch(source, /Store\.updatePaycheck\([^\n]+earner/);

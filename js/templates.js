@@ -366,6 +366,8 @@ const TemplatesView = {
       ModalView.field('Planned amount', ModalView.input('field-template-amount', 'number', { min: '0', max: '1000000000000', step: '0.01', required: true })),
       ModalView.field(kind === 'income' ? 'Earner' : 'Category', ModalView.select(`field-template-${structural}`, [], { required: true }))
     ];
+    if (this.accountsAvailable()) nodes.push(ModalView.field(kind === 'income' ? 'Deposit account' : 'Payment account',
+      ModalView.select('field-template-account')));
     if (kind === 'expense') nodes.push(
       ModalView.field('Preset item (optional)', ModalView.select('field-template-item')),
       ModalView.field('Payment method', ModalView.select('field-template-method', [['bank', 'Bank'], ['credit_card', 'Credit card'], ['savings', 'Savings'], ['investments', 'Investments']]))
@@ -403,6 +405,29 @@ const TemplatesView = {
       this.populateItemChoices(existing && existing.categoryItemId);
       document.getElementById('field-template-method').value = existing ? existing.paymentMethod : 'bank';
     }
+    if (this.accountsAvailable()) {
+      const method = kind === 'expense' ? document.getElementById('field-template-method').value : null;
+      this.populateAccountChoices(kind, method, existing?.accountId ?? null);
+      if (kind === 'expense') document.getElementById('field-template-method').addEventListener('change', event =>
+        this.populateAccountChoices(kind, event.currentTarget.value, null));
+    }
+  },
+
+  accountsAvailable() {
+    try { Store.getAccounts(); return true; } catch (error) { if (error.code === 'ACCOUNTS_UNAVAILABLE') return false; throw error; }
+  },
+
+  populateAccountChoices(kind, paymentMethod, selectedId) {
+    const select = document.getElementById('field-template-account'); select.replaceChildren();
+    const empty = this.element('option', '', 'No account selected'); empty.value = ''; select.append(empty);
+    const expenseKinds = ({ bank: ['bank', 'cash', 'other'], credit_card: ['credit_card'], savings: ['savings'], investments: ['investments'] })[paymentMethod] || [];
+    const kinds = kind === 'income' ? ['bank', 'savings', 'cash', 'investments', 'other'] : expenseKinds;
+    const accounts = Store.getAccounts().filter(account => kinds.includes(account.kind));
+    const current = selectedId ? Store.getAccounts({ includeArchived: true }).find(account => account.id === selectedId) : null;
+    if (current?.archived && kinds.includes(current.kind)) accounts.unshift(current);
+    accounts.forEach(account => { const option = this.element('option', '', `${account.name}${account.archived ? ' (Archived)' : ''}`);
+      option.value = account.id; option.selected = account.id === selectedId; select.append(option); });
+    select.value = selectedId || '';
   },
 
   addOptions(select, activeRecords, current, selectedId) {
@@ -492,6 +517,7 @@ const TemplatesView = {
       input.categoryItemId = document.getElementById('field-template-item').value || null;
       input.paymentMethod = document.getElementById('field-template-method').value;
     }
+    if (this.accountsAvailable()) input.accountId = document.getElementById('field-template-account').value || null;
     return App.runMutation(() => {
       if (kind === 'income') return existing ? Store.updateIncomeTemplate(existing.id, input) : Store.addIncomeTemplate(input);
       return existing ? Store.updateExpenseTemplate(existing.id, input) : Store.addExpenseTemplate(input);

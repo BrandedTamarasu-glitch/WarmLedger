@@ -3,6 +3,7 @@ const StructureView = {
   init() {
     document.getElementById('btn-add-category').addEventListener('click', event => this.showNameModal('category', null, event.currentTarget));
     document.getElementById('btn-add-earner').addEventListener('click', event => this.showNameModal('earner', null, event.currentTarget));
+    document.getElementById('btn-add-account').addEventListener('click', event => this.showAccountModal(null, event.currentTarget));
     this.render();
   },
 
@@ -17,6 +18,69 @@ const StructureView = {
     const usage = Store.getStructureUsage();
     this.renderCategories(Store.getCategories({ includeArchived: true }), usage);
     this.renderEarners(Store.getEarners({ includeArchived: true }), usage);
+    this.renderAccounts();
+  },
+
+  accountsAvailable() {
+    try { Store.getAccounts(); return true; } catch (error) { return error.code !== 'ACCOUNTS_UNAVAILABLE' ? (() => { throw error; })() : false; }
+  },
+
+  accountKindLabel(kind) {
+    return ({ bank: 'Bank', credit_card: 'Credit card', savings: 'Savings', investments: 'Investments', cash: 'Cash', other: 'Other' })[kind] || kind;
+  },
+
+  renderAccounts() {
+    const section = document.getElementById('structure-accounts-section');
+    const available = this.accountsAvailable(); section.hidden = !available;
+    if (!available) return;
+    const accounts = Store.getAccounts({ includeArchived: true }); const usage = Store.getAccountUsage();
+    const container = document.getElementById('structure-accounts'); container.replaceChildren();
+    if (!accounts.length) { container.append(this.element('p', 'muted-text', 'No accounts yet. Account selection remains optional.')); return; }
+    const list = this.element('ul', 'structure-list account-list');
+    accounts.forEach((record, index) => {
+      const item = this.element('li', 'structure-card account-card');
+      const row = this.element('div', 'structure-row'); const identity = this.element('div', 'structure-identity');
+      identity.append(this.element('span', 'structure-name', record.name),
+        this.element('span', 'account-kind', this.accountKindLabel(record.kind)),
+        this.element('span', `structure-status ${record.archived ? 'is-archived' : ''}`, record.archived ? 'Archived' : 'Active'),
+        this.element('span', 'account-usage', `${usage[record.id] || 0} saved ${usage[record.id] === 1 ? 'record or template' : 'records and templates'}`));
+      const actions = this.element('div', 'structure-actions');
+      actions.append(
+        this.actionButton('Edit', 'account', 'rename', record, '', event => this.showAccountModal(record, event.currentTarget)),
+        this.actionButton(record.archived ? 'Restore' : 'Archive', 'account', record.archived ? 'restore' : 'archive', record, '',
+          event => record.archived ? this.setAccountArchived(record, false, event.currentTarget) : this.confirmAccountArchive(record, usage[record.id] || 0, event.currentTarget)),
+        this.moveButton('↑', 'Move up', 'account', record, '', -1, index === 0),
+        this.moveButton('↓', 'Move down', 'account', record, '', 1, index === accounts.length - 1));
+      row.append(identity, actions); item.append(row); list.append(item);
+    }); container.append(list);
+  },
+
+  showAccountModal(existing, trigger) {
+    App.modalTrigger = trigger;
+    App.showModal({ title: `${existing ? 'Edit' : 'Add'} account`, buildBody: () => ModalView.fragment(
+      ModalView.field('Name', ModalView.input('field-account-name', 'text', { maxlength: '120', required: true })),
+      ModalView.field('Kind', ModalView.select('field-account-kind', [['bank', 'Bank'], ['credit_card', 'Credit card'], ['savings', 'Savings'], ['investments', 'Investments'], ['cash', 'Cash'], ['other', 'Other']], { required: true })),
+      ModalView.element('p', { className: 'field-help', text: 'Kind controls which optional account selectors can use this account.' })
+    ), submitLabel: existing ? 'Save changes' : 'Add account', onSave: () => {
+      const name = document.getElementById('field-account-name'); if (!name.reportValidity()) return false;
+      const input = { name: name.value, kind: document.getElementById('field-account-kind').value };
+      return App.runMutation(() => existing ? Store.updateAccount(existing.id, input) : Store.createAccount(input), {
+        onSuccess: result => this.afterMutation(existing ? 'Account updated.' : 'Account added.', { type: 'account', action: 'rename', id: result.id })
+      });
+    }});
+    document.getElementById('field-account-name').value = existing ? existing.name : '';
+    document.getElementById('field-account-kind').value = existing ? existing.kind : 'bank';
+  },
+
+  confirmAccountArchive(record, usage, trigger) {
+    App.modalTrigger = trigger;
+    App.showModal({ title: 'Archive account?', buildBody: () => ModalView.element('p', { text: `${usage === 1 ? '1 saved record or template uses' : `${usage} saved records and templates use`} this account. Existing assignments remain visible, but this account cannot be selected for a new assignment.` }), submitLabel: 'Archive',
+      onSave: () => App.runMutation(() => Store.updateAccount(record.id, { archived: true }), { onSuccess: () => this.afterMutation(`${record.name} archived.`, { type: 'account', action: 'restore', id: record.id }) }) });
+    const save = document.getElementById('modal-save'); save.className = 'btn btn-danger';
+  },
+
+  setAccountArchived(record, archived, trigger) {
+    App.runMutation(() => Store.updateAccount(record.id, { archived }), { onSuccess: () => this.afterMutation(`${record.name} restored.`, { type: 'account', action: 'archive', id: record.id }), onFailure: () => trigger.focus() });
   },
 
   renderCategories(categories, usage) {
@@ -166,6 +230,7 @@ const StructureView = {
     let records;
     if (type === 'category') records = Store.getCategories({ includeArchived: true });
     else if (type === 'category-item') records = Store.getCategoryItems(categoryId, { includeArchived: true });
+    else if (type === 'account') records = Store.getAccounts({ includeArchived: true });
     else records = Store.getEarners({ includeArchived: true });
     const from = records.findIndex(item => item.id === record.id); const to = from + delta;
     if (from < 0 || to < 0 || to >= records.length) return;
@@ -173,6 +238,7 @@ const StructureView = {
     App.runMutation(() => {
       if (type === 'category') return Store.reorderCategories(ids);
       if (type === 'category-item') return Store.reorderCategoryItems(categoryId, ids);
+      if (type === 'account') return Store.reorderAccounts(ids);
       return Store.reorderEarners(ids);
     }, {
       onSuccess: () => this.afterMutation(`${record.name} moved to position ${to + 1} of ${records.length}.`, {
@@ -193,7 +259,8 @@ const StructureView = {
         control.dataset.recordId === id && control.dataset.parentId === categoryId;
       let target = controls.find(control => belongsToRecord(control) && control.dataset.structureAction === action && !control.disabled);
       if (!target) target = controls.find(control => belongsToRecord(control) && !control.disabled);
-      (target || document.getElementById(type === 'earner' ? 'structure-earners-heading' : 'structure-categories-heading')).focus({ preventScroll: true });
+      const heading = type === 'earner' ? 'structure-earners-heading' : type === 'account' ? 'structure-accounts-heading' : 'structure-categories-heading';
+      (target || document.getElementById(heading)).focus({ preventScroll: true });
     });
   }
 };

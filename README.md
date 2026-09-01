@@ -12,7 +12,7 @@ See [ROADMAP.md](ROADMAP.md) for planned work and the boundaries of future phase
 - Monthly paychecks, expenses, allocations, paycheck funding plans, and range-aware dashboard reporting with accessible tables, CSV, and print output.
 - Add and edit paycheck and expense records.
 - Reorder monthly paychecks and reorder expenses within their displayed category using keyboard-accessible controls.
-- A **Structure** view for adding, renaming, archiving, restoring, and reordering categories, preset expense items, and earners.
+- A **Structure** view for adding, renaming, archiving, restoring, and reordering categories, preset expense items, earners, and schema-version-6 local account labels.
 - A **Templates** view for recurring income and expenses with monthly, twice-monthly, weekly, and biweekly schedules.
 - Preview-first recurring generation that shows additions and skips before making one atomic change.
 - A compact, write-free **Monthly Review** dashboard showing recurring work, missing actuals, expense funding, checklist readiness, and balance at a glance, with details available on demand.
@@ -29,6 +29,8 @@ See [ROADMAP.md](ROADMAP.md) for planned work and the boundaries of future phase
 - Render-scoped Dashboard preparation that shares one detached monthly projection across reports, tables, charts, and CSV generation instead of repeatedly scanning the same range.
 
 Archived Structure choices remain visible in historical records and totals but are hidden when creating new records. Archiving does not delete or rewrite prior months. Warm Ledger prevents archiving the last active category or earner so new expenses and paychecks can still be created.
+
+For schema-version-6 ledgers, **Structure** also manages an optional ordered account catalog. Paycheck and recurring-income forms offer a compatible **Deposit account**, while expense and recurring-expense forms offer a **Payment account** compatible with the saved payment method. **No account selected** is always valid and no account—including cash—is selected automatically. An archived account remains visible when editing a record or template that already references it, but it cannot be newly assigned. Account names are local planning labels only; they do not connect to a bank, prove payment, track balances, or reconcile activity.
 
 Paycheck and expense order is stored as part of each month and survives reload, backup/restore, and copying a month. Expense movement stays within its displayed historical category group and does not change its category or any financial values.
 
