@@ -68,6 +68,15 @@ test('browser evidence proves exact-money migration states and v4 recovery paths
   assert.match(source, /reload\.schemaVersion === 5/);
 });
 
+test('browser evidence proves Saved-Record Finder is transient, routable, and stale-safe', () => {
+  assert.match(source, /savedRecordFinderTransientRouteStaleSafe/);
+  assert.match(source, /dashboard-record-finder-form/);
+  assert.match(source, /localStorage\.getItem\(primaryKey\) === finderBytes/);
+  assert.match(source, /document\.activeElement\.dataset\.editType === 'expense'/);
+  assert.match(source, /Store\.updateExpense\(month, unfunded\.id/);
+  assert.match(source, /localStorage\.getItem\(primaryKey\) === staleFinderBytes/);
+});
+
 test('browser evidence toggles and reloads one eligible entered-zero Manual Cleared record', () => {
   assert.match(source, /manualClearedZeroToggleFocusReload/);
   assert.match(source, /Passive Manual Cleared render changed storage bytes/);

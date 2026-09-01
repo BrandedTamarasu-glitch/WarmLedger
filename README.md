@@ -9,14 +9,17 @@ See [ROADMAP.md](ROADMAP.md) for planned work and the boundaries of future phase
 
 ## Current features
 
-- Monthly paychecks, expenses, allocations, paycheck funding plans, and dashboard summaries.
+- Monthly paychecks, expenses, allocations, paycheck funding plans, and range-aware dashboard reporting with accessible tables, CSV, and print output.
 - Add and edit paycheck and expense records.
 - Reorder monthly paychecks and reorder expenses within their displayed category using keyboard-accessible controls.
 - A **Structure** view for adding, renaming, archiving, restoring, and reordering categories, preset expense items, and earners.
 - A **Templates** view for recurring income and expenses with monthly, twice-monthly, weekly, and biweekly schedules.
 - Preview-first recurring generation that shows additions and skips before making one atomic change.
-- A compact, write-free **Monthly Review** dashboard showing recurring work, missing actuals, expense funding, and balance at a glance, with details available on demand.
+- A compact, write-free **Monthly Review** dashboard showing recurring work, missing actuals, expense funding, checklist readiness, and balance at a glance, with details available on demand.
+- Manual cleared-record marks for eligible saved records, kept explicitly separate from payment confirmation, bank verification, reconciliation, and month close.
+- Saved-only future-month forecasting, upcoming bills and paydays, a transient Saved-Record Finder, and a bounded saved-month review queue.
 - A write-free **Data Health** view for incomplete or unusual ledger records and compare-only backup analysis.
+- Explicit, preview-first migration of eligible ledgers to exact integer-cent persistence, protected by a verified safety snapshot.
 - Internal recurrence safeguards that keep deliberately removed generated occurrences from returning unexpectedly.
 - Stable structural IDs with historical labels preserved in existing monthly records.
 - Versioned JSON backup and restore with validation and preview.
@@ -46,9 +49,9 @@ The initially closed **Upcoming bills & paydays** disclosure shows only saved pa
 
 ### Find a saved record
 
-The Saved-Record Finder is complete locally and not yet published. It is an initially closed Dashboard disclosure with a submit-only search form and a transient **Clear search** action. Search scans only saved paychecks and expenses across saved months. A trimmed query must contain 1–120 characters. Matching is a literal, case-insensitive substring check: income searches saved earner labels, while expenses search saved names and categories. Optional kind and strict inclusive `YYYY-MM` bounds narrow the scan. Results remain in canonical month order, with paychecks before expenses and each kind in saved array order; at most 200 presentation-safe results are returned, with a truthful full count and truncation notice.
+The Saved-Record Finder is an initially closed Dashboard disclosure with a submit-only search form and a transient **Clear search** action. Search scans only saved paychecks and expenses across saved months. A trimmed query must contain 1–120 characters. Matching is a literal, case-insensitive substring check: income searches saved earner labels, while expenses search saved names and categories. Optional kind and strict inclusive `YYYY-MM` bounds narrow the scan. Results remain in canonical month order, with paychecks before expenses and each kind in saved array order; at most 200 presentation-safe results are returned, with a truthful full count and truncation notice.
 
-The query and results will stay local and transient. They will not be placed in storage, the URL, history, logs, errors, exports, reports, screenshots, browser evidence, analytics, snapshots, or backups, and searching will not write, migrate, generate identifiers, advance Store generations, or alter live data. The finder will not search IDs, amounts, dates, payment methods, templates, notes, occurrence keys, funding, archived catalog labels, recurring exceptions, snapshots, or backups. It will use literal matching only—no regular expressions, fuzzy matching, stemming, scoring, ranking, suggestions, saved queries, or search history.
+The query and results stay local and transient. They are not placed in storage, the URL, history, logs, errors, exports, reports, screenshots, browser-evidence artifacts, analytics, snapshots, or backups, and searching does not write, migrate, generate identifiers, advance Store generations, or alter live data. The finder does not search IDs, amounts, dates, payment methods, templates, notes, occurrence keys, funding, archived catalog labels, recurring exceptions, snapshots, or backups. It uses literal matching only—no regular expressions, fuzzy matching, stemming, scoring, ranking, suggestions, saved queries, or search history.
 
 Each result shows only its saved identity, kind, month, neutral saved date or **Date needed**, planned amount, and actual amount or **Not entered**. **Open** revalidates the exact current result before routing to that record's existing Budget **Edit** control; it does not open an editor or change the ledger. Finding or opening a result makes no claim about payment, due dates, cleared state, funding, accounts, balances, reconciliation, or month lifecycle.
 

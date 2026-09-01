@@ -456,6 +456,35 @@ const SCENARIO = `(async () => {
     document.getElementById('dashboard-print-context').textContent.includes('Actual'),
     'Dashboard print context did not preserve range and basis.');
   assert(localStorage.getItem(primaryKey) === dashboardBytes, 'Dashboard basis, CSV, or print changed storage bytes.');
+
+  const finder = document.getElementById('dashboard-record-finder'); finder.open = true;
+  const finderQuery = document.getElementById('dashboard-record-query');
+  const finderBytes = localStorage.getItem(primaryKey); finderQuery.value = 'Synthetic long unfunded bill';
+  document.getElementById('dashboard-record-finder-form').requestSubmit(); await settle();
+  let finderAction = document.querySelector('.dashboard-record-result-action');
+  assert(finderAction && document.getElementById('dashboard-record-results').textContent.includes('1 of 1 matching saved record shown.'),
+    'Saved-record finder did not render the expected bounded result.');
+  assert(localStorage.getItem(primaryKey) === finderBytes, 'Saved-record search changed storage bytes.');
+  document.getElementById('dashboard-record-clear').click(); await settle();
+  assert(document.activeElement === finderQuery && !document.querySelector('.dashboard-record-result-action') &&
+    localStorage.getItem(primaryKey) === finderBytes, 'Clearing saved-record search changed bytes or lost query focus.');
+
+  finderQuery.value = 'Synthetic long unfunded bill';
+  document.getElementById('dashboard-record-finder-form').requestSubmit(); await settle();
+  finderAction = document.querySelector('.dashboard-record-result-action'); finderAction.click(); await settle();
+  assert(document.getElementById('view-budget').classList.contains('active') &&
+    document.activeElement.dataset.editType === 'expense' && document.activeElement.dataset.recordId === unfunded.id,
+  'Saved-record result did not route focus to the existing expense Edit control.');
+
+  App.switchView('dashboard'); finder.open = true; DashboardView.rerunSavedRecordSearch(); await settle();
+  const staleFinderAction = document.querySelector('.dashboard-record-result-action');
+  Store.updateExpense(month, unfunded.id, { plannedAmount: 12 });
+  const staleFinderBytes = localStorage.getItem(primaryKey); staleFinderAction.click(); await settle();
+  assert(document.getElementById('view-dashboard').classList.contains('active') &&
+    document.getElementById('app-status').textContent.includes('changed or is no longer') &&
+    document.activeElement.classList.contains('dashboard-record-result-action') &&
+    localStorage.getItem(primaryKey) === staleFinderBytes,
+  'Stale saved-record result did not refresh safely and restore result focus without writing.');
   App.switchView('data-health'); await settle();
   return { month, passiveActionsByteExact: true, monthlyReviewEdit: true, expenseDeleteCancelUndoStale: true,
     generatedTombstoneUndo: true, dataHealthPassiveRoutes: true, actualZeroPreviewCancelApply: true, actualApplyFailureAlertFocus: true,
@@ -464,7 +493,8 @@ const SCENARIO = `(async () => {
     payPeriodsAllocationsReconcileHostileSafe: true, payPeriodsExactCanonicalCollapsedRoutes: true,
     payPeriodsFourDigitFunding: true, payPeriodsStaleAndZeroPaycheckRoutes: true,
     previewCancelApply: true, backupRoundTrip: true, dashboardBasisCsvPrintPassive: true,
-    dashboardSavedMonthForecastPassive: true, exactMoneyEligiblePreviewCancelConfirm: true,
+    dashboardSavedMonthForecastPassive: true, savedRecordFinderTransientRouteStaleSafe: true,
+    exactMoneyEligiblePreviewCancelConfirm: true,
     exactMoneyV4BackupImportSnapshotRoundTrip: true, manualClearedZeroToggleFocusReload: true,
     clearedRecordId: income.id, blockedV3Bytes,
     generatedIncome: Store.getMonth(month).paychecks.length,

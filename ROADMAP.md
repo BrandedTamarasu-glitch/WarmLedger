@@ -121,7 +121,7 @@ Status: published, including spending basis, CSV, print, saved-month forecasting
 
 ### Saved-Record Finder
 
-Status: complete locally; not yet published.
+Status: published on 2026-09-01.
 
 - Add one bounded, deterministic, detached Store scan over saved monthly paychecks and expenses and one initially closed Dashboard disclosure.
 - Use submit-only literal, case-insensitive substring matching over saved income earner labels and saved expense names and categories, with optional kind and inclusive month filters.
