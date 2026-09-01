@@ -402,6 +402,57 @@ test('schema v5 policy and format-v1 backup/snapshot codecs round trip only expl
     makeV3WithTemplates(), '2026-01-15T12:00:00.000Z'))));
 });
 
+test('schema v6 migration adds only empty accounts and null references without changing schema 5 semantics', () => {
+  const v5 = Schema.migrateV4ToV5(Schema.migrateV3ToV4ExactMoney(makeV3WithTemplates()));
+  v5.months[Object.keys(v5.months)[0]].expenses[0].cleared = true;
+  const before = JSON.stringify(v5);
+  const v6 = Schema.migrateV5ToV6(v5);
+  assert.equal(v6.schemaVersion, 6);
+  assert.deepEqual(v6.settings.accounts, []);
+  assert.equal(v6.templates.income.every(item => item.accountId === null), true);
+  assert.equal(v6.templates.expenses.every(item => item.accountId === null), true);
+  assert.equal(Object.values(v6.months).every(month => [...month.paychecks, ...month.expenses].every(item => item.accountId === null)), true);
+  assert.equal(JSON.stringify(v5), before);
+  assert.equal(Schema.validateV6(v6), true);
+  expectCode('UNSUPPORTED_SCHEMA_VERSION', () => Schema.migrateV5ToV6(Schema.migrateV3ToV4ExactMoney(makeV3WithTemplates())));
+});
+
+test('schema v6 validates account references, payment compatibility, and archived historical references', () => {
+  const persisted = Schema.migrateV5ToV6(Schema.migrateV4ToV5(Schema.migrateV3ToV4ExactMoney(makeV3WithTemplates())));
+  persisted.settings.accounts.push(
+    { id: 'account-bank', name: 'House Checking', kind: 'bank', archived: true },
+    { id: 'account-card', name: 'House Card', kind: 'credit_card', archived: false }
+  );
+  persisted.templates.income[0].accountId = 'account-bank';
+  persisted.templates.expenses[0].accountId = 'account-bank';
+  const month = persisted.months[Object.keys(persisted.months)[0]];
+  month.paychecks[0].accountId = 'account-bank'; month.expenses[0].accountId = 'account-bank';
+  assert.equal(Schema.validateV6(persisted), true);
+  const dangling = structuredClone(persisted); dangling.templates.income[0].accountId = 'account-missing';
+  expectCode('DANGLING_ACCOUNT_REFERENCE', () => Schema.validateV6(dangling));
+  const incompatibleExpense = structuredClone(persisted); incompatibleExpense.months[Object.keys(incompatibleExpense.months)[0]].expenses[0].accountId = 'account-card';
+  expectCode('INCOMPATIBLE_ACCOUNT_KIND', () => Schema.validateV6(incompatibleExpense));
+  const incompatibleIncome = structuredClone(persisted); incompatibleIncome.templates.income[0].accountId = 'account-card';
+  expectCode('INCOMPATIBLE_ACCOUNT_KIND', () => Schema.validateV6(incompatibleIncome));
+  const duplicate = structuredClone(persisted); duplicate.settings.accounts.push({ id: 'account-other', name: 'House Checking', kind: 'other', archived: false });
+  expectCode('DUPLICATE_VALUE', () => Schema.validateV6(duplicate));
+});
+
+test('schema v6 active, backup, snapshot, and sharded codecs preserve accounts and references', () => {
+  const persisted = Schema.migrateV5ToV6(Schema.migrateV4ToV5(Schema.migrateV3ToV4ExactMoney(makeV3WithTemplates())));
+  persisted.settings.accounts.push({ id: 'account-bank', name: 'House Checking', kind: 'bank', archived: false });
+  persisted.templates.income[0].accountId = 'account-bank';
+  const runtime = Schema.hydrateV6ExactMoney(persisted);
+  assert.deepEqual(Schema.dehydrateV6ExactMoney(runtime), persisted);
+  assert.deepEqual(Schema.parseV6Active(JSON.stringify(persisted)), runtime);
+  const backup = Schema.buildV6Backup(runtime, '2026-01-15T12:00:00.000Z');
+  assert.equal(backup.formatVersion, 1); assert.deepEqual(Schema.parseV6Backup(JSON.stringify(backup)).data, runtime);
+  const snapshot = Schema.buildV6Snapshot(runtime, { createdAt: '2026-01-15T12:00:00.000Z', localDate: '2026-01-15', reason: 'pre-accounts' });
+  assert.equal(snapshot.formatVersion, 1); assert.deepEqual(Schema.parseV6Snapshot(JSON.stringify(snapshot)).data, runtime);
+  const parts = Schema.buildShardedFragments(runtime, 6);
+  assert.deepEqual(Schema.assembleShardedActiveData(parts.global, parts.months, 6), runtime);
+});
+
 test('legacy migration rejects missing months and backfills missing month collections', () => {
   expectCode('MISSING_FIELD', () => Schema.migrateActive({ categories: [], settings: { earners: [] } }));
   const legacy = {
@@ -600,15 +651,15 @@ test('classic-script and CommonJS expose the exact same public API and behavior'
   const expectedKeys = [
     'ACTIVE_SCHEMA_POLICY', 'BACKUP_FORMAT', 'BACKUP_FORMAT_VERSION', 'DataError', 'SCHEMA_VERSION', 'SNAPSHOT_FORMAT',
     'SNAPSHOT_FORMAT_VERSION', 'V2_SCHEMA_VERSION', 'V3_SCHEMA_POLICY', 'V3_SCHEMA_VERSION', 'V4_SCHEMA_POLICY', 'V4_SCHEMA_VERSION',
-    'V5_SCHEMA_POLICY', 'V5_SCHEMA_VERSION',
+    'V5_SCHEMA_POLICY', 'V5_SCHEMA_VERSION', 'V6_SCHEMA_POLICY', 'V6_SCHEMA_VERSION',
     'assembleShardedActiveData', 'buildActiveData', 'buildBackup', 'buildShardedFragments', 'buildSnapshot',
-    'buildV4Backup', 'buildV4Snapshot', 'buildV5Backup', 'buildV5Snapshot',
-    'centsToDecimalMoney', 'clone', 'decimalMoneyToCents', 'dehydrateV4ExactMoney', 'dehydrateV5ExactMoney',
-    'hydrateV4ExactMoney', 'hydrateV5ExactMoney', 'migrateActive', 'migrateToV2', 'migrateToV3',
-    'migrateV3ToV4ExactMoney', 'migrateV4ToV5', 'parseActive', 'parseActiveData', 'parseBackup', 'parseSnapshot',
-    'parseV4Active', 'parseV4Backup', 'parseV4Snapshot', 'parseV5Active', 'parseV5Backup', 'parseV5Snapshot',
+    'buildV4Backup', 'buildV4Snapshot', 'buildV5Backup', 'buildV5Snapshot', 'buildV6Backup', 'buildV6Snapshot',
+    'centsToDecimalMoney', 'clone', 'decimalMoneyToCents', 'dehydrateV4ExactMoney', 'dehydrateV5ExactMoney', 'dehydrateV6ExactMoney',
+    'hydrateV4ExactMoney', 'hydrateV5ExactMoney', 'hydrateV6ExactMoney', 'migrateActive', 'migrateToV2', 'migrateToV3',
+    'migrateV3ToV4ExactMoney', 'migrateV4ToV5', 'migrateV5ToV6', 'parseActive', 'parseActiveData', 'parseBackup', 'parseSnapshot',
+    'parseV4Active', 'parseV4Backup', 'parseV4Snapshot', 'parseV5Active', 'parseV5Backup', 'parseV5Snapshot', 'parseV6Active', 'parseV6Backup', 'parseV6Snapshot',
     'validateActive', 'validateGlobalFragment', 'validateMonthFragment', 'validateShardedFragments',
-    'validateV2', 'validateV3', 'validateV4', 'validateV5'
+    'validateV2', 'validateV3', 'validateV4', 'validateV5', 'validateV6'
   ].sort();
   assert.deepEqual(Object.keys(Schema).sort(), expectedKeys);
   assert.deepEqual(Array.from(Object.keys(browserApi).sort()), expectedKeys);

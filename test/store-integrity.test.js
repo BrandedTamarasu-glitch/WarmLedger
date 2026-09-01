@@ -21,6 +21,86 @@ function code(expected, callback) {
   assert.throws(callback, error => error instanceof StoreError && error.code === expected);
 }
 
+function makeV5Budget() {
+  return Schema.migrateV4ToV5(Schema.migrateV3ToV4ExactMoney(makeV3Budget()));
+}
+
+test('accounts migration is schema-5-only, preview-write-free, generation-bound, and reloadable', () => {
+  const persisted = makeV5Budget();
+  const storage = new MemoryStorage({ [STORAGE_KEY]: JSON.stringify(persisted) });
+  const { store } = loaded({ storage, prefix: 'accounts' });
+  const before = storage.getItem(STORAGE_KEY); storage.operations.length = 0;
+  const preview = store.previewAccountsMigration();
+  assert.deepEqual(Object.keys(preview).sort(), ['expenseCount', 'generation', 'paycheckCount', 'state', 'templateCount']);
+  assert.equal(preview.state, 'eligible'); assert.equal(Object.isFrozen(preview), true);
+  assert.equal(storage.operations.some(item => item.op !== 'getItem' && item.op !== 'key'), false);
+  assert.equal(storage.getItem(STORAGE_KEY), before);
+  code('INVALID_ACCOUNTS_MIGRATION_PREVIEW', () => store.commitAccountsMigration({ ...preview }));
+  const result = store.commitAccountsMigration(preview);
+  assert.equal(result.schemaVersion, 3); assert.deepEqual(result.settings.accounts, []);
+  assert.equal(JSON.parse(storage.getItem(STORAGE_KEY)).schemaVersion, 6);
+  const snapshotKeys = Array.from({ length: storage.length }, (_, index) => storage.key(index)).filter(key => key.startsWith(SNAPSHOT_PREFIX));
+  assert.equal(snapshotKeys.length, 1);
+  const snapshot = JSON.parse(storage.getItem(snapshotKeys[0]));
+  assert.equal(snapshot.reason, 'pre-accounts'); assert.equal(snapshot.data.schemaVersion, 5);
+  const reloaded = createStore({ storage, now: makeClock(), uuid: () => 'accounts-reload' });
+  assert.equal(reloaded.load().state, 'ready'); assert.equal(reloaded.getStatus().residentSchemaVersion, 6);
+  assert.deepEqual(reloaded.getData().settings.accounts, []);
+  code('ACCOUNTS_ALREADY_MIGRATED', () => reloaded.previewAccountsMigration());
+});
+
+test('accounts migration blocks schemas 3 and 4 with exact copy and rejects stale previews without writes', () => {
+  const v3 = loaded();
+  assert.deepEqual(v3.store.getAccountsMigrationSummary(), { state: 'blocked', paycheckCount: 0, expenseCount: 0, templateCount: 0,
+    message: 'Accounts require the current manual-clearing data format. Complete the earlier storage upgrades before adding accounts.' });
+  code('ACCOUNTS_MIGRATION_REQUIRES_MANUAL_CLEARING', () => v3.store.previewAccountsMigration());
+  const v4Storage = new MemoryStorage({ [STORAGE_KEY]: JSON.stringify(Schema.migrateV3ToV4ExactMoney(makeV3Budget())) });
+  const v4 = loaded({ storage: v4Storage });
+  code('ACCOUNTS_MIGRATION_REQUIRES_MANUAL_CLEARING', () => v4.store.previewAccountsMigration());
+
+  const storage = new MemoryStorage({ [STORAGE_KEY]: JSON.stringify(makeV5Budget()) });
+  const migrated = loaded({ storage }); const preview = migrated.store.previewAccountsMigration();
+  migrated.store.updateAllocation('2026-01', 'savings', 401); storage.operations.length = 0;
+  code('STALE_ACCOUNTS_MIGRATION_PREVIEW', () => migrated.store.commitAccountsMigration(preview));
+  assert.equal(storage.operations.some(item => item.op === 'setItem' && item.key === STORAGE_KEY), false);
+  assert.equal(storage.operations.some(item => item.op === 'setItem' && item.key.startsWith(SNAPSHOT_PREFIX)), false);
+});
+
+test('accounts migration primary-write failure preserves active bytes and live schema-5 state', () => {
+  const persisted = makeV5Budget(); const storage = new MemoryStorage({ [STORAGE_KEY]: JSON.stringify(persisted) });
+  const { store } = loaded({ storage }); const preview = store.previewAccountsMigration();
+  const beforeRaw = storage.getItem(STORAGE_KEY); const beforeData = store.getData();
+  const originalSet = storage.setItem.bind(storage);
+  storage.setItem = (key, value) => { if (key === STORAGE_KEY) throw new Error('blocked'); originalSet(key, value); };
+  code('PRIMARY_WRITE_FAILED', () => store.commitAccountsMigration(preview));
+  storage.setItem = originalSet;
+  assert.equal(storage.getItem(STORAGE_KEY), beforeRaw); assert.deepEqual(store.getData(), beforeData);
+  assert.equal(store.getStatus().residentSchemaVersion, 5);
+});
+
+test('accounts migration safely activates schema 6 in sharded layout and preserves backup/import/restore round trips', () => {
+  const storage = new MemoryStorage({ [STORAGE_KEY]: JSON.stringify(makeV5Budget()) });
+  const { store } = loaded({ storage, prefix: 'accounts-sharded' });
+  store.commitShardedPersistenceMigration(store.previewShardedPersistenceMigration());
+  const rootBefore = storage.getItem(STORAGE_KEY);
+  store.commitAccountsMigration(store.previewAccountsMigration());
+  const root = StorageEngine.parseRootPointer(storage.getItem(STORAGE_KEY));
+  assert.notEqual(storage.getItem(STORAGE_KEY), rootBefore); assert.equal(root.residentSchemaVersion, 6);
+  const reloaded = createStore({ storage, now: makeClock(), uuid: () => 'accounts-sharded-reload' });
+  assert.equal(reloaded.load().state, 'ready'); assert.equal(reloaded.getStatus().residentSchemaVersion, 6);
+  const backupText = reloaded.exportData(); assert.equal(JSON.parse(backupText).data.schemaVersion, 6);
+  const importedStorage = new MemoryStorage({ [STORAGE_KEY]: storage.getItem(STORAGE_KEY) });
+  for (let index = 0; index < storage.length; index += 1) {
+    const key = storage.key(index); if (key !== STORAGE_KEY) importedStorage.setItem(key, storage.getItem(key));
+  }
+  const imported = createStore({ storage: importedStorage, now: makeClock(), uuid: () => 'accounts-import' });
+  imported.load(); imported.importData(backupText);
+  assert.equal(imported.getStatus().residentSchemaVersion, 6);
+  const preAccounts = imported.listSnapshotMetadata().find(item => item.reason === 'pre-accounts');
+  assert.ok(preAccounts); imported.restoreSnapshot(preAccounts.id);
+  assert.equal(imported.getStatus().residentSchemaVersion, 5);
+});
+
 test('semantic no-ops and passive Store paths perform no writes and never acquire the lock', () => {
   const { store, storage } = loaded();
   store.updateExpense('2026-01', 'expense-example-1', { actualAmount: 1200 });

@@ -42,9 +42,10 @@ test('journals validate transitions and reject duplicate, mixed and malformed re
  bad('INVALID_BASE_GENERATION',()=>Engine.buildJournal({txId:G,baseMode:'sharded',baseGeneration:null,nextGeneration:G,residentSchemaVersion:3,stagedKeys:[],startedAt:AT,expiresAt:1}));
  const mixed={...j,txId:G2};bad('MIXED_GENERATION',()=>Engine.parseJournal(json(mixed)));const duplicate={...j,stagedKeys:[j.stagedKeys[0],j.stagedKeys[0]]};bad('DUPLICATE_KEY',()=>Engine.parseJournal(json(duplicate)));bad('INVALID_KEY_REFERENCE',()=>Engine.buildJournal({...j,stagedKeys:[Engine.globalKey(G2)]}));
 });
-test('fragment split and assembly round trip resident schemas 3, 4 and 5 including null and entered zero',()=>{
+test('fragment split and assembly round trip resident schemas 3 through 6 including null and entered zero',()=>{
  const v3=makeV3Budget();v3.months['2026-01'].expenses[0].actualAmount=null;v3.months['2026-01'].paychecks[0].actualAmount=0;
- const versions=[v3,Schema.migrateV3ToV4ExactMoney(v3),Schema.migrateV4ToV5(Schema.migrateV3ToV4ExactMoney(v3))];
+ const v4=Schema.migrateV3ToV4ExactMoney(v3),v5=Schema.migrateV4ToV5(v4),v6=Schema.migrateV5ToV6(v5);
+ const versions=[v3,v4,v5,v6];
  for(const runtime of versions){const version=runtime.schemaVersion,parts=Schema.buildShardedFragments(runtime,version);assert.deepEqual(parts.monthOrder,['2026-01']);const assembled=Schema.assembleShardedActiveData(parts.global,parts.months,version);assert.equal(assembled.months['2026-01'].expenses[0].actualAmount,null);assert.equal(assembled.months['2026-01'].paychecks[0].actualAmount,0);Schema.validateGlobalFragment(parts.global,version);Schema.validateMonthFragment(parts.global,'2026-01',parts.months['2026-01'],version);}
  const parts=Schema.buildShardedFragments(v3,3);const extra={...parts.months['2026-01'],bytes:1};bad('UNKNOWN_FIELD',()=>Schema.validateMonthFragment(parts.global,'2026-01',extra,3));bad('UNSUPPORTED_SCHEMA_VERSION',()=>Schema.validateGlobalFragment({...parts.global,schemaVersion:4},3));
 });

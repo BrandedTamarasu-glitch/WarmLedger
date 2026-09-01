@@ -12,6 +12,7 @@
   const V3_SCHEMA_VERSION = 3;
   const V4_SCHEMA_VERSION = 4;
   const V5_SCHEMA_VERSION = 5;
+  const V6_SCHEMA_VERSION = 6;
   const LEGACY_SCHEMA_VERSION = 1;
   const BACKUP_FORMAT = 'zerobudget-backup';
   const BACKUP_FORMAT_VERSION = 1;
@@ -24,7 +25,12 @@
   const ALLOCATION_KEYS = ['savings', 'credit_card_debt', 'investments'];
   const V3_PAYCHECK_KEYS = ['id', 'earnerId', 'earner', 'plannedAmount', 'actualAmount', 'date', 'sourceTemplateId', 'occurrenceKey'];
   const V3_EXPENSE_KEYS = ['id', 'categoryId', 'category', 'categoryItemId', 'name', 'date', 'paycheckAmounts', 'plannedAmount', 'actualAmount', 'paymentMethod', 'sourceTemplateId', 'occurrenceKey'];
-  const SNAPSHOT_REASONS = new Set(['daily', 'pre-import', 'pre-sharding', 'pre-reset']);
+  const V3_INCOME_TEMPLATE_KEYS = ['id', 'name', 'earnerId', 'plannedAmount', 'enabled', 'archived', 'startDate', 'endDate', 'recurrence'];
+  const V3_EXPENSE_TEMPLATE_KEYS = ['id', 'name', 'categoryId', 'categoryItemId', 'plannedAmount', 'paymentMethod', 'enabled', 'archived', 'startDate', 'endDate', 'recurrence'];
+  const ACCOUNT_KINDS = new Set(['bank', 'credit_card', 'savings', 'investments', 'cash', 'other']);
+  const INCOME_ACCOUNT_KINDS = new Set(['bank', 'savings', 'cash', 'investments', 'other']);
+  const PAYMENT_ACCOUNT_KINDS = Object.freeze({ bank: new Set(['bank', 'cash', 'other']), credit_card: new Set(['credit_card']), savings: new Set(['savings']), investments: new Set(['investments']) });
+  const SNAPSHOT_REASONS = new Set(['daily', 'pre-import', 'pre-sharding', 'pre-reset', 'pre-accounts']);
   const DEFAULT_CATEGORIES = Object.freeze([
     'Housing', 'Transportation', 'Insurance', 'Food', 'Pets', 'Personal Care',
     'Miscellaneous', 'Debt', 'Taxes', 'Subscriptions', 'Other'
@@ -797,6 +803,63 @@
     return clone(persisted);
   }
 
+  function validateV6Shape(input, persisted) {
+    clone(input);
+    const expectedVersion = persisted ? V6_SCHEMA_VERSION : V3_SCHEMA_VERSION;
+    if (!isPlainObject(input) || input.schemaVersion !== expectedVersion) fail('UNSUPPORTED_SCHEMA_VERSION', '$.schemaVersion');
+    expectExactKeys(input, ['schemaVersion', 'categories', 'settings', 'templates', 'months'], '$');
+    expectExactKeys(input.settings, ['earners', 'accounts'], '$.settings');
+    expectArray(input.settings.accounts, '$.settings.accounts', 50);
+    const accounts = new Map(); const names = [];
+    input.settings.accounts.forEach((account, index) => {
+      const path = `$.settings.accounts[${index}]`;
+      expectExactKeys(account, ['id', 'name', 'kind', 'archived'], path); expectIdentifier(account.id, `${path}.id`);
+      if (accounts.has(account.id)) fail('DUPLICATE_ID', `${path}.id`);
+      expectString(account.name, `${path}.name`, 120);
+      if (!ACCOUNT_KINDS.has(account.kind)) fail('INVALID_ACCOUNT_KIND', `${path}.kind`);
+      expectBoolean(account.archived, `${path}.archived`); accounts.set(account.id, account); names.push(account.name);
+    });
+    assertUnique(names, '$.settings.accounts');
+    const validateRef = (accountId, path, allowedKinds) => {
+      if (accountId === null) return;
+      expectIdentifier(accountId, path); const account = accounts.get(accountId);
+      if (!account) fail('DANGLING_ACCOUNT_REFERENCE', path);
+      if (!allowedKinds.has(account.kind)) fail('INCOMPATIBLE_ACCOUNT_KIND', path);
+    };
+    input.templates.income.forEach((template, index) => {
+      const path = `$.templates.income[${index}]`; expectExactKeys(template, [...V3_INCOME_TEMPLATE_KEYS, 'accountId'], path);
+      validateRef(template.accountId, `${path}.accountId`, INCOME_ACCOUNT_KINDS);
+    });
+    input.templates.expenses.forEach((template, index) => {
+      const path = `$.templates.expenses[${index}]`; expectExactKeys(template, [...V3_EXPENSE_TEMPLATE_KEYS, 'accountId'], path);
+      validateRef(template.accountId, `${path}.accountId`, PAYMENT_ACCOUNT_KINDS[template.paymentMethod] || new Set());
+    });
+    for (const [monthKey, month] of Object.entries(input.months)) {
+      const monthPath = childPath('$.months', monthKey);
+      month.paychecks.forEach((paycheck, index) => {
+        const path = `${monthPath}.paychecks[${index}]`; expectExactKeys(paycheck, [...V3_PAYCHECK_KEYS, 'cleared', 'accountId'], path);
+        validateRef(paycheck.accountId, `${path}.accountId`, INCOME_ACCOUNT_KINDS);
+      });
+      month.expenses.forEach((expense, index) => {
+        const path = `${monthPath}.expenses[${index}]`; expectExactKeys(expense, [...V3_EXPENSE_KEYS, 'cleared', 'accountId'], path);
+        validateRef(expense.accountId, `${path}.accountId`, PAYMENT_ACCOUNT_KINDS[expense.paymentMethod] || new Set());
+      });
+    }
+    const base = clone(input); base.schemaVersion = persisted ? V5_SCHEMA_VERSION : V3_SCHEMA_VERSION; delete base.settings.accounts;
+    base.templates.income.forEach(template => { delete template.accountId; }); base.templates.expenses.forEach(template => { delete template.accountId; });
+    for (const month of Object.values(base.months)) { month.paychecks.forEach(paycheck => { delete paycheck.accountId; }); month.expenses.forEach(expense => { delete expense.accountId; }); }
+    validateV5Shape(base, persisted); return true;
+  }
+  function validateV6(input) { return validateV6Shape(input, true); }
+  function migrateV5ToV6(input) {
+    validateV5(input); const migrated = clone(input); migrated.schemaVersion = V6_SCHEMA_VERSION; migrated.settings.accounts = [];
+    migrated.templates.income.forEach(template => { template.accountId = null; }); migrated.templates.expenses.forEach(template => { template.accountId = null; });
+    for (const month of Object.values(migrated.months)) { month.paychecks.forEach(paycheck => { paycheck.accountId = null; }); month.expenses.forEach(expense => { expense.accountId = null; }); }
+    validateV6(migrated); return clone(migrated);
+  }
+  function hydrateV6ExactMoney(input) { validateV6(input); const hydrated = transformV3Money(input, centsToDecimalMoney, V3_SCHEMA_VERSION); validateV6Shape(hydrated, false); return clone(hydrated); }
+  function dehydrateV6ExactMoney(input) { validateV6Shape(input, false); const persisted = transformV3Money(input, decimalMoneyToCents, V6_SCHEMA_VERSION); validateV6(persisted); return clone(persisted); }
+
   function migrateToV1(input) {
     const migrated = clone(input);
     if (!isPlainObject(migrated)) fail('EXPECTED_OBJECT', '$');
@@ -1112,8 +1175,16 @@
     return { ...envelope, data: hydrateV5ExactMoney(envelope.data) };
   }
 
+  function canonicalizeV6(input) { if (isPlainObject(input) && input.schemaVersion === V6_SCHEMA_VERSION) { validateV6(input); return clone(input); } return dehydrateV6ExactMoney(input); }
+  function parseV6Active(text) { const persisted = parseJson(text, '$'); validateV6(persisted); return hydrateV6ExactMoney(persisted); }
+  function buildV6Backup(data, exportedAt) { return buildCanonicalBackup(data, exportedAt, canonicalizeV6); }
+  function parseV6Backup(text) { const envelope = parseCanonicalBackup(text, canonicalizeV6); return { ...envelope, data: hydrateV6ExactMoney(envelope.data) }; }
+  function buildV6Snapshot(data, metadata) { return buildCanonicalSnapshot(data, metadata, canonicalizeV6); }
+  function parseV6Snapshot(text) { const envelope = parseCanonicalSnapshot(text, canonicalizeV6); return { ...envelope, data: hydrateV6ExactMoney(envelope.data) }; }
+
   function parseActiveData(text) {
     const parsed = parseJson(text, '$');
+    if (isPlainObject(parsed) && parsed.schemaVersion === V6_SCHEMA_VERSION) { validateV6(parsed); return hydrateV6ExactMoney(parsed); }
     if (isPlainObject(parsed) && parsed.schemaVersion === V5_SCHEMA_VERSION) {
       validateV5(parsed);
       return hydrateV5ExactMoney(parsed);
@@ -1129,6 +1200,7 @@
     if (residentSchemaVersion === V3_SCHEMA_VERSION) return migrateToV3(data);
     if (residentSchemaVersion === V4_SCHEMA_VERSION) return canonicalizeV4(data);
     if (residentSchemaVersion === V5_SCHEMA_VERSION) return canonicalizeV5(data);
+    if (residentSchemaVersion === V6_SCHEMA_VERSION) return canonicalizeV6(data);
     fail('UNSUPPORTED_SCHEMA_VERSION', '$.schemaVersion');
   }
 
@@ -1151,7 +1223,7 @@
   function validateShardedFragments(globalFragment, monthFragments, residentSchemaVersion) {
     clone(globalFragment);
     expectExactKeys(globalFragment, ['schemaVersion', 'categories', 'settings', 'templates'], '$.global');
-    if (globalFragment.schemaVersion !== residentSchemaVersion || ![V3_SCHEMA_VERSION, V4_SCHEMA_VERSION, V5_SCHEMA_VERSION].includes(residentSchemaVersion)) {
+    if (globalFragment.schemaVersion !== residentSchemaVersion || ![V3_SCHEMA_VERSION, V4_SCHEMA_VERSION, V5_SCHEMA_VERSION, V6_SCHEMA_VERSION].includes(residentSchemaVersion)) {
       fail('UNSUPPORTED_SCHEMA_VERSION', '$.global.schemaVersion');
     }
     expectObject(monthFragments, '$.months');
@@ -1234,6 +1306,7 @@
     buildSnapshot: buildV5Snapshot,
     parseSnapshot: parseV5Snapshot
   });
+  const V6_SCHEMA_POLICY = Object.freeze({ SCHEMA_VERSION: V6_SCHEMA_VERSION, clone, DataError, migrateActive: canonicalizeV6, validateActive: validateV6, parseActive: parseV6Active, buildBackup: buildV6Backup, parseBackup: parseV6Backup, buildSnapshot: buildV6Snapshot, parseSnapshot: parseV6Snapshot });
 
   return Object.freeze({
     SCHEMA_VERSION,
@@ -1241,6 +1314,7 @@
     V3_SCHEMA_VERSION,
     V4_SCHEMA_VERSION,
     V5_SCHEMA_VERSION,
+    V6_SCHEMA_VERSION,
     BACKUP_FORMAT,
     BACKUP_FORMAT_VERSION,
     SNAPSHOT_FORMAT,
@@ -1249,6 +1323,7 @@
     V3_SCHEMA_POLICY,
     V4_SCHEMA_POLICY,
     V5_SCHEMA_POLICY,
+    V6_SCHEMA_POLICY,
     DataError,
     clone,
     migrateActive,
@@ -1256,10 +1331,13 @@
     migrateToV3,
     migrateV3ToV4ExactMoney,
     migrateV4ToV5,
+    migrateV5ToV6,
     hydrateV4ExactMoney,
     dehydrateV4ExactMoney,
     hydrateV5ExactMoney,
     dehydrateV5ExactMoney,
+    hydrateV6ExactMoney,
+    dehydrateV6ExactMoney,
     decimalMoneyToCents,
     centsToDecimalMoney,
     validateActive,
@@ -1267,6 +1345,7 @@
     validateV3,
     validateV4,
     validateV5,
+    validateV6,
     parseActiveData,
     buildActiveData,
     buildShardedFragments,
@@ -1284,6 +1363,11 @@
     parseV5Backup,
     buildV5Snapshot,
     parseV5Snapshot,
+    parseV6Active,
+    buildV6Backup,
+    parseV6Backup,
+    buildV6Snapshot,
+    parseV6Snapshot,
     parseActive,
     buildBackup,
     parseBackup,
