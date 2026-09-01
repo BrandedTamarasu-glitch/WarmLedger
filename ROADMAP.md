@@ -1,6 +1,6 @@
 # Warm Ledger Roadmap
 
-This roadmap turns the August 2026 ForgeFlow product audit into sequenced, testable releases. Warm Ledger remains local-only, dependency-free, compatible with direct `file://` startup, resident schema versions 3 through 6, and backup/snapshot envelope format version 1 unless a later phase explicitly authorizes a migration.
+This roadmap turns the August 2026 ForgeFlow product audit into sequenced, testable releases. Warm Ledger remains local-only, dependency-free, compatible with direct `file://` startup, resident schema versions 3 through 7, and backup/snapshot envelope format version 1 unless a later phase explicitly authorizes a migration.
 
 ## Phase 1 — Data safety fixes
 
@@ -110,6 +110,18 @@ Status: published on 2026-09-01.
 - Preserve account references through copy-from-previous-month, recurring generation, backup, restore, snapshots, import, and month-sharded persistence.
 - Keep backup and snapshot envelope format version 1 compatible with schema versions 3 through 6.
 - Make no Actual mode, actual-transfer, balance, statement, or reconciliation claims.
+
+### Phase 6B2A — Explicit actual account labels
+
+Status: schema, Store, Budget, Pay periods, and browser evidence published on 2026-09-01; final Data Health presentation and publication documentation remain in progress.
+
+- Add resident schema version 7 with optional explicit `actualAccountId` fields on saved paychecks and expenses only.
+- Require an entered actual amount and saved date; clearing either clears the label atomically, while entered zero remains eligible.
+- Keep planned and actual labels independent, enforce compatible active assignments, and preserve unchanged archived historical references.
+- Reset actual-account labels for copied and recurring-generated records and preserve schema-7 data through backup, restore, recovery, and month-sharded storage.
+- Add schema-7 Budget selectors and one initially closed, selected-month **Entered actual accounts** Pay periods disclosure using explicit saved facts only.
+- Keep evidence synthetic and boolean-only, including persisted clearing, planned-only exclusion, archived editing, compatibility refresh, and 320px reflow.
+- Make no transfer, payment, bank-verification, balance, statement, reconciliation, or lifecycle claim.
 
 ### Phase 6B2 — Honest actual transfers and accounts
 

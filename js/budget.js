@@ -582,6 +582,7 @@ const BudgetView = {
     const earners = Store.getEarners();
     const title = existing ? 'Edit Paycheck' : 'Add Paycheck';
     const accountsAvailable = this.accountsAvailable();
+    const actualAccountsAvailable = this.actualAccountsAvailable();
     App.showModal({ title, buildBody: () => ModalView.fragment(
       ModalView.field('Earner', ModalView.select('field-earner')),
       ...(accountsAvailable ? [ModalView.field('Deposit account', ModalView.select('field-paycheck-account'))] : []),
@@ -589,7 +590,8 @@ const BudgetView = {
         ModalView.field('Planned amount', ModalView.input('field-planned-amount', 'number', { step: '0.01', min: '0', max: '1000000000000', required: true })),
         ModalView.field('Actual amount', ModalView.input('field-actual-amount', 'number', { step: '0.01', min: '0', max: '1000000000000', placeholder: 'Not entered' })),
         ModalView.field('Pay date (defaults to the 1st)', ModalView.input('field-date', 'date'))
-      ])
+      ]),
+      ...(actualAccountsAvailable ? [this.actualAccountField('Actual deposit account')] : [])
     ), onSave: () => {
       const earnerId = document.getElementById('field-earner').value;
       const date = document.getElementById('field-date').value;
@@ -598,11 +600,13 @@ const BudgetView = {
       if (!plannedInput.reportValidity() || !actualInput.reportValidity()) return false;
       const updates = { plannedAmount: Number(plannedInput.value), actualAmount: this.optionalAmount(actualInput), date };
       if (accountsAvailable) updates.accountId = document.getElementById('field-paycheck-account').value || null;
+      if (actualAccountsAvailable) updates.actualAccountId = document.getElementById('field-paycheck-actual-account').value || null;
       if (!existing || earnerId !== existing.earnerId) updates.earnerId = earnerId;
       return App.runMutation(() => {
         if (existing) return Store.editPaycheck(this.currentMonth, existing.id, updates);
         return Store.addPaycheck(this.currentMonth, { earnerId, plannedAmount: updates.plannedAmount, actualAmount: updates.actualAmount, date,
-          ...(accountsAvailable ? { accountId: updates.accountId } : {}) });
+          ...(accountsAvailable ? { accountId: updates.accountId } : {}),
+          ...(actualAccountsAvailable ? { actualAccountId: updates.actualAccountId } : {}) });
       },
       { onSuccess: () => {
         this.render();
@@ -630,10 +634,42 @@ const BudgetView = {
     document.getElementById('field-date').value = existing?.date || `${this.currentMonth}-01`;
     if (accountsAvailable) this.populateAccountSelect(document.getElementById('field-paycheck-account'),
       ['bank', 'savings', 'cash', 'investments', 'other'], existing?.accountId ?? null);
+    if (actualAccountsAvailable) {
+      const actualAccount = document.getElementById('field-paycheck-actual-account');
+      this.populateActualAccountSelect(actualAccount, ['bank', 'savings', 'cash', 'investments', 'other'], existing?.actualAccountId ?? null);
+      this.bindActualAccountEligibility(actualAccount, document.getElementById('field-actual-amount'), document.getElementById('field-date'));
+    }
   },
 
   accountsAvailable() {
     try { Store.getAccounts(); return true; } catch (error) { if (error.code === 'ACCOUNTS_UNAVAILABLE') return false; throw error; }
+  },
+
+  actualAccountsAvailable() {
+    return this.accountsAvailable() && Store.getStatus().residentSchemaVersion === 7;
+  },
+
+  actualAccountField(label) {
+    const select = ModalView.select(label === 'Actual deposit account' ? 'field-paycheck-actual-account' : 'field-expense-actual-account', [],
+      { 'aria-describedby': 'actual-account-help' });
+    const field = ModalView.field(label, select);
+    field.append(ModalView.element('p', { id: 'actual-account-help', className: 'field-help',
+      text: 'Enter an actual amount and a saved date to record an actual account label.' }));
+    return field;
+  },
+
+  populateActualAccountSelect(select, kinds, selectedId) {
+    this.populateAccountSelect(select, kinds, selectedId);
+    select.options[0].textContent = 'No actual account entered';
+  },
+
+  bindActualAccountEligibility(select, actualInput, dateInput) {
+    const sync = () => {
+      const eligible = actualInput.value !== '' && dateInput.value !== '';
+      select.disabled = !eligible;
+      if (!eligible) select.value = '';
+    };
+    actualInput.addEventListener('input', sync); dateInput.addEventListener('input', sync); sync();
   },
 
   populateAccountSelect(select, kinds, selectedId) {
@@ -895,6 +931,7 @@ const BudgetView = {
   showExpenseModal(existing, reviewFocus = null) {
     const categories = Store.getCategories();
     const accountsAvailable = this.accountsAvailable();
+    const actualAccountsAvailable = this.actualAccountsAvailable();
     const title = existing ? 'Edit Expense' : 'Add Expense';
     App.showModal({ title, buildBody: () => {
       const nodes = [
@@ -907,7 +944,8 @@ const BudgetView = {
         ]),
         ModalView.field('Expense date (defaults to the 1st)', ModalView.input('field-expense-date', 'date')),
         ModalView.field('Payment Method', ModalView.select('field-method', [['bank', 'Bank'], ['credit_card', 'Credit Card'], ['savings', 'Savings'], ['investments', 'Investments']])),
-        ...(accountsAvailable ? [ModalView.field('Payment account', ModalView.select('field-expense-account'))] : [])
+        ...(accountsAvailable ? [ModalView.field('Payment account', ModalView.select('field-expense-account'))] : []),
+        ...(actualAccountsAvailable ? [this.actualAccountField('Actual payment account')] : [])
       ];
       if (!existing) {
         const checkbox = ModalView.input('field-create-expense-template', 'checkbox');
@@ -935,6 +973,7 @@ const BudgetView = {
         date: document.getElementById('field-expense-date').value
       };
       if (accountsAvailable) updates.accountId = document.getElementById('field-expense-account').value || null;
+      if (actualAccountsAvailable) updates.actualAccountId = document.getElementById('field-expense-actual-account').value || null;
       const structureChanged = !existing || categoryId !== existing.categoryId || categoryItemId !== existing.categoryItemId;
       if (structureChanged) Object.assign(updates, { categoryId, categoryItemId, name: customName });
       else if (categoryItemId === null && customName !== existing.name) updates.name = customName;
@@ -943,7 +982,8 @@ const BudgetView = {
         const input = {
           categoryId, categoryItemId, name: customName, date: updates.date, paycheckAmounts: {},
           plannedAmount: updates.plannedAmount, actualAmount: updates.actualAmount, paymentMethod,
-          ...(accountsAvailable ? { accountId: updates.accountId } : {})
+          ...(accountsAvailable ? { accountId: updates.accountId } : {}),
+          ...(actualAccountsAvailable ? { actualAccountId: updates.actualAccountId } : {})
         };
         return Store.addExpense(this.currentMonth, input);
       }, { onSuccess: result => {
@@ -984,6 +1024,14 @@ const BudgetView = {
     plannedInput.min = String(assigned); plannedInput.value = existing ? existing.plannedAmount : '';
     document.getElementById('field-actual-amount').value = existing ? (existing.actualAmount ?? '') : '';
     document.getElementById('field-expense-date').value = existing?.date || `${this.currentMonth}-01`;
+    if (actualAccountsAvailable) {
+      const actualAccount = document.getElementById('field-expense-actual-account');
+      const method = document.getElementById('field-method');
+      const refreshActualAccounts = selected => this.populateActualAccountSelect(actualAccount, this.expenseAccountKinds(method.value), selected);
+      refreshActualAccounts(existing?.actualAccountId ?? null);
+      method.addEventListener('change', () => refreshActualAccounts(null));
+      this.bindActualAccountEligibility(actualAccount, document.getElementById('field-actual-amount'), document.getElementById('field-expense-date'));
+    }
     document.getElementById('field-preset').addEventListener('change', function() {
       const isPreset = Boolean(this.value);
       document.getElementById('field-name').disabled = isPreset;

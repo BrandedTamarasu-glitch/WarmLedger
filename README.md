@@ -18,7 +18,7 @@ See [ROADMAP.md](ROADMAP.md) for planned work and the boundaries of future phase
 - A compact, write-free **Monthly Review** dashboard showing recurring work, missing actuals, expense funding, checklist readiness, and balance at a glance, with details available on demand.
 - Manual cleared-record marks for eligible saved records, kept explicitly separate from payment confirmation, bank verification, reconciliation, and month close.
 - Saved-only future-month forecasting, upcoming bills and paydays, a transient Saved-Record Finder, a bounded saved-month review queue, and two-month comparison with on-demand expense contributors.
-- A write-free **Data Health** view for incomplete or unusual ledger records, compare-only backup analysis, explicit preview-first month-sharded persistence migration for eligible ledgers, and the schema-version-5 to schema-version-6 account migration workflow.
+- A write-free **Data Health** view for incomplete or unusual ledger records, compare-only backup analysis, explicit preview-first month-sharded persistence migration for eligible ledgers, and schema-version-5-to-6 local-account plus schema-version-6-to-7 actual-account-label migration foundations.
 - Explicit, preview-first migration of eligible ledgers to exact integer-cent persistence, protected by a verified safety snapshot.
 - Explicit, preview-first migration of eligible schema-version-5 ledgers to schema-version-6 local accounts, protected by a verified safety snapshot.
 - Internal recurrence safeguards that keep deliberately removed generated occurrences from returning unexpectedly.
@@ -32,6 +32,8 @@ See [ROADMAP.md](ROADMAP.md) for planned work and the boundaries of future phase
 Archived Structure choices remain visible in historical records and totals but are hidden when creating new records. Archiving does not delete or rewrite prior months. Warm Ledger prevents archiving the last active category or earner so new expenses and paychecks can still be created.
 
 For schema-version-6-or-later ledgers, **Structure** also manages an optional ordered account catalog. Paycheck and recurring-income forms offer a compatible **Deposit account**, while expense and recurring-expense forms offer a **Payment account** compatible with the saved payment method. New-record forms show **No account selected** plus only compatible active accounts, and no account—including cash—is selected automatically. An archived account remains visible when editing a record or template that already references it, but it cannot be newly assigned. Account names are local planning labels only; they do not connect to a bank, prove payment, track balances, or reconcile activity.
+
+Schema-version-7 paycheck and expense forms also offer independent **Actual deposit account** and **Actual payment account** labels. These optional controls become available only when the saved record has both an entered actual amount—including zero—and a saved date. Removing either value clears the actual-account label in the same save. Compatible active accounts are available for new assignments, while an unchanged archived historical reference remains visible. Planned and actual account labels never default or update one another.
 
 Paycheck and expense order is stored as part of each month and survives reload, backup/restore, and copying a month. Expense movement stays within its displayed historical category group and does not change its category or any financial values.
 
@@ -162,6 +164,8 @@ Planned paycheck income drives the funding plan. Actual income is displayed sepa
 **Planned payment guidance** shows how explicitly assigned bills are divided between keeping money in the bank and planning for credit card, savings, or investment-funded bills. It appears as a compact tile in Monthly Review and as a month total in Pay periods; the paycheck cards show when each portion is planned. These are planning totals only: they do not send money, pay a bill, or verify an account transfer.
 
 The view is not a calendar pay-period calculator, does not infer boundaries around paycheck dates, and does not move funding across months. A funding assignment is not evidence that a bill was paid, an account was reconciled, money reached a bank, or an account-to-account transfer occurred. Pay periods operates schema-neutrally over normalized resident schema-version-3 through schema-version-7 data without changing the resident version; backup/snapshot envelope format version 1 remains unchanged.
+
+For schema-version-7 ledgers, the initially closed **Entered actual accounts** disclosure summarizes only saved records in the selected month that have an entered actual amount, saved date, and explicitly entered actual-account label. It shows eligibility and entered-label counts plus separate income and expense totals in Structure order. Planned-only labels are excluded. The disclosure does not verify payment, bank activity, transfers, balances, or reconciliation.
 
 ## Data Health
 

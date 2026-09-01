@@ -185,6 +185,27 @@ test('browser evidence covers explicit account migration, lifecycle, selectors, 
   assert.match(source, /Accounts forced-colors evidence failed/);
 });
 
+test('browser evidence covers schema 7 actual-account selectors and explicit-only disclosure', () => {
+  assert.match(source, /actualAccountsWave3SelectorsDisclosure/);
+  assert.match(source, /actualAccountsWave3NarrowReflow/);
+  assert.match(source, /field-paycheck-actual-account/);
+  assert.match(source, /field-expense-actual-account/);
+  assert.match(source, /actual\.value = '0'/);
+  assert.match(source, /method\.value = 'credit_card'/);
+  assert.match(source, /uiAmountClearPersisted/);
+  assert.match(source, /uiDateClearPersisted/);
+  assert.match(source, /document\.getElementById\('modal-save'\)\.click\(\)/);
+  assert.match(source, /selectedOptions\[0\]\?\.textContent\.includes\('\(Archived\)'\)/);
+  assert.match(source, /Store\.getActualAccountSummary\(monthKey\)/);
+  assert.match(source, /accountId: plannedOnlyAccount\.id, actualAccountId: null/);
+  assert.match(source, /!afterPlannedOnly\.incomeAccounts\.some\(item => item\.accountId === plannedOnlyAccount\.id\)/);
+  assert.match(source, /Enter an actual amount and a saved date on a saved paycheck or expense to use actual account labels\./);
+  assert.match(source, /No actual account labels entered for this month\./);
+  assert.match(source, /Object\.values\(actualAccountsUi\)\.every\(Boolean\)/);
+  assert.match(source, /Actual account disclosure overflows at 320px/);
+  assert.match(source, /actualAccountsNarrow\.every|Object\.values\(actualAccountsNarrow\)\.every/);
+});
+
 test('browser evidence proves Explain change is lazy, transient, routable, and export-neutral', () => {
   for (const marker of ['savedMonthComparisonExplainLazyReplaceCloseTransitions',
     'savedMonthComparisonExplainNullZeroStaleSuccessCsvByteExact']) assert.match(source, new RegExp(marker));
@@ -224,6 +245,8 @@ test('browser evidence dynamically covers Pay periods semantics, routes, safety,
   assert.match(source, /split across 2 paychecks/);
   assert.match(source, /pay-period-bill-pill/);
   assert.match(source, /plan\.summary\.reconciliationDifference === 0/);
+  assert.match(source, /Funding math difference/);
+  assert.doesNotMatch(source, /Funding reconciliation difference/);
   assert.match(source, /BudgetView\.collapsedCategories\.set/);
   assert.match(source, /dataset\.fundingExpenseId === currentGenerated\.id/);
   assert.match(source, /dataset\.fundingPaycheckId === income\.id/);

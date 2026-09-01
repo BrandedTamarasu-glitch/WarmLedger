@@ -239,8 +239,8 @@ const SCENARIO = `(async () => {
   assert(payPeriodContent.querySelector('.pay-period-allocations')?.textContent.includes('$9.00') &&
     payPeriodContent.querySelector('.pay-period-monthly-summary'), 'Pay periods allocations or monthly summary are missing.');
   assert(plan.summary.reconciliationDifference === 0 &&
-    payPeriodContent.querySelector('.pay-period-monthly-summary').textContent.includes('Funding reconciliation difference'),
-    'Pay periods summary did not reconcile.');
+    payPeriodContent.querySelector('.pay-period-monthly-summary').textContent.includes('Funding math difference'),
+    'Pay periods summary did not show the planning math difference.');
   assert(payPeriodContent.textContent.includes('Synthetic long unfunded bill') &&
     !payPeriodContent.querySelector('img') && !globalThis.__payHostileRan, 'Hostile Pay periods content was not inert text.');
 
@@ -1171,6 +1171,129 @@ async function run(options) {
     assertEvidence(accountsReload.schema6 && accountsReload.semantic && accountsReload.primary && accountsReload.selectors,
       `Accounts did not survive byte-exact reload: ${JSON.stringify(accountsReload)}`);
     scenario.accountsSchema6ReloadByteExact = true;
+    const actualAccountsUi = await evaluate(cdp, `(async () => {
+      const settle = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      Store.commitActualAccountMigration(Store.previewActualAccountMigration());
+      const monthKey = BudgetView.currentMonth;
+      const bank = Store.getAccounts().find(item => item.kind === 'bank');
+      const card = Store.getAccounts().find(item => item.kind === 'credit_card');
+      const paycheck = Store.getMonth(monthKey).paychecks.find(item => item.accountId === bank.id);
+      const expense = Store.getMonth(monthKey).expenses.find(item => item.accountId === bank.id);
+      const uiPaycheck = Store.addPaycheck(monthKey, { earnerId: Store.getEarners()[0].id, plannedAmount: 2,
+        actualAmount: null, date: monthKey + '-01', accountId: null, actualAccountId: null });
+
+      BudgetView.showPaycheckModal(uiPaycheck); await settle();
+      const actual = document.getElementById('field-actual-amount');
+      const date = document.getElementById('field-date');
+      const actualAccount = document.getElementById('field-paycheck-actual-account');
+      actual.value = ''; actual.dispatchEvent(new Event('input', { bubbles: true }));
+      const gatedUntilComplete = actualAccount.disabled;
+      actual.value = '0'; date.value = monthKey + '-01'; actual.dispatchEvent(new Event('input', { bubbles: true }));
+      const enteredZeroEligible = !actualAccount.disabled;
+      actualAccount.value = bank.id; document.getElementById('modal-save').click(); await settle();
+      const uiAssigned = Store.getMonth(monthKey).paychecks.find(item => item.id === uiPaycheck.id).actualAccountId === bank.id;
+      BudgetView.showPaycheckModal(Store.getMonth(monthKey).paychecks.find(item => item.id === uiPaycheck.id)); await settle();
+      const clearAmount = document.getElementById('field-actual-amount');
+      clearAmount.value = ''; clearAmount.dispatchEvent(new Event('input', { bubbles: true }));
+      document.getElementById('modal-save').click(); await settle();
+      const uiAmountClearPersisted = Store.getMonth(monthKey).paychecks.find(item => item.id === uiPaycheck.id).actualAccountId === null;
+      BudgetView.showPaycheckModal(Store.getMonth(monthKey).paychecks.find(item => item.id === uiPaycheck.id)); await settle();
+      const reassignedAmount = document.getElementById('field-actual-amount');
+      const reassignedDate = document.getElementById('field-date');
+      const reassignedAccount = document.getElementById('field-paycheck-actual-account');
+      reassignedAmount.value = '0'; reassignedDate.value = monthKey + '-01';
+      reassignedAmount.dispatchEvent(new Event('input', { bubbles: true })); reassignedAccount.value = bank.id;
+      document.getElementById('modal-save').click(); await settle();
+      const uiReassigned = Store.getMonth(monthKey).paychecks.find(item => item.id === uiPaycheck.id).actualAccountId === bank.id;
+      BudgetView.showPaycheckModal(Store.getMonth(monthKey).paychecks.find(item => item.id === uiPaycheck.id)); await settle();
+      const clearDate = document.getElementById('field-date'); clearDate.value = '';
+      clearDate.dispatchEvent(new Event('input', { bubbles: true }));
+      const uiDateControlCleared = clearDate.value === '';
+      const uiDateSaveEnabled = !document.getElementById('modal-save').disabled;
+      document.getElementById('modal-save').click(); await settle();
+      const uiDateModalClosed = document.getElementById('modal-overlay').hidden;
+      const dateClearedRecord = Store.getMonth(monthKey).paychecks.find(item => item.id === uiPaycheck.id);
+      const uiDateBlankPersisted = dateClearedRecord.date === '';
+      const uiDateClearPersisted = dateClearedRecord.actualAccountId === null;
+
+      Store.updateExpense(monthKey, expense.id, { paymentMethod: 'bank', actualAmount: 1,
+        date: monthKey + '-02', actualAccountId: bank.id });
+      BudgetView.showExpenseModal(Store.getMonth(monthKey).expenses.find(item => item.id === expense.id)); await settle();
+      const method = document.getElementById('field-method');
+      const expenseActualAccount = document.getElementById('field-expense-actual-account');
+      method.value = 'credit_card'; method.dispatchEvent(new Event('change', { bubbles: true }));
+      const compatibilityRefresh = expenseActualAccount.value === '' &&
+        [...expenseActualAccount.options].filter(option => option.value).every(option => option.value === card.id);
+      ModalView.close('cancel');
+
+      Store.updatePaycheck(monthKey, paycheck.id, { actualAmount: 0, date: monthKey + '-01', actualAccountId: bank.id });
+      Store.updateAccount(bank.id, { archived: true });
+      BudgetView.showPaycheckModal(Store.getMonth(monthKey).paychecks.find(item => item.id === paycheck.id)); await settle();
+      const archivedExistingVisible = document.getElementById('field-paycheck-actual-account')?.value === bank.id &&
+        document.getElementById('field-paycheck-actual-account')?.selectedOptions[0]?.textContent.includes('(Archived)');
+      ModalView.close('cancel');
+
+      const beforeSynthetic = Store.getActualAccountSummary(monthKey);
+      const plannedOnlyAccount = Store.getAccounts().find(item => item.kind === 'savings');
+      Store.addPaycheck(monthKey, { earnerId: Store.getEarners()[0].id, plannedAmount: 3,
+        actualAmount: null, date: monthKey + '-03', accountId: plannedOnlyAccount.id, actualAccountId: null });
+      const afterPlannedOnly = Store.getActualAccountSummary(monthKey);
+      Store.addPaycheck(monthKey, { earnerId: Store.getEarners()[0].id, plannedAmount: 4,
+        actualAmount: 4, date: monthKey + '-04', accountId: null, actualAccountId: null });
+      TransfersView.currentMonth = monthKey; App.switchView('transfers'); TransfersView.render(); await settle();
+      const disclosure = document.querySelector('.pay-period-actual-accounts');
+      const summary = Store.getActualAccountSummary(monthKey);
+      const selectedMonthExplicitOnly = Boolean(disclosure && !disclosure.open &&
+        afterPlannedOnly.eligible.paychecks === beforeSynthetic.eligible.paychecks &&
+        afterPlannedOnly.entered.paychecks === beforeSynthetic.entered.paychecks &&
+        !afterPlannedOnly.incomeAccounts.some(item => item.accountId === plannedOnlyAccount.id) &&
+        summary.eligible.paychecks === afterPlannedOnly.eligible.paychecks + 1 &&
+        summary.missing.paychecks === afterPlannedOnly.missing.paychecks + 1 &&
+        disclosure.textContent.includes('Entered actual accounts'));
+
+      const startIndex = Number(monthKey.slice(0, 4)) * 12 + Number(monthKey.slice(5, 7)) - 1;
+      let emptyMonth = '';
+      for (let offset = 1; offset <= 120; offset++) {
+        const candidateIndex = startIndex + offset;
+        const candidate = String(Math.floor(candidateIndex / 12)).padStart(4, '0') + '-' +
+          String(candidateIndex % 12 + 1).padStart(2, '0');
+        if (!Store.getActualAccountSummary(candidate).exists) { emptyMonth = candidate; break; }
+      }
+      if (!emptyMonth) throw new Error('Could not prepare an unsaved month for actual-account empty-state evidence.');
+      TransfersView.currentMonth = emptyMonth; TransfersView.render(); await settle();
+      const noEligibleState = document.querySelector('.pay-period-actual-accounts')?.textContent.includes(
+        'Enter an actual amount and a saved date on a saved paycheck or expense to use actual account labels.');
+      Store.addPaycheck(emptyMonth, { earnerId: Store.getEarners()[0].id, plannedAmount: 1, actualAmount: 0,
+        date: emptyMonth + '-01', accountId: null, actualAccountId: null });
+      TransfersView.render(); await settle();
+      const noEnteredState = document.querySelector('.pay-period-actual-accounts')?.textContent.includes(
+        'No actual account labels entered for this month.');
+      TransfersView.currentMonth = monthKey;
+      return { schema7: Store.getStatus().residentSchemaVersion === 7, gatedUntilComplete, enteredZeroEligible,
+        uiAssigned, uiAmountClearPersisted, uiReassigned, uiDateControlCleared, uiDateSaveEnabled, uiDateModalClosed,
+        uiDateBlankPersisted, uiDateClearPersisted,
+        compatibilityRefresh, archivedExistingVisible, selectedMonthExplicitOnly,
+        initiallyClosed: disclosure?.open === false, noEligibleState, noEnteredState };
+    })()`);
+    assertEvidence(Object.values(actualAccountsUi).every(Boolean),
+      `Actual account Wave 3 browser evidence failed: ${JSON.stringify(actualAccountsUi)}`);
+    scenario.actualAccountsWave3SelectorsDisclosure = true;
+    await evaluate(cdp, `App.switchView('transfers'); TransfersView.render()`);
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width: 320, height: 900, deviceScaleFactor: 1, mobile: false });
+    const actualAccountsNarrow = await evaluate(cdp, `(() => {
+      const disclosure = document.querySelector('.pay-period-actual-accounts');
+      const viewport = document.documentElement.clientWidth;
+      const overflowing = disclosure ? [...disclosure.querySelectorAll('*')].filter(node => {
+        const rect = node.getBoundingClientRect(); return rect.right > viewport + 1 || rect.left < -1;
+      }).length : -1;
+      return { visible: Boolean(disclosure?.getClientRects().length),
+        pageFits: document.documentElement.scrollWidth <= viewport, disclosureFits: disclosure?.scrollWidth <= disclosure?.clientWidth,
+        overflowing: overflowing === 0 };
+    })()`);
+    assertEvidence(Object.values(actualAccountsNarrow).every(Boolean),
+      `Actual account disclosure overflows at 320px: ${JSON.stringify(actualAccountsNarrow)}`);
+    scenario.actualAccountsWave3NarrowReflow = true;
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width: 640, height: 450, deviceScaleFactor: 1, mobile: false });
     await evaluate(cdp, `App.switchView('structure'); StructureView.render()`);
     await cdp.send('Emulation.setDeviceMetricsOverride', { width: 320, height: 900, deviceScaleFactor: 1, mobile: false });
     const accountsNarrow = await evaluate(cdp, `(() => {

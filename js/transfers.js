@@ -109,6 +109,34 @@ const TransfersView = {
     if (description) section.append(this.element('p', 'muted-text pay-period-section-note', description));
     section.append(list); return section;
   },
+  actualAccountGroup(title, rows) {
+    const section = this.element('section', 'pay-period-actual-group');
+    section.append(this.element('h4', '', title));
+    const list = this.element('dl', 'pay-period-summary-list pay-period-actual-list');
+    rows.forEach(row => this.definition(list, `${row.accountName}${row.archived ? ' (Archived)' : ''} · ${row.recordCount} ${row.recordCount === 1 ? 'record' : 'records'}`,
+      this.fmt(row.totalActualAmount)));
+    section.append(list); return section;
+  },
+  renderActualAccounts() {
+    const summary = Store.getActualAccountSummary(this.currentMonth);
+    const details = this.element('details', 'budget-section pay-period-actual-accounts');
+    details.append(this.element('summary', '', 'Entered actual accounts'));
+    const body = this.element('div', 'pay-period-actual-body');
+    const counts = this.element('dl', 'pay-period-summary-list pay-period-actual-counts');
+    this.definition(counts, 'Eligible paychecks', String(summary.eligible.paychecks));
+    this.definition(counts, 'Eligible expenses', String(summary.eligible.expenses));
+    this.definition(counts, 'Paychecks with entered actual account', String(summary.entered.paychecks));
+    this.definition(counts, 'Expenses with entered actual account', String(summary.entered.expenses));
+    body.append(counts);
+    const eligible = summary.eligible.paychecks + summary.eligible.expenses;
+    const entered = summary.entered.paychecks + summary.entered.expenses;
+    if (eligible === 0) body.append(this.element('p', 'transfer-empty', 'Enter an actual amount and a saved date on a saved paycheck or expense to use actual account labels.'));
+    else if (entered === 0) body.append(this.element('p', 'transfer-empty', 'No actual account labels entered for this month.'));
+    if (summary.incomeAccounts.length) body.append(this.actualAccountGroup('Income by account', summary.incomeAccounts));
+    if (summary.expenseAccounts.length) body.append(this.actualAccountGroup('Expenses by account', summary.expenseAccounts));
+    body.append(this.element('p', 'muted-text pay-period-section-note', 'These totals use only saved records with an entered actual amount, an entered saved date, and an entered actual account label. They do not verify payment, bank activity, transfers, balances, or reconciliation.'));
+    details.append(body); return details;
+  },
   render() {
     document.getElementById('transfers-month-label').textContent = this.formatMonthLabel(this.currentMonth);
     const plan = Store.getPayPeriodPlan(this.currentMonth); const container = document.getElementById('transfers-content'); container.replaceChildren();
@@ -116,6 +144,7 @@ const TransfersView = {
       : plan.paycheckCount === 1 ? '1 paycheck this month' : `${plan.paycheckCount} paychecks this month`;
     container.append(this.element('p', 'pay-period-count', countText));
     if (!plan.exists) container.append(this.element('p', 'pay-period-month-state', 'This month has no saved budget activity.'));
+    if (Store.getStatus().residentSchemaVersion === 7) container.append(this.renderActualAccounts());
     const summary = plan.summary;
     container.append(this.summarySection('Monthly planned destinations', 'pay-period-destinations-heading', [
       ['Keep in bank', this.fmt(summary.methodFundingTotals.bank), 'row-bank'],
@@ -141,7 +170,7 @@ const TransfersView = {
       ['Over-assigned across paychecks', this.fmt(summary.overAssignedAmount), summary.overAssignedAmount > 0.009 ? 'state-over-assigned' : ''],
       ['Monthly remaining-funds allocations', this.fmt(summary.monthlyAllocationsTotal)],
       ['Planned monthly balance', this.fmt(summary.plannedBalance), summary.plannedBalance < -0.009 ? 'state-over-assigned' : 'row-total'],
-      ['Funding reconciliation difference', this.fmt(summary.reconciliationDifference)]
+      ['Funding math difference', this.fmt(summary.reconciliationDifference)]
     ], 'pay-period-monthly-summary'));
   }
 };
