@@ -55,7 +55,7 @@ Status: Phase 4B explicit exact-money migration published.
 
 ## Phase 5 — Reconciliation and month close
 
-Status: Phase 5A manual cleared-record checklist complete locally; reconciliation and month close remain deferred.
+Status: Phase 5A manual cleared-record checklist published; Phase 5B Month Checklist Readiness is planned. Reconciliation and month close remain deferred.
 
 - Add an explicit per-record manual cleared mark only for saved records with an entered actual and date; entered zero remains eligible.
 - Keep the checklist separate from paid, bank-verified, reconciled, matched, settled, balance-confirmed, and month-closed claims, with no bulk or automatic clearing.
