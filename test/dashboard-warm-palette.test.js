@@ -130,7 +130,7 @@ test('palette wave preserves render and destruction lifecycle boundaries', () =>
   dashboard.getDateRange = () => ({ from: '2026-01', to: '2026-01' }); dashboard.render();
   assert.deepEqual(calls.map(call => call[0]), ['renderCategoryTrend', 'renderIncomePct', 'renderProjVsActual',
     'renderSavingsRate', 'renderPaymentMethod', 'renderYoY', 'renderSummaryTable']);
-  assert.ok(calls.every(call => call[1][0] === '2026-01'));
+  assert.ok(calls.every(call => call[1].monthKeys[0] === '2026-01'));
 
   let destroyed = 0;
   dashboard.charts = { first: { destroy() { destroyed += 1; } }, second: { destroy() { destroyed += 1; } } };

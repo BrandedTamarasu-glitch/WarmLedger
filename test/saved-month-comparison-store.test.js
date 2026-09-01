@@ -188,9 +188,9 @@ test('explanation rejects invalid requests and non-existent dimensional rows wit
   const request = overrides => store.explainSavedMonthComparisonRow({ baselineMonth: '2026-01',
     comparisonMonth: '2026-02', basis: 'planned', section: 'categories', dimensionKey: 'Home', ...overrides });
   assert.equal(request({ basis: 'combined' }).status, 'invalid-basis');
-  assert.equal(request({ baselineMonth: '' }).status, 'missing-baseline');
+  assert.equal(request({ baselineMonth: '' }).status, 'incomplete');
   assert.equal(request({ baselineMonth: '2026-13' }).status, 'missing-baseline');
-  assert.equal(request({ comparisonMonth: '' }).status, 'missing-comparison');
+  assert.equal(request({ comparisonMonth: '' }).status, 'incomplete');
   assert.equal(request({ comparisonMonth: '2026-01' }).status, 'same-month');
   assert.equal(request({ section: 'summary' }).status, 'invalid-section');
   assert.equal(request({ section: 'categories', dimensionKey: 'Missing' }).status, 'row-not-found');

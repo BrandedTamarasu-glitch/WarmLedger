@@ -343,7 +343,8 @@ const TemplatesView = {
   },
 
   showTemplateModal(kind, existing, trigger, draft = null) {
-    App.showModal(`${existing ? 'Edit' : 'Add'} ${kind} template`, this.formMarkup(kind), () => this.saveForm(kind, existing));
+    App.showModal({ title: `${existing ? 'Edit' : 'Add'} ${kind} template`, buildBody: () => this.formBody(kind),
+      submitLabel: existing ? 'Save changes' : 'Add template', onSave: () => this.saveForm(kind, existing) });
     if (trigger) App.modalTrigger = trigger;
     const initial = existing || draft;
     this.populateStructuralChoices(kind, initial);
@@ -358,19 +359,38 @@ const TemplatesView = {
     save.textContent = existing ? 'Save changes' : 'Add template';
   },
 
-  formMarkup(kind) {
-    return `
-      <div class="form-group"><label for="field-template-name">Name</label><input id="field-template-name" type="text" maxlength="120" required></div>
-      <div class="form-group"><label for="field-template-amount">Planned amount</label><input id="field-template-amount" type="number" min="0" max="1000000000000" step="0.01" required></div>
-      <div class="form-group"><label for="field-template-${kind === 'income' ? 'earner' : 'category'}">${kind === 'income' ? 'Earner' : 'Category'}</label><select id="field-template-${kind === 'income' ? 'earner' : 'category'}" required></select></div>
-      ${kind === 'expense' ? '<div class="form-group"><label for="field-template-item">Preset item (optional)</label><select id="field-template-item"></select></div><div class="form-group"><label for="field-template-method">Payment method</label><select id="field-template-method"><option value="bank">Bank</option><option value="credit_card">Credit card</option><option value="savings">Savings</option><option value="investments">Investments</option></select></div>' : ''}
-      <div class="form-group"><label for="field-template-start">Start date (inclusive)</label><input id="field-template-start" type="date" required></div>
-      <div class="form-group"><label for="field-template-end">End date (inclusive, optional)</label><input id="field-template-end" type="date"></div>
-      <div class="form-group"><label for="field-template-cadence">Repeats</label><select id="field-template-cadence" required><option value="">Choose a schedule</option><option value="monthly">Monthly</option><option value="twice-monthly">Twice monthly</option><option value="weekly">Weekly</option><option value="biweekly">Every two weeks</option></select></div>
-      <div id="template-monthly-fields"><label for="field-template-day">Day of month</label><input id="field-template-day" type="number" min="1" max="31" value="1"><p class="field-help">Short months use their final day.</p></div>
-      <div id="template-twice-fields"><label for="field-template-day-one">First day</label><input id="field-template-day-one" type="number" min="1" max="31" value="1"><label for="field-template-day-two">Second day</label><input id="field-template-day-two" type="number" min="1" max="31" value="15"><p class="field-help">Each day clamps independently; both occurrences remain if they land together.</p></div>
-      <div id="template-anchor-fields"><label for="field-template-anchor">Anchor date</label><input id="field-template-anchor" type="date"></div>
-      <label><input id="field-template-enabled" type="checkbox" checked> Enabled</label>`;
+  formBody(kind) {
+    const structural = kind === 'income' ? 'earner' : 'category';
+    const nodes = [
+      ModalView.field('Name', ModalView.input('field-template-name', 'text', { maxlength: '120', required: true })),
+      ModalView.field('Planned amount', ModalView.input('field-template-amount', 'number', { min: '0', max: '1000000000000', step: '0.01', required: true })),
+      ModalView.field(kind === 'income' ? 'Earner' : 'Category', ModalView.select(`field-template-${structural}`, [], { required: true }))
+    ];
+    if (kind === 'expense') nodes.push(
+      ModalView.field('Preset item (optional)', ModalView.select('field-template-item')),
+      ModalView.field('Payment method', ModalView.select('field-template-method', [['bank', 'Bank'], ['credit_card', 'Credit card'], ['savings', 'Savings'], ['investments', 'Investments']]))
+    );
+    nodes.push(
+      ModalView.field('Start date (inclusive)', ModalView.input('field-template-start', 'date', { required: true })),
+      ModalView.field('End date (inclusive, optional)', ModalView.input('field-template-end', 'date')),
+      ModalView.field('Repeats', ModalView.select('field-template-cadence', [['', 'Choose a schedule'], ['monthly', 'Monthly'], ['twice-monthly', 'Twice monthly'], ['weekly', 'Weekly'], ['biweekly', 'Every two weeks']], { required: true })),
+      this.templateScheduleField('template-monthly-fields', [['Day of month', 'field-template-day', 'number', { min: '1', max: '31', value: '1' }]], 'Short months use their final day.'),
+      this.templateScheduleField('template-twice-fields', [['First day', 'field-template-day-one', 'number', { min: '1', max: '31', value: '1' }], ['Second day', 'field-template-day-two', 'number', { min: '1', max: '31', value: '15' }]], 'Each day clamps independently; both occurrences remain if they land together.'),
+      this.templateScheduleField('template-anchor-fields', [['Anchor date', 'field-template-anchor', 'date', {}]])
+    );
+    const enabled = ModalView.input('field-template-enabled', 'checkbox', { checked: true });
+    const enabledLabel = ModalView.element('label'); enabledLabel.append(enabled, document.createTextNode(' Enabled')); nodes.push(enabledLabel);
+    return ModalView.fragment(...nodes);
+  },
+
+  templateScheduleField(id, fields, help = '') {
+    const node = ModalView.element('div', { id });
+    fields.forEach(([labelText, inputId, type, attrs]) => {
+      const input = ModalView.input(inputId, type, attrs); const label = ModalView.element('label', { text: labelText, attrs: { for: inputId } });
+      node.append(label, input);
+    });
+    if (help) node.append(ModalView.element('p', { className: 'field-help', text: help }));
+    return node;
   },
 
   populateStructuralChoices(kind, existing) {

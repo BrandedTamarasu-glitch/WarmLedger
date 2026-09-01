@@ -170,6 +170,14 @@ Status: published on 2026-09-01.
 
 The lean ceiling is one on-demand two-month expense scan rendered beneath the selected comparison row. Broader drilldowns, cached aggregates, indexes, or recommendations require measured need and a separately reviewed contract.
 
+### Wave 4 — Audit hardening evidence
+
+Status: published on 2026-09-01.
+
+- Document the local plaintext storage boundary, explicit browser-only purge, and manual deletion of downloaded recovery artifacts.
+- Keep the browser-evidence suite boolean-only and disposable, with separate coverage for multi-tab stale/busy fail-closed behavior, reload recovery, purge cancel/confirm/focus and exact key removal, CSP-safe node modals, and prepared-dashboard passive byte invariance.
+- Keep vendored Chart.js provenance pinned to the bundled artifact and manual update procedure.
+
 ## Global release gates
 
 - No financial data, labels, amounts, or raw backups enter tests, logs, screenshots, or Git.

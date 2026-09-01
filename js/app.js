@@ -36,9 +36,10 @@ const App = {
     document.getElementById('modal-overlay').addEventListener('click', event => {
       if (event.target === event.currentTarget) this.hideModal();
     });
+    window.addEventListener('storage', event => this.onExternalStorageChange(event));
     document.addEventListener('keydown', event => {
       const overlay = document.getElementById('modal-overlay');
-      if (overlay.style.display === 'none') return;
+      if (overlay.hidden) return;
       if (event.key === 'Escape') { event.preventDefault(); this.hideModal(); }
       else if (event.key === 'Tab') this.trapModalFocus(event);
     });
@@ -260,6 +261,27 @@ const App = {
     if (this.currentView === 'dashboard') requestAnimationFrame(() => DashboardView.render());
   },
 
+  onExternalStorageChange(event) {
+    const prefix = 'zeroBudget' + '_';
+    if (event.storageArea !== localStorage || !event.key ||
+      !(event.key === `${prefix}data` || event.key === `${prefix}corrupt` || event.key.startsWith(`${prefix}snapshot:`))) return;
+    let result;
+    try { result = Store.reload(); }
+    catch (error) { this.showError(error); return; }
+    if (!result.changed) return;
+    this.hideModal(); this.clearExpenseUndo();
+    if (result.state === 'recovery-required') {
+      this.showRecovery(result);
+      this.announceStatus('Local budget data changed in another tab and now needs recovery. Nothing was overwritten.');
+      return;
+    }
+    if (document.getElementById('application-shell').hidden) this.enterApplication('', result.state);
+    else this.refreshAllViews();
+    document.getElementById('last-saved').textContent = result.state === 'empty' ? 'Not saved yet' : 'Updated from another tab';
+    this.announceStatus('This budget changed in another tab. The latest saved data is now shown.');
+    requestAnimationFrame(() => document.getElementById('current-month-label')?.focus({ preventScroll: true }));
+  },
+
   openRecurringPreview(trigger) {
     this.recurringTrigger = trigger;
     try {
@@ -346,35 +368,14 @@ const App = {
     });
   },
 
-  showModal(title, bodyHtml, onSave) {
-    this.modalTrigger = document.activeElement;
-    document.getElementById('modal-title').textContent = title;
-    document.getElementById('modal-body').innerHTML = bodyHtml;
-    const overlay = document.getElementById('modal-overlay'); overlay.style.display = 'flex';
-    overlay.setAttribute('role', 'dialog'); overlay.setAttribute('aria-modal', 'true'); overlay.setAttribute('aria-labelledby', 'modal-title');
-    document.getElementById('application-shell').inert = true;
-    const save = document.getElementById('modal-save'); const replacement = save.cloneNode(true); save.replaceWith(replacement);
-    replacement.textContent = 'Save'; replacement.className = 'btn btn-primary'; replacement.disabled = false;
-    replacement.addEventListener('click', () => { if (onSave() !== false) this.hideModal(); });
-    requestAnimationFrame(() => (document.querySelector('#modal-body input, #modal-body select') || document.getElementById('modal-cancel')).focus());
-  },
+  showModal(options) { ModalView.open(options); this.modalTrigger = ModalView.trigger; },
 
   hideModal() {
-    document.getElementById('modal-overlay').style.display = 'none';
-    const shell = document.getElementById('application-shell');
-    if (!shell.hidden) shell.inert = false;
-    if (this.modalTrigger && this.modalTrigger.isConnected) this.modalTrigger.focus();
+    ModalView.trigger = this.modalTrigger || ModalView.trigger; ModalView.close(); this.modalTrigger = null;
   },
 
   trapModalFocus(event) {
-    const overlay = document.getElementById('modal-overlay');
-    const controls = [...overlay.querySelectorAll('button, input, select, textarea, [tabindex]:not([tabindex="-1"])')]
-      .filter(control => !control.disabled && !control.hidden);
-    if (!controls.length) { event.preventDefault(); return; }
-    const first = controls[0]; const last = controls[controls.length - 1];
-    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
-    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
-    else if (!overlay.contains(document.activeElement)) { event.preventDefault(); first.focus(); }
+    ModalView.trapFocus(event);
   },
 
   downloadBackup() {
@@ -444,6 +445,12 @@ const App = {
       this.showWarnings(Store.getStatus().warnings || []);
       return true;
     } catch (error) {
+      if (error?.code === 'STALE_WRITE') {
+        try {
+          const result = Store.reload(); this.clearExpenseUndo();
+          if (result.state === 'recovery-required') this.showRecovery(result); else this.refreshAllViews();
+        } catch (_reloadError) { /* The original stale-write message remains authoritative. */ }
+      }
       this.showError(error);
       if (onFailure) onFailure();
       return false;
@@ -522,11 +529,17 @@ const App = {
       STALE_ACTUAL_RESOLUTION_PREVIEW: 'Your budget changed while this preview was open. No actual amounts were applied.',
       INVALID_ACTUAL_RESOLUTION_PREVIEW: 'This actual-amount preview is no longer valid. No actual amounts were applied.',
       INVALID_COMPARISON_BACKUP: 'This file is not a valid Warm Ledger backup. Nothing was imported and your ledger was not changed.',
+      STORE_BUSY: 'Warm Ledger is saving in another tab. Wait a moment and try again. Nothing was overwritten.',
+      STALE_WRITE: 'This budget changed in another tab. Review the latest saved data and try again. Nothing was overwritten.',
+      INVALID_PURGE_PREVIEW: 'That local-data purge preview is no longer available. Review the purge again.',
+      STALE_PURGE_PREVIEW: 'Local data changed while the purge confirmation was open. Review the purge again. Nothing was removed.',
+      PURGE_FAILED: 'Local Warm Ledger data could not be removed. Your prior data was restored.',
+      PURGE_RECOVERY_FAILED: 'Local data removal could not be safely recovered. Use Data Recovery before continuing.',
       UNKNOWN: 'Warm Ledger could not complete that action. Your last saved budget remains available.'
     };
     const alert = document.getElementById('app-error'); document.getElementById('app-status').textContent = '';
     alert.textContent = messages[code] || messages.UNKNOWN; alert.hidden = false;
-    if (document.getElementById('modal-overlay').style.display === 'none') alert.focus({ preventScroll: true });
+    if (document.getElementById('modal-overlay').hidden) alert.focus({ preventScroll: true });
   },
   fileTimestamp() { return new Date().toISOString().replace(/[:.]/g, '-'); },
   formatTimestamp(value) { const date = new Date(value); return Number.isFinite(date.getTime()) ? date.toLocaleString() : 'Unknown time'; },

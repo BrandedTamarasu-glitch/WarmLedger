@@ -67,7 +67,7 @@ test('suggestion review passes only a freshly revalidated disabled draft', () =>
 });
 
 test('unknown-schedule drafts require a neutral choice while ordinary Add stays monthly', () => {
-  assert.match(source, /select id="field-template-cadence" required><option value="">Choose a schedule<\/option><option value="monthly">Monthly/);
+  assert.match(source, /ModalView\.select\('field-template-cadence',[\s\S]*\['', 'Choose a schedule'\],[\s\S]*\['monthly', 'Monthly'\]/);
   assert.match(source, /const recurrence = existing \? existing\.recurrence : \{ cadence: 'monthly', day: 1 \}/);
   assert.match(source, /value = recurrence \? recurrence\.cadence : ''/);
   assert.match(source, /if \(!cadence\) return null/);

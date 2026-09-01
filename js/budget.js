@@ -581,29 +581,14 @@ const BudgetView = {
   showPaycheckModal(existing, reviewFocus = null) {
     const earners = Store.getEarners();
     const title = existing ? 'Edit Paycheck' : 'Add Paycheck';
-    const amountFields = `
-        <div class="form-group">
-          <label for="field-planned-amount">Planned amount</label>
-          <input type="number" id="field-planned-amount" step="0.01" min="0" max="1000000000000" required>
-        </div>
-        <div class="form-group">
-          <label for="field-actual-amount">Actual amount</label>
-          <input type="number" id="field-actual-amount" step="0.01" min="0" max="1000000000000" placeholder="Not entered">
-        </div>`;
-
-    App.showModal(title, `
-      <div class="form-group">
-        <label for="field-earner">Earner</label>
-        <select id="field-earner"></select>
-      </div>
-      <div class="form-row">
-        ${amountFields}
-        <div class="form-group">
-          <label for="field-date">Pay date (defaults to the 1st)</label>
-          <input type="date" id="field-date">
-        </div>
-      </div>
-    `, () => {
+    App.showModal({ title, buildBody: () => ModalView.fragment(
+      ModalView.field('Earner', ModalView.select('field-earner')),
+      ModalView.element('div', { className: 'form-row' }, [
+        ModalView.field('Planned amount', ModalView.input('field-planned-amount', 'number', { step: '0.01', min: '0', max: '1000000000000', required: true })),
+        ModalView.field('Actual amount', ModalView.input('field-actual-amount', 'number', { step: '0.01', min: '0', max: '1000000000000', placeholder: 'Not entered' })),
+        ModalView.field('Pay date (defaults to the 1st)', ModalView.input('field-date', 'date'))
+      ])
+    ), onSave: () => {
       const earnerId = document.getElementById('field-earner').value;
       const date = document.getElementById('field-date').value;
       const plannedInput = document.getElementById('field-planned-amount');
@@ -620,7 +605,7 @@ const BudgetView = {
         if (reviewFocus) this.restoreReviewFocus(reviewFocus.kind, reviewFocus.id);
         else if (existing) this.focusEditControl('paycheck', existing.id);
       } });
-    });
+    }});
     document.getElementById('modal-save').disabled = false;
     const earnerSelect = document.getElementById('field-earner');
     const currentEarner = existing ? Store.getEarner(existing.earnerId) : null;
@@ -885,50 +870,27 @@ const BudgetView = {
   showExpenseModal(existing, reviewFocus = null) {
     const categories = Store.getCategories();
     const title = existing ? 'Edit Expense' : 'Add Expense';
-    const amountAndDateFields = `
-      <div class="form-row">
-        <div class="form-group">
-          <label for="field-planned-amount">Planned amount</label>
-          <input type="number" id="field-planned-amount" step="0.01" min="0" max="1000000000000" required>
-        </div>
-        <div class="form-group">
-          <label for="field-actual-amount">Actual amount</label>
-          <input type="number" id="field-actual-amount" step="0.01" min="0" max="1000000000000" placeholder="Not entered">
-        </div>
-      </div>
-      <div class="form-group">
-        <label for="field-expense-date">Expense date (defaults to the 1st)</label>
-        <input type="date" id="field-expense-date">
-      </div>`;
-
-    App.showModal(title, `
-      <div class="form-group">
-        <label for="field-category">Category</label>
-        <select id="field-category"></select>
-      </div>
-      <div class="form-group" id="preset-group">
-        <label for="field-preset">Preset Item (or type custom below)</label>
-        <select id="field-preset">
-          <option value="">-- Custom --</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label for="field-name">Name</label>
-        <input type="text" id="field-name" maxlength="120" placeholder="Expense name" required>
-      </div>
-      ${amountAndDateFields}
-      <div class="form-group">
-        <label for="field-method">Payment Method</label>
-        <select id="field-method">
-          <option value="bank">Bank</option>
-          <option value="credit_card">Credit Card</option>
-          <option value="savings">Savings</option>
-          <option value="investments">Investments</option>
-        </select>
-      </div>
-      ${existing ? '' : `<label class="template-shortcut"><input type="checkbox" id="field-create-expense-template"> Review a recurring template after saving</label>
-      <p class="field-help">The expense is saved first. A disabled monthly template opens for your review and adds no budget records.</p>`}
-    `, () => {
+    App.showModal({ title, buildBody: () => {
+      const nodes = [
+        ModalView.field('Category', ModalView.select('field-category')),
+        ModalView.field('Preset Item (or type custom below)', ModalView.select('field-preset', [['', '-- Custom --']]), { id: 'preset-group' }),
+        ModalView.field('Name', ModalView.input('field-name', 'text', { maxlength: '120', placeholder: 'Expense name', required: true })),
+        ModalView.element('div', { className: 'form-row' }, [
+          ModalView.field('Planned amount', ModalView.input('field-planned-amount', 'number', { step: '0.01', min: '0', max: '1000000000000', required: true })),
+          ModalView.field('Actual amount', ModalView.input('field-actual-amount', 'number', { step: '0.01', min: '0', max: '1000000000000', placeholder: 'Not entered' }))
+        ]),
+        ModalView.field('Expense date (defaults to the 1st)', ModalView.input('field-expense-date', 'date')),
+        ModalView.field('Payment Method', ModalView.select('field-method', [['bank', 'Bank'], ['credit_card', 'Credit Card'], ['savings', 'Savings'], ['investments', 'Investments']]))
+      ];
+      if (!existing) {
+        const checkbox = ModalView.input('field-create-expense-template', 'checkbox');
+        const shortcut = ModalView.element('label', { className: 'template-shortcut' });
+        shortcut.append(checkbox, document.createTextNode(' Review a recurring template after saving'));
+        nodes.push(shortcut,
+          ModalView.element('p', { className: 'field-help', text: 'The expense is saved first. A disabled monthly template opens for your review and adds no budget records.' }));
+      }
+      return ModalView.fragment(...nodes);
+    }, onSave: () => {
       const categoryId = document.getElementById('field-category').value;
       const categoryItemId = document.getElementById('field-preset').value || null;
       const customName = document.getElementById('field-name').value.trim();
@@ -965,7 +927,7 @@ const BudgetView = {
           if (reviewFocus) this.restoreReviewFocus(reviewFocus.kind, reviewFocus.id);
           else if (existing) this.focusEditControl('expense', existing.id);
       } });
-    });
+    }});
     document.getElementById('modal-save').disabled = false;
 
     const categorySelect = document.getElementById('field-category');
@@ -1033,11 +995,11 @@ const BudgetView = {
     const expenseRemaining = planning.expenseRemaining;
 
     if (!this.allocationAvailable(summary)) {
-      section.style.display = 'none';
+      section.hidden = true;
       return;
     }
 
-    section.style.display = 'block';
+    section.hidden = false;
     document.getElementById('allocation-remaining').textContent = this.fmt(expenseRemaining);
 
     const alloc = month.allocations;

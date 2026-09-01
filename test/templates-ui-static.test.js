@@ -45,7 +45,7 @@ test('cards expose textual states and keyboard-native ordered actions', () => {
 });
 
 test('forms cover all frozen cadences, inclusive bounds, clamping, and structural IDs', () => {
-  for (const cadence of ['monthly', 'twice-monthly', 'weekly', 'biweekly']) assert.match(source, new RegExp(`value=\\"${cadence}\\"`));
+  for (const cadence of ['monthly', 'twice-monthly', 'weekly', 'biweekly']) assert.match(source, new RegExp(`\\['${cadence}',`));
   assert.match(source, /Start date \(inclusive\)/);
   assert.match(source, /End date \(inclusive, optional\)/);
   assert.match(source, /Short months use their final day/);

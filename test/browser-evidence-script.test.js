@@ -126,6 +126,22 @@ test('browser evidence proves Saved Month Comparison defaults, validation, exact
   assert.match(source, /Saved Month Comparison explanation print evidence failed/);
 });
 
+test('browser evidence covers prepared dashboards, multi-tab recovery, and local-data purge safety', () => {
+  for (const marker of ['preparedDashboardPassiveByteExact', 'multiTabStaleBusyReloadRecovery',
+    'purgeCancelConfirmFocusExactRemoval', 'cspSafeNodeModal']) {
+    assert.match(source, new RegExp(marker));
+  }
+  assert.match(source, /Store\.prepareDashboardRange\(/);
+  assert.match(source, /Store\.reload\(\)/);
+  assert.match(source, /review-local-data-purge/);
+  assert.match(source, /zeroBudget_write_lock/);
+  assert.match(source, /modal-body/);
+  assert.match(source, /current-month-label/);
+  assert.match(source, /recovery-title/);
+  assert.match(source, /snapshotCountBefore/);
+  assert.match(source, /snapshotCount === snapshotCountBefore \+ snapshotKeys\.length/);
+});
+
 test('browser evidence proves Explain change is lazy, transient, routable, and export-neutral', () => {
   for (const marker of ['savedMonthComparisonExplainLazyReplaceCloseTransitions',
     'savedMonthComparisonExplainNullZeroStaleSuccessCsvByteExact']) assert.match(source, new RegExp(marker));

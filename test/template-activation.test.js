@@ -85,7 +85,7 @@ test('activation apply enables exactly selected templates in one write and never
   assert.deepEqual(normalized, before);
   assert.deepEqual(Object.keys(after.months), []);
   assert.equal(storage.operations.filter(item => item.op === 'setItem' && item.key === STORAGE_KEY).length, 1);
-  assert.equal(storage.operations.some(item => item.op === 'removeItem'), false);
+  assert.equal(storage.operations.some(item => item.op === 'removeItem' && item.key !== 'zeroBudget_write_lock'), false);
   code('INVALID_TEMPLATE_ACTIVATION_PREVIEW', () => store.applyTemplateActivationPreview(preview));
 
   const recurring = store.previewRecurringMonth('2026-02');
@@ -139,4 +139,3 @@ test('activation capabilities reject clones, foreign stores, replay, stale state
   assert.equal(faulted.storage.getItem(STORAGE_KEY), raw);
   code('INVALID_TEMPLATE_ACTIVATION_PREVIEW', () => faulted.store.applyTemplateActivationPreview(faultPreview));
 });
-

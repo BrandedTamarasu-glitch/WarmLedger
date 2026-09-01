@@ -114,7 +114,7 @@ test('ready render uses only financial activity, exposes overview hooks, and nev
   dashboard.render();
   assert.equal(element('dashboard-state').hidden, true); assert.equal(element('dashboard-results').hidden, false);
   assert.equal(element('dashboard-overview').children.length, 3);
-  assert.equal(calls.length, 7); assert.ok(calls.every(call => call[1].length === 2));
+  assert.equal(calls.length, 7); assert.ok(calls.every(call => call[1].monthKeys.length === 2));
 });
 
 test('missing-actual action states global scope and routes to Data Health with deterministic heading focus', () => {

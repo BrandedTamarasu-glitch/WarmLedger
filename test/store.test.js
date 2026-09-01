@@ -1286,6 +1286,7 @@ test('failed primary is attempted exactly once after daily snapshot set and read
   const snapshotKey = snapshotKeys(storage)[0];
   const relevant = storage.attempts.filter(entry => entry.key === snapshotKey || entry.key === STORAGE_KEY);
   assert.deepEqual(relevant, [
+    { op: 'getItem', key: STORAGE_KEY },
     { op: 'setItem', key: snapshotKey },
     { op: 'getItem', key: snapshotKey },
     { op: 'setItem', key: STORAGE_KEY }
@@ -1439,7 +1440,8 @@ test('required snapshot set and readback precede exactly one changed import prim
   store.commitImport(preview);
   const snapshotKey = snapshotKeys(storage)[0];
   const relevant = storage.attempts.filter(entry => entry.key === snapshotKey || entry.key === STORAGE_KEY);
-  assert.deepEqual(relevant.slice(0, 3), [
+  assert.deepEqual(relevant.slice(0, 4), [
+    { op: 'getItem', key: STORAGE_KEY },
     { op: 'setItem', key: snapshotKey },
     { op: 'getItem', key: snapshotKey },
     { op: 'setItem', key: STORAGE_KEY }

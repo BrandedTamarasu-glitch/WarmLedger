@@ -14,6 +14,7 @@ const schema = read('js/data-schema.js');
 const recurrence = read('js/recurrence.js');
 const evidence = read('scripts/browser-evidence.js');
 const readme = read('README.md');
+const notices = read('THIRD_PARTY_NOTICES.md');
 const icon = fs.readFileSync(path.join(root, 'warm-ledger-icon.png'));
 const packageJson = JSON.parse(read('package.json'));
 
@@ -68,6 +69,9 @@ test('repository presentation names Warm Ledger and discloses legacy compatibili
   assert.match(readme, /keep using the same local project path/);
   assert.match(readme, /legacy storage keys and backup\/snapshot format identifiers are intentionally unchanged/);
   assert.match(readme, /Warm Ledger or legacy ZeroBudget JSON backup/);
+  assert.match(readme, /THIRD_PARTY_NOTICES\.md/);
+  assert.match(notices, /Chart\.js/);
+  assert.match(notices, /4\.4\.7/);
 });
 
 test('application icon is an exact 256px RGBA PNG', () => {

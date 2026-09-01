@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' data: blob:; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'none'; object-src 'none'; media-src 'self' data: blob:; base-uri 'none'; form-action 'self'">
   <title>Warm Ledger</title>
   <link rel="icon" href="warm-ledger-icon.png" type="image/png">
   <link rel="stylesheet" href="css/styles.css">
@@ -89,7 +90,7 @@
       </section>
 
       <!-- Remaining Allocation -->
-      <section id="allocation-section" class="budget-section allocation-section" style="display:none;">
+      <section id="allocation-section" class="budget-section allocation-section" hidden>
         <div class="section-header">
           <h3>Allocate Remaining Funds</h3>
         </div>
@@ -501,7 +502,7 @@
   </dialog>
 
   <!-- Modals -->
-  <div id="modal-overlay" class="modal-overlay" style="display:none;">
+  <div id="modal-overlay" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-title" hidden>
     <div id="modal" class="modal">
       <div class="modal-header">
         <h3 id="modal-title"></h3>
@@ -519,12 +520,15 @@
   <script src="js/recurrence.js"></script>
   <script src="js/data-health.js"></script>
   <script src="js/exact-money.js"></script>
+  <script src="js/storage-engine.js"></script>
   <script src="js/data.js"></script>
   <script src="js/budget.js"></script>
   <script src="js/transfers.js"></script>
+  <script src="js/dashboard-models.js"></script>
   <script src="js/dashboard.js"></script>
   <script src="js/structure.js"></script>
   <script src="js/data-health-view.js"></script>
+  <script src="js/modal-view.js"></script>
   <script src="js/app.js"></script>
   <script src="js/templates.js"></script>
 </body>

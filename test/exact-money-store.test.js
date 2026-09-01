@@ -41,6 +41,7 @@ function loadStoreWithoutExactMoney() {
     ZeroBudgetSchema: Schema,
     ZeroBudgetRecurrence: Recurrence,
     ZeroBudgetDataHealth: DataHealth,
+    ZeroBudgetStorageEngine: require('../js/storage-engine.js'),
     module: { exports: {} }
   });
   vm.runInContext(source, context, { filename: 'data.js' });

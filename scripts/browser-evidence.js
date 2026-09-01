@@ -783,6 +783,24 @@ async function run(options) {
     await cdp.send('Page.navigate', { url: appUrl });
     await new Promise(resolve => setTimeout(resolve, 800));
     const scenario = await evaluate(cdp, SCENARIO);
+    const preparedDashboard = await evaluate(cdp, `(() => {
+      const primaryKey = Store.STORAGE_KEY || ZeroBudgetStore.STORAGE_KEY;
+      const before = localStorage.getItem(primaryKey);
+      const prepared = Store.prepareDashboardRange({
+        monthKeys: [document.getElementById('dash-from').value, document.getElementById('dash-to').value],
+        basis: DashboardView.basis
+      });
+      DashboardView.render();
+      const after = localStorage.getItem(primaryKey);
+      const monthKey = prepared.monthKeys[0];
+      return { byteExact: before === after,
+        monthKeysExact: prepared.monthKeys.length === 2,
+        preparedFrozen: Object.isFrozen(prepared) && Object.isFrozen(prepared.months[monthKey]) &&
+          Object.isFrozen(prepared.months[monthKey].summary) };
+    })()`);
+    assertEvidence(preparedDashboard.byteExact && preparedDashboard.monthKeysExact && preparedDashboard.preparedFrozen,
+      'Prepared dashboard snapshot changed bytes or was not frozen: ' + JSON.stringify(preparedDashboard));
+    scenario.preparedDashboardPassiveByteExact = true;
     const escapeSetup = await evaluate(cdp, `(async () => {
       App.switchView('budget'); BudgetView.render();
       const button = document.querySelector('.expense-table [aria-label^="Delete "]');
@@ -1090,6 +1108,76 @@ async function run(options) {
       blocked.usable && blocked.byteExact && blocked.plannedAmount === 321.001,
       `Blocked sub-cent v3 evidence failed: ${JSON.stringify(blocked)}`);
     scenario.exactMoneyBlockedSubCentWriteFreeUsable = true;
+    const multiTab = await evaluate(cdp, `(() => {
+      const primaryKey = ZeroBudgetStore.STORAGE_KEY || Store.STORAGE_KEY;
+      const lockKey = ZeroBudgetStore.WRITE_LOCK_KEY || Store.WRITE_LOCK_KEY || 'zeroBudget_write_lock';
+      const monthKey = BudgetView.currentMonth;
+      const before = localStorage.getItem(primaryKey);
+      localStorage.setItem(lockKey, JSON.stringify({ ownerId: 'other-tab', expiresAt: Date.now() + 60000 }));
+      let busy = false;
+      try {
+        Store.updateAllocation(monthKey, 'savings', (Store.getMonth(monthKey).allocations.savings || 0) + 1);
+      } catch (error) { busy = error?.code === 'STORE_BUSY'; }
+      localStorage.removeItem(lockKey);
+      const external = JSON.parse(before);
+      external.months[monthKey].allocations.savings += 2;
+      localStorage.setItem(primaryKey, JSON.stringify(external));
+      let stale = false;
+      try {
+        Store.updateAllocation(monthKey, 'savings', external.months[monthKey].allocations.savings + 1);
+      } catch (error) { stale = error?.code === 'STALE_WRITE'; }
+      const reload = Store.reload();
+      return { busy, stale, reloadChanged: reload.changed,
+        byteExact: localStorage.getItem(primaryKey) === JSON.stringify(external),
+        recovered: Store.getMonth(monthKey).allocations.savings === external.months[monthKey].allocations.savings };
+    })()`);
+    assertEvidence(multiTab.busy && multiTab.stale && multiTab.reloadChanged && multiTab.byteExact && multiTab.recovered,
+      `Multi-tab stale or busy write did not fail closed and recover by reload: ${JSON.stringify(multiTab)}`);
+    scenario.multiTabStaleBusyReloadRecovery = true;
+    const purge = await evaluate(cdp, `(async () => {
+      App.switchView('data-health'); DataHealthView.render();
+      const primaryKey = ZeroBudgetStore.STORAGE_KEY || Store.STORAGE_KEY;
+      const corruptKey = ZeroBudgetStore.CORRUPT_KEY || Store.CORRUPT_KEY || 'zeroBudget_corrupt';
+      const lockKey = ZeroBudgetStore.WRITE_LOCK_KEY || Store.WRITE_LOCK_KEY || 'zeroBudget_write_lock';
+      const snapshotKeys = ['zeroBudget_snapshot:browser-evidence-a', 'zeroBudget_snapshot:browser-evidence-b'];
+      const trigger = document.getElementById('review-local-data-purge');
+      const before = localStorage.getItem(primaryKey);
+      const snapshotCountBefore = Object.keys(localStorage).filter(key => key.startsWith('zeroBudget_snapshot:')).length;
+      localStorage.setItem(corruptKey, 'browser-evidence');
+      snapshotKeys.forEach(key => localStorage.setItem(key, before));
+      localStorage.setItem(lockKey, JSON.stringify({ ownerId: 'purge-evidence', expiresAt: Date.now() - 1000 }));
+      const preview = Store.previewLocalDataPurge();
+      trigger.click();
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const dialog = document.getElementById('modal-overlay');
+      const body = document.getElementById('modal-body');
+      const cancel = document.getElementById('modal-cancel');
+      const save = document.getElementById('modal-save');
+      const cancelFocused = document.activeElement === cancel;
+      const modalOpen = !dialog.hidden && body.children.length > 0 && !body.querySelector('img') &&
+        body.textContent.includes('Purge removes the active budget');
+      cancel.click();
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const cancelRestored = document.activeElement === trigger && localStorage.getItem(primaryKey) === before;
+      App.switchView('budget'); BudgetView.render();
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      trigger.click();
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      save.click();
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      await new Promise(resolve => setTimeout(resolve, 50));
+      const purgeRemoved = localStorage.getItem(primaryKey) === null && localStorage.getItem(corruptKey) === null &&
+        snapshotKeys.every(key => localStorage.getItem(key) === null) && localStorage.getItem(lockKey) === null;
+      const focusRestored = document.activeElement.id === 'current-month-label' || document.activeElement.id === 'recovery-title';
+      return { previewed: preview.activeDataPresent && preview.corruptEvidencePresent &&
+        preview.snapshotCount === snapshotCountBefore + snapshotKeys.length &&
+        preview.lockPresent, cancelFocused, modalOpen, cancelRestored, purgeRemoved, focusRestored };
+    })()`);
+    assertEvidence(purge.previewed && purge.cancelFocused && purge.modalOpen && purge.cancelRestored &&
+      purge.purgeRemoved && purge.focusRestored,
+      `Local-data purge did not preserve focus or remove exact keys: ${JSON.stringify(purge)}`);
+    scenario.cspSafeNodeModal = true;
+    scenario.purgeCancelConfirmFocusExactRemoval = true;
     delete scenario.blockedV3Bytes; delete scenario.clearedRecordId;
     const errors = cdp.events.filter(event => event.method === 'Runtime.exceptionThrown' ||
       (event.method === 'Runtime.consoleAPICalled' && event.params.type === 'error'));

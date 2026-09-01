@@ -41,7 +41,7 @@ test('consumer sources avoid truthiness amount fallbacks', () => {
   assert.doesNotMatch(dashboard, /totalIncome\b/);
   assert.doesNotMatch(dashboard, /totalProjected\b/);
   assert.doesNotMatch(dashboard, /\.projected\b/);
-  assert.match(dashboard, /calcPaymentMethodTotals\(mk, basis\)/);
+  assert.match(dashboard, /prepared\.months\[mk\]\.paymentMethodTotals/);
   assert.match(dashboard, /incompleteMethods\[index\]\.has\(method\.key\) \? null/);
   assert.doesNotMatch(transfers, /paycheck\.amount\b/);
   assert.doesNotMatch(transfers, /paycheck\.amount\s*-/);

@@ -4,6 +4,7 @@ const DataHealthView = {
   datePreview: null,
   exactMoneyPreview: null,
   exactMoneyTrigger: null,
+  purgePreview: null,
 
   init() {
     document.getElementById('actual-resolution-dialog').addEventListener('close', () => this.onActualDialogClose());
@@ -46,6 +47,7 @@ const DataHealthView = {
     container.append(overview);
     container.append(this.exactMoneyMigrationSection(migration));
     container.append(this.moneyPrecisionDisclosure(moneyAudit));
+    container.append(this.localStoragePrivacySection());
 
     if (health.missingActuals.length) container.append(this.actualsSection(health.missingActuals));
     if (health.missingDates.length) container.append(this.dateResolutionSection(health.missingDates));
@@ -110,6 +112,51 @@ const DataHealthView = {
     content.append(this.node('p', 'muted-text',
       'This check cannot determine whether sub-cent digits were intentional or came from earlier calculations or imports. Keep a current JSON backup. Exact-money storage and any conversion workflow require a separate reviewed migration.'));
     details.append(content); return details;
+  },
+
+  localStoragePrivacySection() {
+    const section = this.section('Local storage & privacy',
+      'Warm Ledger stores active data, local safety snapshots, and preserved corrupt bytes as readable local browser data. Downloaded JSON backups and browser-evidence files are also readable unless manually deleted.');
+    const warning = this.node('p', 'muted-text',
+      'Purge removes the active budget, local safety snapshots, and preserved recovery bytes from this browser only. Downloaded files are not removed.');
+    const button = this.node('button', 'btn btn-danger', 'Review local data purge'); button.type = 'button'; button.id = 'review-local-data-purge';
+    button.addEventListener('click', () => this.previewPurge(button)); section.append(warning, button); return section;
+  },
+
+  previewPurge(trigger) {
+    try {
+      this.purgePreview = Store.previewLocalDataPurge();
+      const preview = this.purgePreview;
+      App.showModal({ title: 'Purge local Warm Ledger data?', submitLabel: 'Purge local data',
+        initialFocus: () => document.getElementById('modal-cancel'),
+        buildBody: () => {
+          const warning = this.node('p', '', 'Purge removes the active budget, local safety snapshots, and preserved recovery bytes from this browser only.');
+          const list = this.node('ul', 'preview-list');
+          [['Active budget', preview.activeDataPresent ? 'Present' : 'Not present'],
+            ['Local safety snapshots', String(preview.snapshotCount)],
+            ['Preserved recovery bytes', preview.corruptEvidencePresent ? 'Present' : 'Not present']].forEach(([label, value]) => {
+            const item = this.node('li'); item.append(this.node('span', '', label), this.node('strong', '', value)); list.append(item);
+          });
+          return ModalView.fragment(warning, list, this.node('p', 'muted-text', 'Downloaded backups and browser-evidence files must be deleted manually.'));
+        },
+        onSave: () => this.commitPurge()
+      });
+      App.modalTrigger = trigger; ModalView.trigger = trigger;
+      document.getElementById('modal-save').className = 'btn btn-danger';
+    } catch (error) { this.purgePreview = null; App.showError(error); trigger.focus(); }
+  },
+
+  commitPurge() {
+    const preview = this.purgePreview; this.purgePreview = null;
+    return App.runMutation(() => Store.commitLocalDataPurge(preview), {
+      onSuccess: () => {
+        App.clearExpenseUndo(); App.refreshAllViews();
+        document.getElementById('last-saved').textContent = 'Not saved yet';
+        App.announceStatus('Local Warm Ledger data was removed from this browser. Restore a backup or start fresh to continue.');
+        requestAnimationFrame(() => document.getElementById('current-month-label')?.focus({ preventScroll: true }));
+      },
+      onFailure: () => { this.render(); }
+    });
   },
 
   record(reference) {

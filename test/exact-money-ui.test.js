@@ -24,7 +24,7 @@ test('exact-money helper loads before Store and Data Health uses aggregate audit
 });
 
 test('precision audit is a closed native disclosure with exact passive copy and no action or live region', () => {
-  const method = view.slice(view.indexOf('moneyPrecisionDisclosure(audit)'), view.indexOf('record(reference)'));
+  const method = view.slice(view.indexOf('  moneyPrecisionDisclosure(audit) {'), view.indexOf('  localStoragePrivacySection() {'));
   assert.match(method, /this\.node\('details', 'money-precision-audit'\)/);
   assert.doesNotMatch(method, /\.open\s*=|setAttribute\(['"]open|button|role|aria-live|addEventListener/);
   assert.match(method, /Money precision needs review/);

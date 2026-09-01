@@ -710,26 +710,52 @@ const DashboardView = {
     return true;
   },
 
-  buildCsv(months, basis) {
+  prepareRange(monthKeys, basis = this.basis) {
+    if (typeof Store.prepareDashboardRange === 'function') return Store.prepareDashboardRange({ monthKeys: [...monthKeys], basis });
+    // Compatibility seam for isolated view tests; production always supplies the prepared Store API.
+    const months = {};
+    for (const monthKey of monthKeys) {
+      const month = typeof Store.getMonth === 'function' ? Store.getMonth(monthKey) : {};
+      const paychecks = month.paychecks || []; const expenses = month.expenses || [];
+      const summary = typeof Store.calcMonthSummary === 'function' ? Store.calcMonthSummary(monthKey) : {};
+      months[monthKey] = { summary, allocations: month.allocations || {},
+        categoryTotals: typeof Store.calcCategoryTotals === 'function' ? Store.calcCategoryTotals(monthKey) : {},
+        paymentMethodTotals: typeof Store.calcPaymentMethodTotals === 'function' ? Store.calcPaymentMethodTotals(monthKey, basis) : {},
+        incompletePaymentMethods: basis === 'actual' ? expenses.filter(item => item.actualAmount === null).map(item => item.paymentMethod) : [],
+        paycheckCount: paychecks.length, expenseCount: expenses.length };
+    }
+    return { basis, monthKeys: [...monthKeys], months };
+  },
+
+  asPrepared(value, basis = this.basis) {
+    return Array.isArray(value) ? this.prepareRange(value, basis) : value;
+  },
+
+  preparedEntry(prepared, monthKey) {
+    return prepared.months[monthKey];
+  },
+
+  buildCsv(monthsOrPrepared, basis) {
+    const prepared = Array.isArray(monthsOrPrepared) ? this.prepareRange(monthsOrPrepared, basis) : monthsOrPrepared;
+    const months = prepared.monthKeys;
     const rows = [['Month', 'Basis', 'Metric', 'Category', 'Payment method', 'Value', 'Status']];
     const add = (month, metric, category, paymentMethod, value) => rows.push([
       month, basis, metric, category, paymentMethod, value === null ? '' : value, value === null ? 'Incomplete' : 'Complete'
     ]);
     for (const month of months) {
-      const summary = Store.calcMonthSummary(month);
+      const entry = this.preparedEntry(prepared, month); const summary = entry.summary;
       const income = basis === 'planned' ? this.plannedIncome(summary) :
         (summary.unresolvedIncomeCount === 0 ? summary.totalActualIncome : null);
       const expenses = basis === 'planned' ? this.plannedExpenses(summary) : this.actualExpenses(summary);
       add(month, 'Income', '', '', income);
       add(month, 'Total expenses', '', '', expenses);
-      const categoryTotals = Store.calcCategoryTotals(month);
+      const categoryTotals = entry.categoryTotals;
       for (const category of Object.keys(categoryTotals).sort()) {
         const value = basis === 'planned' ? this.categoryPlanned(categoryTotals[category]) : this.categoryActual(categoryTotals[category]);
         add(month, 'Category spending', category, '', value);
       }
-      const methodTotals = Store.calcPaymentMethodTotals(month, basis);
-      const incompleteMethods = new Set(basis === 'actual' ? Store.getMonth(month).expenses
-        .filter(expense => expense.actualAmount === null).map(expense => expense.paymentMethod) : []);
+      const methodTotals = entry.paymentMethodTotals;
+      const incompleteMethods = new Set(basis === 'actual' ? entry.incompletePaymentMethods : []);
       for (const [key, label] of [['bank', 'Bank'], ['credit_card', 'Credit Card'], ['savings', 'Savings'], ['investments', 'Investments']]) {
         add(month, 'Bills by payment method', '', label, incompleteMethods.has(key) ? null : (methodTotals[key] ?? 0));
       }
@@ -742,13 +768,13 @@ const DashboardView = {
     return dashboardForecastMonths(this.forecastHorizon, { year: now.getFullYear(), month: now.getMonth() + 1 }) || Object.freeze([]);
   },
 
-  buildForecastModel(months) {
+  buildForecastModel(months, prepared = this.prepareRange(months, 'planned')) {
     const storedMonths = new Set(Store.getAllMonthKeys());
     const rows = months.map(month => {
       if (!storedMonths.has(month)) return Object.freeze({ month, saved: false, income: null, expenses: null, allocations: null, remainder: null });
-      const summary = Store.calcMonthSummary(month);
+      const entry = prepared.months[month]; const summary = entry.summary;
       const income = this.plannedIncome(summary); const expenses = this.plannedExpenses(summary);
-      const allocations = summary.totalAllocated ?? Object.values(Store.getMonth(month).allocations || {})
+      const allocations = summary.totalAllocated ?? Object.values(entry.allocations || {})
         .reduce((sum, value) => sum + value, 0);
       return Object.freeze({ month, saved: true, income, expenses, allocations,
         remainder: income - expenses - allocations });
@@ -903,10 +929,12 @@ const DashboardView = {
     container.replaceChildren(table);
   },
 
-  buildCategoryTrendModel(months, basis = 'actual') {
+  buildCategoryTrendModel(prepared, basis = 'actual') {
+    prepared = this.asPrepared(prepared, basis);
+    const months = prepared.monthKeys;
     const allCategories = new Set(); const dataByMonth = {};
     months.forEach(monthKey => {
-      const totals = Store.calcCategoryTotals(monthKey); dataByMonth[monthKey] = totals;
+      const totals = prepared.months[monthKey].categoryTotals; dataByMonth[monthKey] = totals;
       Object.keys(totals).forEach(category => allCategories.add(category));
     });
     const categories = [...allCategories]; const labels = months.map(month => this.formatMonthShort(month));
@@ -920,15 +948,17 @@ const DashboardView = {
           cells: [category, this.formatWholeAmount(datasets[categoryIndex].data[monthIndex])] }))) } };
   },
 
-  buildCompositionModel(months) {
+  buildCompositionModel(prepared) {
+    prepared = this.asPrepared(prepared, 'planned');
+    const months = prepared.monthKeys;
     let targetMonth = months[months.length - 1];
     for (let index = months.length - 1; index >= 0; index--) {
-      if (this.plannedIncome(Store.calcMonthSummary(months[index])) > 0) { targetMonth = months[index]; break; }
+      if (this.plannedIncome(prepared.months[months[index]].summary) > 0) { targetMonth = months[index]; break; }
     }
-    const summary = Store.calcMonthSummary(targetMonth); const plannedIncome = this.plannedIncome(summary);
-    const totals = Store.calcCategoryTotals(targetMonth); const labels = Object.keys(totals);
+    const entry = prepared.months[targetMonth]; const summary = entry.summary; const plannedIncome = this.plannedIncome(summary);
+    const totals = entry.categoryTotals; const labels = Object.keys(totals);
     const data = labels.map(category => this.categoryPlanned(totals[category]));
-    const allocations = Store.getMonth(targetMonth).allocations || {};
+    const allocations = entry.allocations || {};
     ALLOCATION_TYPES.forEach(allocation => {
       if (allocations[allocation.key] > 0) { labels.push(allocation.label); data.push(allocations[allocation.key]); }
     });
@@ -940,19 +970,23 @@ const DashboardView = {
     } };
   },
 
-  buildProjectedActualModel(months) {
+  buildProjectedActualModel(prepared) {
+    prepared = this.asPrepared(prepared, 'actual');
+    const months = prepared.monthKeys;
     const labels = months.map(month => this.formatMonthShort(month));
-    const planned = months.map(month => this.plannedExpenses(Store.calcMonthSummary(month)));
-    const actual = months.map(month => this.actualExpenses(Store.calcMonthSummary(month)));
+    const planned = months.map(month => this.plannedExpenses(prepared.months[month].summary));
+    const actual = months.map(month => this.actualExpenses(prepared.months[month].summary));
     return { labels, planned, actual, table: { caption: 'Planned and actual expenses by month',
       columns: ['Month', 'Planned expenses', 'Actual expenses'], rows: labels.map((label, index) =>
         ({ header: label, cells: [this.formatWholeAmount(planned[index]), this.formatWholeAmount(actual[index])] })) } };
   },
 
-  buildSavingsRateModel(months) {
+  buildSavingsRateModel(prepared) {
+    prepared = this.asPrepared(prepared, 'planned');
+    const months = prepared.monthKeys;
     const labels = months.map(month => this.formatMonthShort(month));
     const rows = months.map(month => {
-      const summary = Store.calcMonthSummary(month); const allocation = Store.getMonth(month).allocations || {};
+      const entry = prepared.months[month]; const summary = entry.summary; const allocation = entry.allocations || {};
       const plannedAllocation = (allocation.savings || 0) + (allocation.investments || 0);
       const plannedIncome = this.plannedIncome(summary);
       return { plannedAllocation, plannedIncome, chartRate: plannedIncome > 0 ? (plannedAllocation / plannedIncome) * 100 : 0 };
@@ -965,12 +999,12 @@ const DashboardView = {
     } };
   },
 
-  buildPaymentMethodModel(months, basis = 'planned') {
+  buildPaymentMethodModel(prepared, basis = 'planned') {
+    prepared = this.asPrepared(prepared, basis);
+    const months = prepared.monthKeys;
     const labels = months.map(month => this.formatMonthShort(month));
-    const totals = months.map(mk => Store.calcPaymentMethodTotals(mk, basis));
-    const incompleteMethods = months.map(mk => new Set(basis === 'actual'
-      ? Store.getMonth(mk).expenses.filter(expense => expense.actualAmount === null).map(expense => expense.paymentMethod)
-      : []));
+    const totals = months.map(mk => prepared.months[mk].paymentMethodTotals);
+    const incompleteMethods = months.map(mk => new Set(basis === 'actual' ? prepared.months[mk].incompletePaymentMethods : []));
     const datasets = [
       { label: 'Bank', key: 'bank' }, { label: 'Credit Card', key: 'credit_card' },
       { label: 'Savings', key: 'savings' }, { label: 'Investments', key: 'investments' }
@@ -982,7 +1016,9 @@ const DashboardView = {
         ({ header: label, cells: datasets.map(dataset => this.formatWholeAmount(dataset.data[monthIndex])) })) } };
   },
 
-  buildYoYModel(months, basis = 'actual') {
+  buildYoYModel(prepared, basis = 'actual') {
+    prepared = this.asPrepared(prepared, basis);
+    const months = prepared.monthKeys;
     const years = {};
     months.forEach(month => { const year = month.slice(0, 4); (years[year] ||= []).push(month); });
     const yearKeys = Object.keys(years).sort();
@@ -991,12 +1027,12 @@ const DashboardView = {
       sequences.every(sequence => JSON.stringify(sequence) === JSON.stringify(sequences[0]));
     if (!eligible) return { eligible: false, reason: 'Select at least two years with the same calendar months to compare categories.' };
     const categories = new Set(); months.forEach(month =>
-      Object.keys(Store.calcCategoryTotals(month)).forEach(category => categories.add(category)));
+      Object.keys(prepared.months[month].categoryTotals).forEach(category => categories.add(category)));
     const labels = [...categories];
     const datasets = yearKeys.map(year => ({ label: year, data: labels.map(category => {
       let total = 0;
       for (const month of years[year]) {
-        const categoryTotal = Store.calcCategoryTotals(month)[category];
+        const categoryTotal = prepared.months[month].categoryTotals[category];
         const value = basis === 'planned' ? this.categoryPlanned(categoryTotal) : this.categoryActual(categoryTotal);
         if (value === null) return null; total += value;
       }
@@ -1009,6 +1045,15 @@ const DashboardView = {
   },
 
   buildCoverageOverview(entries) {
+    if (!Array.isArray(entries)) {
+      if (typeof DashboardModels !== 'undefined') return DashboardModels.coverage(entries);
+      const legacyEntries = entries.monthKeys.map(monthKey => {
+        const entry = entries.months[monthKey];
+        return { monthKey, exists: entry.exists, month: { paychecks: Array(entry.paycheckCount).fill({ plannedAmount: 0, actualAmount: 0 }),
+          expenses: Array(entry.expenseCount).fill({ plannedAmount: 0, actualAmount: 0 }), allocations: entry.allocations } };
+      });
+      return this.buildCoverageOverview(legacyEntries);
+    }
     const snapshot = entries.map(entry => ({ monthKey: entry.monthKey, exists: entry.exists, month: entry.month }));
     let financialActivityMonths = 0; let plannedIncome = 0; let plannedExpenses = 0;
     let actualEnteredCount = 0; let actualMissingCount = 0;
@@ -1127,28 +1172,23 @@ const DashboardView = {
     this.renderForecast();
     const range = this.validateDateRange(this.getDateRange());
     if (range.status !== 'ready') { this.renderState(range); return; }
-    const storedMonths = new Set(Store.getAllMonthKeys());
-    const entries = range.months.map(monthKey => ({
-      monthKey, exists: storedMonths.has(monthKey), month: Store.getMonth(monthKey)
-    }));
-    const overview = this.buildCoverageOverview(entries);
+    const prepared = this.prepareRange(range.months, this.basis);
+    const overview = this.buildCoverageOverview(prepared);
     if (overview.coverage.financialActivityMonths === 0) {
       this.renderState({ ...range, status: 'empty' }); return;
     }
-    this.renderState(range); this.renderOverview(entries);
+    this.renderState(range); this.renderOverview(prepared);
     const results = document.getElementById('dashboard-results');
     if (results) results.hidden = false;
     const printContext = document.getElementById('dashboard-print-context');
     if (printContext) printContext.textContent = `Reporting range: ${range.from} to ${range.to}. Spending basis: ${this.basis === 'planned' ? 'Planned' : 'Actual'}.`;
-    const months = [...range.months];
-
-    this.renderCategoryTrend(months, this.basis);
-    this.renderIncomePct(months);
-    this.renderProjVsActual(months);
-    this.renderSavingsRate(months);
-    this.renderPaymentMethod(months, this.basis);
-    this.renderYoY(months, this.basis);
-    this.renderSummaryTable(months, this.basis);
+    this.renderCategoryTrend(prepared, this.basis);
+    this.renderIncomePct(prepared);
+    this.renderProjVsActual(prepared);
+    this.renderSavingsRate(prepared);
+    this.renderPaymentMethod(prepared, this.basis);
+    this.renderYoY(prepared, this.basis);
+    this.renderSummaryTable(prepared, this.basis);
   },
 
   destroyChart(id) {
@@ -1169,9 +1209,9 @@ const DashboardView = {
   ],
 
   // 1. Category spending trend (line chart)
-  renderCategoryTrend(months, basis = 'actual') {
+  renderCategoryTrend(prepared, basis = 'actual') {
     this.destroyChart('categoryTrend');
-    const model = this.buildCategoryTrendModel(months, basis);
+    const model = this.buildCategoryTrendModel(prepared, basis);
     const heading = document.getElementById('dashboard-category-trend-heading');
     if (heading) heading.textContent = `${basis === 'planned' ? 'Planned' : 'Actual'} spending by category (month over month)`;
     const datasets = model.datasets.map((dataset, index) => ({
@@ -1199,9 +1239,9 @@ const DashboardView = {
   },
 
   // 2. % of income by category (doughnut - latest month with data)
-  renderIncomePct(months) {
+  renderIncomePct(prepared) {
     this.destroyChart('incomePct');
-    const model = this.buildCompositionModel(months);
+    const model = this.buildCompositionModel(prepared);
     const { targetMonth, plannedIncome, labels, data } = model;
     const income = plannedIncome === 0 ? 1 : plannedIncome;
     const context = document.getElementById('dashboard-composition-context');
@@ -1240,9 +1280,9 @@ const DashboardView = {
   },
 
   // 3. Projected vs Actual (grouped bar)
-  renderProjVsActual(months) {
+  renderProjVsActual(prepared) {
     this.destroyChart('projVsActual');
-    const model = this.buildProjectedActualModel(months);
+    const model = this.buildProjectedActualModel(prepared);
 
     const ctx = document.getElementById('chart-proj-vs-actual').getContext('2d');
     this.charts.projVsActual = new Chart(ctx, {
@@ -1267,9 +1307,9 @@ const DashboardView = {
   },
 
   // 4. Savings rate over time (line)
-  renderSavingsRate(months) {
+  renderSavingsRate(prepared) {
     this.destroyChart('savingsRate');
-    const model = this.buildSavingsRateModel(months);
+    const model = this.buildSavingsRateModel(prepared);
 
     const ctx = document.getElementById('chart-savings-rate').getContext('2d');
     this.charts.savingsRate = new Chart(ctx, {
@@ -1298,9 +1338,9 @@ const DashboardView = {
   },
 
   // 5. Payment method breakdown (bar)
-  renderPaymentMethod(months, basis = 'planned') {
+  renderPaymentMethod(prepared, basis = 'planned') {
     this.destroyChart('paymentMethod');
-    const model = this.buildPaymentMethodModel(months, basis);
+    const model = this.buildPaymentMethodModel(prepared, basis);
     const heading = document.getElementById('dashboard-payment-method-heading');
     if (heading) heading.textContent = `${basis === 'planned' ? 'Planned' : 'Actual'} bills by payment method`;
     const colors = [DASHBOARD_THEME.info, DASHBOARD_THEME.warning, DASHBOARD_THEME.positive, DASHBOARD_THEME.accent];
@@ -1325,9 +1365,9 @@ const DashboardView = {
   },
 
   // 6. Year-over-Year comparison (grouped bar by category)
-  renderYoY(months, basis = 'actual') {
+  renderYoY(prepared, basis = 'actual') {
     this.destroyChart('yoy');
-    const model = this.buildYoYModel(months, basis);
+    const model = this.buildYoYModel(prepared, basis);
     const heading = document.getElementById('dashboard-yoy-heading');
     if (heading) heading.textContent = `${basis === 'planned' ? 'Planned' : 'Actual'} selected-year category comparison`;
     const card = document.getElementById('dashboard-yoy-card'); const state = document.getElementById('dashboard-yoy-state');
@@ -1361,14 +1401,16 @@ const DashboardView = {
   },
 
   // 7. Summary table
-  renderSummaryTable(months, basis = 'actual') {
+  renderSummaryTable(prepared, basis = 'actual') {
+    prepared = this.asPrepared(prepared, basis);
+    const months = prepared.monthKeys;
     const heading = document.getElementById('dashboard-summary-heading');
     if (heading) heading.textContent = `${basis === 'planned' ? 'Planned' : 'Actual'} monthly summary table`;
     const allCats = new Set();
     const dataByMonth = {};
 
     months.forEach(mk => {
-      const totals = Store.calcCategoryTotals(mk);
+      const totals = prepared.months[mk].categoryTotals;
       dataByMonth[mk] = totals;
       Object.keys(totals).forEach(c => allCats.add(c));
     });
@@ -1408,7 +1450,7 @@ const DashboardView = {
     let monthCount = 0;
     let grandComplete = true;
     months.forEach(mk => {
-      const s = Store.calcMonthSummary(mk);
+      const s = prepared.months[mk].summary;
       const val = basis === 'planned' ? this.plannedExpenses(s) : this.actualExpenses(s);
       cell = totalRow.insertCell(); strong = document.createElement('strong');
       strong.textContent = this.formatWholeAmount(val); cell.append(strong);
@@ -1424,7 +1466,7 @@ const DashboardView = {
     const incomeRow = tbody.insertRow(); cell = incomeRow.insertCell(); strong = document.createElement('strong');
     strong.textContent = basis === 'planned' ? 'Planned income' : 'Actual income'; cell.append(strong);
     months.forEach(mk => {
-      const s = Store.calcMonthSummary(mk);
+      const s = prepared.months[mk].summary;
       const income = basis === 'planned' ? this.plannedIncome(s) :
         (s.unresolvedIncomeCount === 0 ? s.totalActualIncome : null);
       incomeRow.insertCell().textContent = this.formatWholeAmount(income);

@@ -24,6 +24,9 @@ See [ROADMAP.md](ROADMAP.md) for planned work and the boundaries of future phase
 - Stable structural IDs with historical labels preserved in existing monthly records.
 - Versioned JSON backup and restore with validation and preview.
 - Local safety snapshots and a startup recovery workflow.
+- Fail-closed multi-tab write protection: a stale tab cannot silently overwrite newer saved data, and reload recovery remains write-free.
+- A strict static-compatible Content Security Policy and node-only modal rendering with no dynamic HTML injection path.
+- Render-scoped Dashboard preparation that shares one detached monthly projection across reports, tables, charts, and CSV generation instead of repeatedly scanning the same range.
 
 Archived Structure choices remain visible in historical records and totals but are hidden when creating new records. Archiving does not delete or rewrite prior months. Warm Ledger prevents archiving the last active category or earner so new expenses and paychecks can still be created.
 
@@ -84,6 +87,8 @@ chromium "file://$PWD/index.html"
 Continue opening the same absolute file path in the same browser profile. Browser storage for a `file://` page can be path- and browser-specific, so moving the project or changing profiles may present a separate empty budget.
 
 The product was previously named ZeroBudget. Existing installations should keep using the same local project path: the legacy storage keys and backup/snapshot format identifiers are intentionally unchanged so current budgets, snapshots, and JSON backups remain compatible after the rebrand.
+
+Warm Ledger keeps those compatible storage and backup formats while coordinating real writes through one fail-closed commit path. Semantic no-op updates do not lock, snapshot, or rewrite the ledger. If another tab is actively saving or has already changed the budget, the older action stops without overwriting data and asks you to review the latest saved state.
 
 No install or dependency download is required. To run the automated data-safety tests, install Node.js and run:
 
@@ -201,8 +206,18 @@ If active data cannot be validated, Warm Ledger blocks ordinary editing and disp
 
 Clearing browser/site data, deleting a browser profile, changing the page's path/origin, or browser storage eviction can remove the active budget and every local snapshot together. Downloaded JSON backups are not affected by clearing site data.
 
+## Local storage & privacy
+
+Warm Ledger stores active data, local safety snapshots, and preserved corrupt bytes as readable local browser data. Downloaded JSON backups and browser-evidence files are also readable unless manually deleted.
+
+Use Data Health's local-data purge to remove the active budget, local safety snapshots, and preserved recovery bytes from this browser only. That purge does not delete downloaded backups or browser-evidence files, so delete those manually if you no longer want them.
+
+The purge success message is: "Local Warm Ledger data was removed from this browser. Restore a backup or start fresh to continue."
+
 ## Privacy and repository history
 
 Budget data remains local unless you download, copy, or otherwise share it. JSON backups contain financial records in readable form and should be stored accordingly; they are not encrypted.
 
 This repository must remain private. Earlier Git history contains prior sensitive budget seed data even though those artifacts have been removed from the current tree. No Git-history rewrite was performed as part of this work.
+
+See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for vendored Chart.js provenance and update details.

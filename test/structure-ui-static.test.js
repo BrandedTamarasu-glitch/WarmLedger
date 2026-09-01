@@ -59,8 +59,8 @@ test('actionable Structure failures have stable user messages', () => {
     .forEach(code => assert.match(app, new RegExp(`${code}:`)));
 });
 
-test('shared modal controls reset after an archive confirmation', () => {
-  assert.match(app, /replacement\.textContent = 'Save'/);
-  assert.match(app, /replacement\.className = 'btn btn-primary'/);
-  assert.match(app, /replacement\.disabled = false/);
+test('shared modal callers configure archive presentation without raw markup', () => {
+  assert.match(source, /submitLabel: 'Archive'/);
+  assert.match(source, /ModalView\.element\('p'/);
+  assert.doesNotMatch(source, /App\.showModal\([^\{]/);
 });

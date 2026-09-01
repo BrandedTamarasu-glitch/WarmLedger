@@ -113,12 +113,9 @@ const StructureView = {
   showNameModal(type, existing, trigger, categoryId = '') {
     if (trigger) App.modalTrigger = trigger;
     const noun = type === 'category-item' ? 'preset item' : type;
-    App.showModal(`${existing ? 'Rename' : 'Add'} ${noun}`, `
-      <div class="form-group">
-        <label for="field-structure-name">Name</label>
-        <input id="field-structure-name" type="text" maxlength="120" required>
-      </div>
-    `, () => {
+    App.showModal({ title: `${existing ? 'Rename' : 'Add'} ${noun}`,
+      buildBody: () => ModalView.field('Name', ModalView.input('field-structure-name', 'text', { maxlength: '120', required: true })),
+      submitLabel: existing ? 'Rename' : 'Add', onSave: () => {
       const input = document.getElementById('field-structure-name');
       if (!input.reportValidity()) return false;
       const name = input.value;
@@ -133,17 +130,18 @@ const StructureView = {
           type, action: existing ? 'rename' : 'rename', id: result.id, categoryId
         });
       } });
-    });
+    }});
     const input = document.getElementById('field-structure-name'); input.value = existing ? existing.name : '';
     const save = document.getElementById('modal-save'); save.disabled = false; save.textContent = existing ? 'Rename' : 'Add'; save.className = 'btn btn-primary';
   },
 
   confirmArchive(type, record, categoryId, usage, trigger) {
     const noun = type === 'category-item' ? 'preset item' : type;
-    App.showModal(`Archive ${noun}?`, '<p id="structure-archive-message"></p>', () =>
+    App.showModal({ title: `Archive ${noun}?`,
+      buildBody: () => ModalView.element('p', { id: 'structure-archive-message' }), submitLabel: 'Archive', onSave: () =>
       App.runMutation(() => this.archiveMutation(type, record.id, categoryId, true), {
         onSuccess: () => this.afterMutation(`${record.name} archived.`, { type, action: 'restore', id: record.id, categoryId })
-      }));
+      }) });
     App.modalTrigger = trigger;
     const message = document.getElementById('structure-archive-message');
     const usageLabel = usage === 1 ? '1 historical record uses' : `${usage} historical records use`;

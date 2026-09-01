@@ -8,7 +8,9 @@
     : (typeof require === 'function' ? require('./data-health.js') : null);
   const ExactMoney = root && root.ZeroBudgetExactMoney ? root.ZeroBudgetExactMoney
     : (typeof require === 'function' ? require('./exact-money.js') : null);
-  const api = factory(Schema, Recurrence, DataHealth, ExactMoney);
+  const StorageEngine = root && root.ZeroBudgetStorageEngine ? root.ZeroBudgetStorageEngine
+    : (typeof require === 'function' ? require('./storage-engine.js') : null);
+  const api = factory(Schema, Recurrence, DataHealth, ExactMoney, StorageEngine);
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (root && root.localStorage) {
     root.ZeroBudgetStore = api;
@@ -19,14 +21,16 @@
     });
     root.ALLOCATION_TYPES = api.ALLOCATION_TYPES;
   }
-})(typeof globalThis !== 'undefined' ? globalThis : this, function(Schema, Recurrence, DataHealth, ExactMoney) {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function(Schema, Recurrence, DataHealth, ExactMoney, StorageEngine) {
   'use strict';
   if (!Schema) throw new Error('ZeroBudgetSchema is required');
+  if (!StorageEngine) throw new Error('ZeroBudgetStorageEngine is required');
 
   const STORAGE_KEY = 'zeroBudget_data';
   const CORRUPT_KEY = 'zeroBudget_corrupt';
   const SNAPSHOT_PREFIX = 'zeroBudget_snapshot:';
   const SNAPSHOT_LIMIT = 7;
+  const WRITE_LOCK_KEY = StorageEngine ? StorageEngine.WRITE_LOCK_KEY : 'zeroBudget_write_lock';
   const ALLOCATION_TYPES = Object.freeze([
     Object.freeze({ key: 'savings', label: 'Savings' }),
     Object.freeze({ key: 'credit_card_debt', label: 'Credit Card Debt' }),
@@ -140,6 +144,9 @@
     const actualResolutionCapabilities = new WeakMap();
     const defaultDateResolutionCapabilities = new WeakMap();
     const exactMoneyMigrationCapabilities = new WeakMap();
+    const purgeCapabilities = new WeakMap();
+    const ownerId = `store-${Math.random().toString(36).slice(2)}-${Date.now().toString(36)}`;
+    const coordinator = StorageEngine.createCoordinator({ storage, now, ownerId, error: storageError });
 
     let data = null;
     let committedRaw = null;
@@ -312,20 +319,26 @@
       const nextRaw = JSON.stringify(persisted);
       const priorData = schemaPolicy.clone(data);
       if (nextRaw === committedRaw) return schemaPolicy.clone(data);
-      if (snapshotReason && committedRaw !== null) {
-        createSnapshot(priorData, snapshotReason, { required: requiredSnapshot });
-      } else if (daily) {
-        maybeDailySnapshot(priorData);
+      coordinator.acquire();
+      try {
+        if (read(STORAGE_KEY) !== committedRaw) throw new StoreError('STALE_WRITE');
+        if (snapshotReason && committedRaw !== null) {
+          createSnapshot(priorData, snapshotReason, { required: requiredSnapshot });
+        } else if (daily) {
+          maybeDailySnapshot(priorData);
+        }
+        write(STORAGE_KEY, nextRaw, 'PRIMARY_WRITE_FAILED');
+        data = canonical;
+        residentSchemaVersion = targetSchemaVersion;
+        committedRaw = nextRaw;
+        loadState = 'ready';
+        corruptEvidence = null;
+        generation += 1;
+        if (prune) pruneSnapshots();
+        return schemaPolicy.clone(data);
+      } finally {
+        if (!coordinator.release()) warn('LOCK_RELEASE_FAILED');
       }
-      write(STORAGE_KEY, nextRaw, 'PRIMARY_WRITE_FAILED');
-      data = canonical;
-      residentSchemaVersion = targetSchemaVersion;
-      committedRaw = nextRaw;
-      loadState = 'ready';
-      corruptEvidence = null;
-      generation += 1;
-      if (prune) pruneSnapshots();
-      return schemaPolicy.clone(data);
     }
 
     function transact(mutator, options) {
@@ -336,13 +349,33 @@
       return result === undefined ? undefined : schemaPolicy.clone(result);
     }
 
+    function commitRecoveryCandidate(candidate, targetSchemaVersion) {
+      const persisted = canonicalizeForWrite(targetSchemaVersion, candidate);
+      const canonical = targetSchemaVersion === Schema.V5_SCHEMA_VERSION
+        ? Schema.hydrateV5ExactMoney(persisted)
+        : targetSchemaVersion === Schema.V4_SCHEMA_VERSION
+          ? Schema.hydrateV4ExactMoney(persisted) : policyForVersion(targetSchemaVersion).migrateActive(candidate);
+      const nextRaw = JSON.stringify(persisted);
+      coordinator.acquire();
+      try {
+        if (read(STORAGE_KEY) !== committedRaw) throw new StoreError('STALE_WRITE');
+        write(STORAGE_KEY, nextRaw, 'PRIMARY_WRITE_FAILED');
+        data = canonical; committedRaw = nextRaw; corruptEvidence = null;
+        residentSchemaVersion = targetSchemaVersion; loadState = 'ready'; generation += 1;
+        pruneSnapshots();
+        return schemaPolicy.clone(data);
+      } finally {
+        if (!coordinator.release()) warn('LOCK_RELEASE_FAILED');
+      }
+    }
+
     function preserveEvidence(raw) {
       corruptEvidence = raw;
       try { write(CORRUPT_KEY, raw, 'EVIDENCE_WRITE_FAILED'); }
       catch { warn('EVIDENCE_WRITE_FAILED'); }
     }
 
-    function load() {
+    function load({ preserveCorrupt = true } = {}) {
       warnings = [];
       let raw;
       try { raw = read(STORAGE_KEY); }
@@ -367,12 +400,66 @@
         return { state: loadState, warnings: [],
           migrated: !Number.isInteger(sourceSchemaVersion) || sourceSchemaVersion < Schema.V3_SCHEMA_VERSION };
       } catch {
-        data = null; committedRaw = null; loadState = 'recovery-required'; generation += 1;
-        preserveEvidence(raw);
+        data = null; committedRaw = raw; loadState = 'recovery-required'; generation += 1;
+        if (preserveCorrupt) preserveEvidence(raw);
+        else corruptEvidence = raw;
         return {
           state: loadState, warnings: [...warnings], hasEvidence: true,
           snapshots: listSnapshotMetadata()
         };
+      }
+    }
+
+    function reload() {
+      const priorRaw = committedRaw;
+      const priorState = loadState;
+      const result = load({ preserveCorrupt: false });
+      return freezeDetached({ ...result, changed: priorRaw !== committedRaw || priorState !== loadState });
+    }
+
+    function previewLocalDataPurge() {
+      if (loadState === 'unloaded') load();
+      const activeDataPresent = read(STORAGE_KEY) !== null;
+      const corruptEvidencePresent = read(CORRUPT_KEY) !== null;
+      const snapshots = snapshotKeys();
+      const lockPresent = read(WRITE_LOCK_KEY) !== null;
+      const preview = freezeDetached({ activeDataPresent, corruptEvidencePresent,
+        snapshotCount: snapshots.length, lockPresent, generation });
+      purgeCapabilities.set(preview, { generation });
+      return preview;
+    }
+
+    function commitLocalDataPurge(preview) {
+      const capability = preview && typeof preview === 'object' ? purgeCapabilities.get(preview) : null;
+      if (!capability) throw new StoreError('INVALID_PURGE_PREVIEW');
+      purgeCapabilities.delete(preview);
+      if (capability.generation !== generation) throw new StoreError('STALE_PURGE_PREVIEW');
+      coordinator.acquire();
+      try {
+        if (read(STORAGE_KEY) !== committedRaw) throw new StoreError('STALE_WRITE');
+        const keys = [STORAGE_KEY, CORRUPT_KEY, ...snapshotKeys()];
+        const backups = new Map(keys.map(key => [key, read(key)]));
+        try {
+          for (const key of keys) if (backups.get(key) !== null) remove(key, 'PURGE_FAILED');
+        } catch {
+          let recovered = true;
+          for (const [key, raw] of backups) {
+            if (raw === null) continue;
+            try { write(key, raw, 'PURGE_RECOVERY_FAILED'); } catch { recovered = false; }
+          }
+          if (!recovered) {
+            data = null; committedRaw = null; loadState = 'recovery-required'; generation += 1;
+            throw new StoreError('PURGE_RECOVERY_FAILED');
+          }
+          throw new StoreError('PURGE_FAILED');
+        }
+        data = defaultData(); committedRaw = null; corruptEvidence = null;
+        residentSchemaVersion = schemaPolicy === Schema.ACTIVE_SCHEMA_POLICY
+          ? Schema.V3_SCHEMA_VERSION : schemaPolicy.SCHEMA_VERSION;
+        loadState = 'empty'; warnings = []; generation += 1;
+        return getStatus();
+      } finally {
+        if (!coordinator.release()) warn('LOCK_RELEASE_FAILED');
       }
     }
 
@@ -741,33 +828,7 @@
         return created;
       });
     }
-    function updatePaycheck(monthKey, id, updates) {
-      const patch = patchOf(updates, ['plannedAmount', 'actualAmount', 'date']);
-      return transact(candidate => {
-        const month = candidate.months[monthKey];
-        if (!month) throw new StoreError('MONTH_NOT_FOUND');
-        const paycheck = findOrThrow(month.paychecks, id, 'PAYCHECK_NOT_FOUND');
-        if (Object.hasOwn(patch, 'date')) patch.date = normalizeMonthlyDate(monthKey, patch.date);
-        const resetCleared = residentSchemaVersion === Schema.V5_SCHEMA_VERSION &&
-          ((Object.hasOwn(patch, 'actualAmount') && patch.actualAmount !== paycheck.actualAmount) ||
-           (Object.hasOwn(patch, 'date') && patch.date !== paycheck.date));
-        Object.assign(paycheck, patch);
-        if (resetCleared) paycheck.cleared = false;
-        return paycheck;
-      });
-    }
-    function reassignPaycheckEarner(monthKey, id, earnerId) {
-      return transact(candidate => {
-        const month = candidate.months[monthKey];
-        if (!month) throw new StoreError('MONTH_NOT_FOUND');
-        const paycheck = findOrThrow(month.paychecks, id, 'PAYCHECK_NOT_FOUND');
-        const earner = activeEarner(candidate, earnerId);
-        paycheck.earnerId = earner.id; paycheck.earner = earner.name;
-        return paycheck;
-      });
-    }
-    function editPaycheck(monthKey, id, updates) {
-      const patch = patchOf(updates, ['earnerId', 'plannedAmount', 'actualAmount', 'date']);
+    function mutatePaycheck(monthKey, id, patch) {
       return transact(candidate => {
         const month = candidate.months[monthKey];
         if (!month) throw new StoreError('MONTH_NOT_FOUND');
@@ -790,6 +851,15 @@
         }
         return paycheck;
       });
+    }
+    function updatePaycheck(monthKey, id, updates) {
+      return mutatePaycheck(monthKey, id, patchOf(updates, ['plannedAmount', 'actualAmount', 'date']));
+    }
+    function reassignPaycheckEarner(monthKey, id, earnerId) {
+      return mutatePaycheck(monthKey, id, { earnerId });
+    }
+    function editPaycheck(monthKey, id, updates) {
+      return mutatePaycheck(monthKey, id, patchOf(updates, ['earnerId', 'plannedAmount', 'actualAmount', 'date']));
     }
     function deletePaycheck(monthKey, id) {
       return transact(candidate => {
@@ -831,13 +901,20 @@
         return created;
       });
     }
-    function updateExpense(monthKey, id, updates) {
-      const patch = patchOf(updates, ['name', 'date', 'plannedAmount', 'actualAmount', 'paymentMethod']);
+    function mutateExpense(monthKey, id, patch) {
+      const structural = Object.hasOwn(patch, 'categoryId') || Object.hasOwn(patch, 'categoryItemId');
+      if (structural && (!Object.hasOwn(patch, 'categoryId') || !Object.hasOwn(patch, 'categoryItemId'))) {
+        throw new StoreError('MISSING_FIELD');
+      }
       return transact(candidate => {
         const month = candidate.months[monthKey];
         if (!month) throw new StoreError('MONTH_NOT_FOUND');
         const expense = findOrThrow(month.expenses, id, 'EXPENSE_NOT_FOUND');
-        if (Object.hasOwn(patch, 'name') && patch.name !== expense.name) {
+        if (structural) {
+          const priorName = expense.name;
+          applyExpenseStructure(expense, activeCategory(candidate, patch.categoryId), patch.categoryItemId, patch.name);
+          if (residentSchemaVersion === Schema.V5_SCHEMA_VERSION && expense.name !== priorName) expense.cleared = false;
+        } else if (Object.hasOwn(patch, 'name') && patch.name !== expense.name) {
           expense.name = patch.name;
           expense.categoryItemId = null;
           if (residentSchemaVersion === Schema.V5_SCHEMA_VERSION) expense.cleared = false;
@@ -861,56 +938,17 @@
         return expense;
       });
     }
+    function updateExpense(monthKey, id, updates) {
+      return mutateExpense(monthKey, id, patchOf(updates, ['name', 'date', 'plannedAmount', 'actualAmount', 'paymentMethod']));
+    }
     function reassignExpenseStructure(monthKey, id, structure) {
       const patch = patchOf(structure, ['categoryId', 'categoryItemId', 'name']);
       if (!Object.hasOwn(patch, 'categoryId') || !Object.hasOwn(patch, 'categoryItemId')) throw new StoreError('MISSING_FIELD');
-      return transact(candidate => {
-        const month = candidate.months[monthKey];
-        if (!month) throw new StoreError('MONTH_NOT_FOUND');
-        const expense = findOrThrow(month.expenses, id, 'EXPENSE_NOT_FOUND');
-        const priorName = expense.name;
-        applyExpenseStructure(expense, activeCategory(candidate, patch.categoryId), patch.categoryItemId, patch.name);
-        if (residentSchemaVersion === Schema.V5_SCHEMA_VERSION && expense.name !== priorName) expense.cleared = false;
-        return expense;
-      });
+      return mutateExpense(monthKey, id, patch);
     }
     function editExpense(monthKey, id, updates) {
       const patch = patchOf(updates, ['categoryId', 'categoryItemId', 'name', 'date', 'plannedAmount', 'actualAmount', 'paymentMethod']);
-      const structural = Object.hasOwn(patch, 'categoryId') || Object.hasOwn(patch, 'categoryItemId');
-      if (structural && (!Object.hasOwn(patch, 'categoryId') || !Object.hasOwn(patch, 'categoryItemId'))) {
-        throw new StoreError('MISSING_FIELD');
-      }
-      return transact(candidate => {
-        const month = candidate.months[monthKey];
-        if (!month) throw new StoreError('MONTH_NOT_FOUND');
-        const expense = findOrThrow(month.expenses, id, 'EXPENSE_NOT_FOUND');
-        if (structural) {
-          const priorName = expense.name;
-          applyExpenseStructure(expense, activeCategory(candidate, patch.categoryId), patch.categoryItemId, patch.name);
-          if (residentSchemaVersion === Schema.V5_SCHEMA_VERSION && expense.name !== priorName) expense.cleared = false;
-        }
-        else if (Object.hasOwn(patch, 'name') && patch.name !== expense.name) {
-          expense.name = patch.name; expense.categoryItemId = null;
-          if (residentSchemaVersion === Schema.V5_SCHEMA_VERSION) expense.cleared = false;
-        }
-        if (Object.hasOwn(patch, 'date')) {
-          const date = normalizeMonthlyDate(monthKey, patch.date);
-          if (date !== expense.date) {
-            expense.date = date;
-            if (residentSchemaVersion === Schema.V5_SCHEMA_VERSION) expense.cleared = false;
-          }
-        }
-        if (Object.hasOwn(patch, 'plannedAmount')) expense.plannedAmount = patch.plannedAmount;
-        if (Object.hasOwn(patch, 'actualAmount') && patch.actualAmount !== expense.actualAmount) {
-          expense.actualAmount = patch.actualAmount;
-          if (residentSchemaVersion === Schema.V5_SCHEMA_VERSION) expense.cleared = false;
-        }
-        if (Object.hasOwn(patch, 'paymentMethod') && patch.paymentMethod !== expense.paymentMethod) {
-          expense.paymentMethod = patch.paymentMethod;
-          if (residentSchemaVersion === Schema.V5_SCHEMA_VERSION) expense.cleared = false;
-        }
-        return expense;
-      });
+      return mutateExpense(monthKey, id, patch);
     }
     function updateExpensePaycheckAmount(monthKey, expenseId, paycheckId, amount) {
       return transact(candidate => {
@@ -973,19 +1011,21 @@
         return month.expenses;
       });
     }
-    function updateAllocations(monthKey, allocations) {
+    function mutateAllocations(monthKey, mutator) {
       return transact(candidate => {
         const month = requireMonth(candidate, monthKey);
-        month.allocations = schemaPolicy.clone(allocations);
+        month.allocations = mutator(schemaPolicy.clone(month.allocations));
         return month.allocations;
       });
     }
+    function updateAllocations(monthKey, allocations) {
+      return mutateAllocations(monthKey, () => schemaPolicy.clone(allocations));
+    }
     function updateAllocation(monthKey, key, amount) {
       if (!ALLOCATION_TYPES.some(type => type.key === key)) throw new StoreError('INVALID_ALLOCATION_KEY');
-      return transact(candidate => {
-        const month = requireMonth(candidate, monthKey);
-        month.allocations[key] = amount;
-        return month.allocations;
+      return mutateAllocations(monthKey, allocations => {
+        allocations[key] = amount;
+        return allocations;
       });
     }
     function copyFromMonth(targetKey, sourceKey) {
@@ -1559,14 +1599,90 @@
       }
       return totals;
     }
+    function prepareDashboardRange({ monthKeys, basis } = {}) {
+      requireReady();
+      if (!Array.isArray(monthKeys)) throw new StoreError('INVALID_MONTH_RANGE');
+      if (basis !== 'planned' && basis !== 'actual') throw new StoreError('INVALID_TOTAL_MODE');
+      const keys = monthKeys.map(validateMonthKey);
+      const months = Object.create(null);
+      for (const monthKey of keys) {
+        const exists = Object.hasOwn(data.months, monthKey);
+        const month = exists ? data.months[monthKey] : emptyMonth();
+        const totalPlannedIncome = month.paychecks.reduce((sum, item) => sum + item.plannedAmount, 0);
+        const totalActualIncome = month.paychecks.reduce((sum, item) => sum + (item.actualAmount ?? 0), 0);
+        const totalPlannedExpenses = month.expenses.reduce((sum, item) => sum + item.plannedAmount, 0);
+        const totalActualExpenses = month.expenses.reduce((sum, item) => sum + (item.actualAmount ?? 0), 0);
+        const totalAllocated = Object.values(month.allocations).reduce((sum, value) => sum + value, 0);
+        const categoryTotals = Object.create(null);
+        const paymentMethodTotals = { bank: 0, credit_card: 0, savings: 0, investments: 0 };
+        const incompletePaymentMethods = new Set();
+        for (const expense of month.expenses) {
+          if (!Object.hasOwn(categoryTotals, expense.category)) categoryTotals[expense.category] =
+            { planned: 0, actual: 0, unresolvedCount: 0, projected: 0 };
+          const category = categoryTotals[expense.category];
+          category.planned += expense.plannedAmount; category.projected += expense.plannedAmount;
+          if (expense.actualAmount === null) {
+            category.unresolvedCount += 1; incompletePaymentMethods.add(expense.paymentMethod);
+          } else category.actual += expense.actualAmount;
+          paymentMethodTotals[expense.paymentMethod] += basis === 'planned'
+            ? expense.plannedAmount : (expense.actualAmount ?? 0);
+        }
+        months[monthKey] = {
+          exists,
+          paycheckCount: month.paychecks.length,
+          expenseCount: month.expenses.length,
+          suppressedOccurrenceCount: month.suppressedOccurrences.length,
+          summary: {
+            totalIncome: totalActualIncome, totalProjected: totalPlannedExpenses,
+            totalActual: totalActualExpenses, totalAllocated,
+            totalBudgeted: totalPlannedExpenses + totalAllocated,
+            remaining: totalActualIncome - totalPlannedExpenses - totalAllocated,
+            totalPlannedIncome, totalActualIncome,
+            unresolvedIncomeCount: month.paychecks.filter(item => item.actualAmount === null).length,
+            totalPlannedExpenses, totalActualExpenses,
+            unresolvedExpenseCount: month.expenses.filter(item => item.actualAmount === null).length
+          },
+          allocations: { ...month.allocations }, categoryTotals, paymentMethodTotals,
+          incompletePaymentMethods: [...incompletePaymentMethods]
+        };
+      }
+      return freezeDetached({ basis, monthKeys: keys, months });
+    }
     function getAllMonthKeys() { requireReady(); return Object.keys(data.months).sort(); }
 
-    function compareSavedMonths(request = {}) {
-      requireReady();
+    function savedMonthComparisonContext(request = {}, { explain = false } = {}) {
       const availableMonths = Object.keys(data.months).sort();
       const basis = request && request.basis;
       const baselineMonth = request && typeof request.baselineMonth === 'string' ? request.baselineMonth : '';
       const comparisonMonth = request && typeof request.comparisonMonth === 'string' ? request.comparisonMonth : '';
+      const section = request && typeof request.section === 'string' ? request.section : '';
+      const validMonth = value => {
+        const match = /^(\d{4})-(\d{2})$/.exec(value);
+        if (!match) return false;
+        try { Recurrence.daysInMonth(Number(match[1]), Number(match[2])); return true; }
+        catch { return false; }
+      };
+      let status = 'ready';
+      let summaryLabel = `${comparisonMonth} compared with ${baselineMonth}.`;
+      if (basis !== 'planned' && basis !== 'actual') [status, summaryLabel] = ['invalid-basis', 'Choose Planned or Actual.'];
+      else if (availableMonths.length < 2) [status, summaryLabel] = ['insufficient-saved-months', 'Save at least two months before comparing them.'];
+      else if (!baselineMonth || !comparisonMonth) [status, summaryLabel] = ['incomplete', 'Choose two saved months to compare.'];
+      else if (baselineMonth === comparisonMonth) [status, summaryLabel] = ['same-month', 'Choose two different saved months.'];
+      else if (!validMonth(baselineMonth) || !Object.hasOwn(data.months, baselineMonth))
+        [status, summaryLabel] = ['missing-baseline', 'The baseline month is no longer available.'];
+      else if (!validMonth(comparisonMonth) || !Object.hasOwn(data.months, comparisonMonth))
+        [status, summaryLabel] = ['missing-comparison', 'The comparison month is no longer available.'];
+      else if (explain && section !== 'categories' && section !== 'payment_methods')
+        [status, summaryLabel] = ['invalid-section', 'This comparison row cannot be explained.'];
+      return { status, summaryLabel, availableMonths, basis, baselineMonth, comparisonMonth, section,
+        baseline: status === 'ready' ? data.months[baselineMonth] : null,
+        comparison: status === 'ready' ? data.months[comparisonMonth] : null };
+    }
+
+    function compareSavedMonths(request = {}) {
+      requireReady();
+      const context = savedMonthComparisonContext(request);
+      const { availableMonths, basis, baselineMonth, comparisonMonth } = context;
       const emptyRowModel = () => ({
         columns: ['Section', 'Metric', 'Baseline', 'Comparison', 'Delta', 'Status'], rows: []
       });
@@ -1575,28 +1691,8 @@
         availableMonths, summaryLabel, rowModel
       });
 
-      if (basis !== 'planned' && basis !== 'actual') return response('invalid-basis', 'Choose Planned or Actual.');
-      if (availableMonths.length < 2) return response(
-        'insufficient-saved-months', 'Save at least two months before comparing them.'
-      );
-      if (!baselineMonth || !comparisonMonth) return response('incomplete', 'Choose two saved months to compare.');
-      if (baselineMonth === comparisonMonth) return response('same-month', 'Choose two different saved months.');
-
-      const validMonthKey = value => {
-        const match = /^(\d{4})-(\d{2})$/.exec(value);
-        if (!match) return false;
-        try { Recurrence.daysInMonth(Number(match[1]), Number(match[2])); return true; }
-        catch { return false; }
-      };
-      if (!validMonthKey(baselineMonth) || !Object.hasOwn(data.months, baselineMonth)) {
-        return response('missing-baseline', 'The baseline month is no longer available.');
-      }
-      if (!validMonthKey(comparisonMonth) || !Object.hasOwn(data.months, comparisonMonth)) {
-        return response('missing-comparison', 'The comparison month is no longer available.');
-      }
-
-      const baseline = data.months[baselineMonth];
-      const comparison = data.months[comparisonMonth];
+      if (context.status !== 'ready') return response(context.status, context.summaryLabel);
+      const { baseline, comparison } = context;
       const row = (section, metric, baselineValue, comparisonValue, sectionKey, dimensionKey = '') => {
         const delta = baselineValue === null || comparisonValue === null ? null : comparisonValue - baselineValue;
         return {
@@ -1686,10 +1782,8 @@
 
     function explainSavedMonthComparisonRow(request = {}) {
       requireReady();
-      const basis = request && request.basis;
-      const baselineMonth = request && typeof request.baselineMonth === 'string' ? request.baselineMonth : '';
-      const comparisonMonth = request && typeof request.comparisonMonth === 'string' ? request.comparisonMonth : '';
-      const section = request && request.section;
+      const context = savedMonthComparisonContext(request, { explain: true });
+      const { basis, baselineMonth, comparisonMonth, section } = context;
       const dimensionKey = request && typeof request.dimensionKey === 'string' ? request.dimensionKey : '';
       const emptySide = monthKey => ({
         monthKey, totalCount: 0, returnedCount: 0, truncated: false, records: []
@@ -1700,23 +1794,7 @@
         baseline: emptySide(baselineMonth), comparison: emptySide(comparisonMonth), ...extra
       });
 
-      const validMonthKey = value => {
-        const match = /^(\d{4})-(\d{2})$/.exec(value);
-        if (!match) return false;
-        try { Recurrence.daysInMonth(Number(match[1]), Number(match[2])); return true; }
-        catch { return false; }
-      };
-      if (basis !== 'planned' && basis !== 'actual') return response('invalid-basis', 'Choose Planned or Actual.');
-      if (!validMonthKey(baselineMonth) || !Object.hasOwn(data.months, baselineMonth)) {
-        return response('missing-baseline', 'The baseline month is no longer available.');
-      }
-      if (!validMonthKey(comparisonMonth) || !Object.hasOwn(data.months, comparisonMonth)) {
-        return response('missing-comparison', 'The comparison month is no longer available.');
-      }
-      if (baselineMonth === comparisonMonth) return response('same-month', 'Choose two different saved months.');
-      if (section !== 'categories' && section !== 'payment_methods') {
-        return response('invalid-section', 'This comparison row cannot be explained.');
-      }
+      if (context.status !== 'ready') return response(context.status, context.summaryLabel);
 
       const comparisonResult = compareSavedMonths({ baselineMonth, comparisonMonth, basis });
       const comparisonRow = comparisonResult.status === 'ready' && comparisonResult.rowModel.rows.find(item =>
@@ -2295,16 +2373,7 @@
         throw new StoreError('SNAPSHOT_NOT_FOUND');
       }
       if (loadState === 'recovery-required') {
-        const persisted = canonicalizeForWrite(record.residentSchemaVersion, record.data);
-        const canonical = record.residentSchemaVersion === Schema.V5_SCHEMA_VERSION
-          ? Schema.hydrateV5ExactMoney(persisted)
-          : record.residentSchemaVersion === Schema.V4_SCHEMA_VERSION
-            ? Schema.hydrateV4ExactMoney(persisted) : policyForVersion(record.residentSchemaVersion).migrateActive(record.data);
-        const nextRaw = JSON.stringify(persisted);
-        write(STORAGE_KEY, nextRaw, 'PRIMARY_WRITE_FAILED');
-        data = canonical; committedRaw = nextRaw; corruptEvidence = null; residentSchemaVersion = record.residentSchemaVersion;
-        loadState = 'ready'; generation += 1;
-        return schemaPolicy.clone(data);
+        return commitRecoveryCandidate(record.data, record.residentSchemaVersion);
       }
       requireReady();
       return commitCandidate(record.data, {
@@ -2315,12 +2384,7 @@
     function startFresh() {
       const candidate = defaultData();
       if (loadState === 'recovery-required') {
-        const nextRaw = JSON.stringify(candidate);
-        write(STORAGE_KEY, nextRaw, 'PRIMARY_WRITE_FAILED');
-        data = candidate; committedRaw = nextRaw; corruptEvidence = null;
-        residentSchemaVersion = Schema.V3_SCHEMA_VERSION;
-        loadState = 'ready'; generation += 1; pruneSnapshots();
-        return schemaPolicy.clone(data);
+        return commitRecoveryCandidate(candidate, Schema.V3_SCHEMA_VERSION);
       }
       requireReady();
       return commitCandidate(candidate, {
@@ -2333,7 +2397,8 @@
     }
 
     return Object.freeze({
-      load, getStatus, getData, getMonth: peekMonth, peekMonth, ensureMonth, getAllMonthKeys,
+      load, reload, getStatus, getData, getMonth: peekMonth, peekMonth, ensureMonth, getAllMonthKeys,
+      previewLocalDataPurge, commitLocalDataPurge,
       getCategories, getCategory, getCategoryItems, getCategoryItem, getEarners, getEarner,
       getIncomeTemplates, getExpenseTemplates, getIncomeTemplate, getExpenseTemplate,
       getStructureUsage, addCategory, renameCategory, setCategoryArchived, reorderCategories,
@@ -2355,7 +2420,7 @@
       fundingDirection,
       getDataHealth, getExactMoneyAudit, getExactMoneyMigrationSummary, previewExactMoneyMigration, commitExactMoneyMigration,
       getTemplateReadiness, previewActualResolutions, applyActualResolutions, previewDefaultDateResolutions, applyDefaultDateResolutions, compareAdditiveBackup,
-      calcMonthSummary, calcPaycheckRemaining, calcCategoryTotals, calcPaymentMethodTotals,
+      calcMonthSummary, calcPaycheckRemaining, calcCategoryTotals, calcPaymentMethodTotals, prepareDashboardRange,
       compareSavedMonths, explainSavedMonthComparisonRow,
       buildExport, exportData, previewImport, commitImport, importData, listSnapshots,
       listSnapshotMetadata, restoreSnapshot, startFresh, getCorruptEvidence
@@ -2363,7 +2428,7 @@
   }
 
   return Object.freeze({
-    STORAGE_KEY, CORRUPT_KEY, SNAPSHOT_PREFIX, SNAPSHOT_LIMIT,
+    STORAGE_KEY, CORRUPT_KEY, SNAPSHOT_PREFIX, SNAPSHOT_LIMIT, WRITE_LOCK_KEY,
     ALLOCATION_TYPES, StoreError, createStore
   });
 });
