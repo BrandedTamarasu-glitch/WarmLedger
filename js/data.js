@@ -782,6 +782,28 @@
       const earner = data.settings.earners.find(item => item.id === earnerId);
       return earner ? freezeDetached(earner) : null;
     }
+    function requireAccounts() {
+      requireReady();
+      if (residentSchemaVersion !== Schema.V6_SCHEMA_VERSION) throw new StoreError('ACCOUNTS_UNAVAILABLE');
+    }
+    function getAccounts({ includeArchived = false } = {}) {
+      requireAccounts();
+      return freezeDetached(data.settings.accounts.filter(account => includeArchived || !account.archived));
+    }
+    function getAccountUsage() {
+      requireAccounts();
+      const usage = Object.create(null);
+      for (const account of data.settings.accounts) usage[account.id] = 0;
+      for (const month of Object.values(data.months)) {
+        for (const record of [...month.paychecks, ...month.expenses]) {
+          if (record.accountId !== null) usage[record.accountId] += 1;
+        }
+      }
+      for (const template of [...data.templates.income, ...data.templates.expenses]) {
+        if (template.accountId !== null) usage[template.accountId] += 1;
+      }
+      return freezeDetached(usage);
+    }
     function getStructureUsage() {
       requireReady();
       const categoryExpenses = Object.create(null);
@@ -851,6 +873,31 @@
       if (!item) throw new StoreError('CATEGORY_ITEM_NOT_FOUND');
       if (item.archived) throw new StoreError('CATEGORY_ITEM_ARCHIVED');
       return item;
+    }
+
+    const INCOME_ACCOUNT_KINDS = new Set(['bank', 'savings', 'cash', 'investments', 'other']);
+    const ACCOUNT_KINDS = new Set([...INCOME_ACCOUNT_KINDS, 'credit_card']);
+    const PAYMENT_ACCOUNT_KINDS = Object.freeze({
+      bank: new Set(['bank', 'cash', 'other']), credit_card: new Set(['credit_card']),
+      savings: new Set(['savings']), investments: new Set(['investments'])
+    });
+    function accountFor(candidate, accountId, allowedKinds, { allowArchived = false } = {}) {
+      if (accountId === null) return null;
+      const account = candidate.settings.accounts.find(item => item.id === accountId);
+      if (!account) throw new StoreError('ACCOUNT_NOT_FOUND');
+      if (!allowArchived && account.archived) throw new StoreError('ACCOUNT_ARCHIVED');
+      if (!allowedKinds || !allowedKinds.has(account.kind)) throw new StoreError('ACCOUNT_INCOMPATIBLE');
+      return account;
+    }
+    function validateAccountReferences(candidate) {
+      for (const template of candidate.templates.income) accountFor(candidate, template.accountId, INCOME_ACCOUNT_KINDS, { allowArchived: true });
+      for (const template of candidate.templates.expenses) accountFor(candidate, template.accountId,
+        PAYMENT_ACCOUNT_KINDS[template.paymentMethod], { allowArchived: true });
+      for (const month of Object.values(candidate.months)) {
+        for (const paycheck of month.paychecks) accountFor(candidate, paycheck.accountId, INCOME_ACCOUNT_KINDS, { allowArchived: true });
+        for (const expense of month.expenses) accountFor(candidate, expense.accountId,
+          PAYMENT_ACCOUNT_KINDS[expense.paymentMethod], { allowArchived: true });
+      }
     }
 
     function applyExpenseStructure(expense, category, categoryItemId, customName) {
@@ -1025,6 +1072,39 @@
       });
     }
 
+    function createAccount(input) {
+      requireAccounts();
+      const patch = patchOf(input, ['name', 'kind']);
+      if (!Object.hasOwn(patch, 'name') || !Object.hasOwn(patch, 'kind')) throw new StoreError('MISSING_FIELD');
+      if (!ACCOUNT_KINDS.has(patch.kind)) throw new StoreError('INVALID_ACCOUNT_KIND');
+      return freezeDetached(transactGlobal(candidate => {
+        uniqueName(candidate.settings.accounts, patch.name, 'DUPLICATE_ACCOUNT_NAME');
+        const account = { id: newId(), name: patch.name, kind: patch.kind, archived: false };
+        candidate.settings.accounts.push(account);
+        return account;
+      }));
+    }
+    function updateAccount(accountId, updates) {
+      requireAccounts();
+      const patch = patchOf(updates, ['name', 'kind', 'archived']);
+      if (Object.hasOwn(patch, 'archived') && typeof patch.archived !== 'boolean') throw new StoreError('INVALID_ARCHIVE_STATE');
+      if (Object.hasOwn(patch, 'kind') && !ACCOUNT_KINDS.has(patch.kind)) throw new StoreError('INVALID_ACCOUNT_KIND');
+      return freezeDetached(transactGlobal(candidate => {
+        const account = findOrThrow(candidate.settings.accounts, accountId, 'ACCOUNT_NOT_FOUND');
+        if (Object.hasOwn(patch, 'name')) uniqueName(candidate.settings.accounts, patch.name, 'DUPLICATE_ACCOUNT_NAME', accountId);
+        Object.assign(account, patch);
+        validateAccountReferences(candidate);
+        return account;
+      }));
+    }
+    function reorderAccounts(orderedIds) {
+      requireAccounts();
+      return freezeDetached(transactGlobal(candidate => {
+        candidate.settings.accounts = orderedPermutation(orderedIds, candidate.settings.accounts);
+        return candidate.settings.accounts;
+      }));
+    }
+
     function templateList(kind) {
       requireReady();
       return data.templates[kind];
@@ -1043,14 +1123,19 @@
     const TEMPLATE_COMMON = ['name', 'plannedAmount', 'enabled', 'startDate', 'endDate', 'recurrence'];
     function addTemplate(kind, input) {
       const structural = kind === 'income' ? ['earnerId'] : ['categoryId', 'categoryItemId', 'paymentMethod'];
+      const requiredStructural = [...structural];
+      if (residentSchemaVersion === Schema.V6_SCHEMA_VERSION) structural.push('accountId');
       const patch = patchOf(input, [...TEMPLATE_COMMON, ...structural]);
-      if ([...TEMPLATE_COMMON, ...structural].some(key => !Object.hasOwn(patch, key))) throw new StoreError('MISSING_FIELD');
+      if ([...TEMPLATE_COMMON, ...requiredStructural].some(key => !Object.hasOwn(patch, key))) throw new StoreError('MISSING_FIELD');
+      if (residentSchemaVersion === Schema.V6_SCHEMA_VERSION && !Object.hasOwn(patch, 'accountId')) patch.accountId = null;
       return transactGlobal(candidate => {
         if (kind === 'income') activeEarner(candidate, patch.earnerId);
         else {
           const category = activeCategory(candidate, patch.categoryId);
           if (patch.categoryItemId !== null) activeCategoryItem(category, patch.categoryItemId);
         }
+        if (residentSchemaVersion === Schema.V6_SCHEMA_VERSION) accountFor(candidate, patch.accountId,
+          kind === 'income' ? INCOME_ACCOUNT_KINDS : PAYMENT_ACCOUNT_KINDS[patch.paymentMethod]);
         const created = { id: newId(), ...patch, archived: false };
         candidate.templates[kind].push(created);
         return created;
@@ -1058,6 +1143,7 @@
     }
     function updateTemplate(kind, id, updates) {
       const structural = kind === 'income' ? ['earnerId'] : ['categoryId', 'categoryItemId', 'paymentMethod'];
+      if (residentSchemaVersion === Schema.V6_SCHEMA_VERSION) structural.push('accountId');
       const patch = patchOf(updates, [...TEMPLATE_COMMON, ...structural]);
       return transactGlobal(candidate => {
         const current = findOrThrow(candidate.templates[kind], id, kind === 'income' ? 'INCOME_TEMPLATE_NOT_FOUND' : 'EXPENSE_TEMPLATE_NOT_FOUND');
@@ -1072,6 +1158,13 @@
             const category = activeCategory(candidate, nextCategoryId);
             if (nextItemId !== null) activeCategoryItem(category, nextItemId);
           }
+        }
+        if (residentSchemaVersion === Schema.V6_SCHEMA_VERSION &&
+            (Object.hasOwn(patch, 'accountId') || (kind === 'expenses' && Object.hasOwn(patch, 'paymentMethod')))) {
+          const nextAccountId = Object.hasOwn(patch, 'accountId') ? patch.accountId : current.accountId;
+          const nextMethod = Object.hasOwn(patch, 'paymentMethod') ? patch.paymentMethod : current.paymentMethod;
+          accountFor(candidate, nextAccountId, kind === 'income' ? INCOME_ACCOUNT_KINDS : PAYMENT_ACCOUNT_KINDS[nextMethod],
+            { allowArchived: !Object.hasOwn(patch, 'accountId') || nextAccountId === current.accountId });
         }
         Object.assign(current, patch);
         return current;
@@ -1101,16 +1194,21 @@
     const reorderExpenseTemplates = ids => reorderTemplates('expenses', ids);
 
     function addPaycheck(monthKey, input) {
-      const paycheck = patchOf(input, ['earnerId', 'plannedAmount', 'actualAmount', 'date']);
+      const allowed = ['earnerId', 'plannedAmount', 'actualAmount', 'date'];
+      if (residentSchemaVersion === Schema.V6_SCHEMA_VERSION) allowed.push('accountId');
+      const paycheck = patchOf(input, allowed);
       const amountFieldsPresent = Object.hasOwn(paycheck, 'plannedAmount') && Object.hasOwn(paycheck, 'actualAmount');
       if (!Object.hasOwn(paycheck, 'earnerId') || !amountFieldsPresent || !Object.hasOwn(paycheck, 'date')) {
         throw new StoreError('MISSING_FIELD');
       }
+      if (residentSchemaVersion === Schema.V6_SCHEMA_VERSION && !Object.hasOwn(paycheck, 'accountId')) paycheck.accountId = null;
       return transactMonth(monthKey, candidate => {
         const earner = activeEarner(candidate, paycheck.earnerId);
+        if (residentSchemaVersion === Schema.V6_SCHEMA_VERSION) accountFor(candidate, paycheck.accountId, INCOME_ACCOUNT_KINDS);
         const month = requireMonth(candidate, monthKey);
         const created = { id: newId(), earnerId: earner.id, earner: earner.name, plannedAmount: paycheck.plannedAmount,
-          actualAmount: paycheck.actualAmount, date: normalizeMonthlyDate(monthKey, paycheck.date), sourceTemplateId: null, occurrenceKey: null };
+          actualAmount: paycheck.actualAmount, date: normalizeMonthlyDate(monthKey, paycheck.date), sourceTemplateId: null, occurrenceKey: null,
+          ...(residentSchemaVersion === Schema.V6_SCHEMA_VERSION ? { accountId: paycheck.accountId } : {}) };
         if (residentSchemaVersion >= Schema.V5_SCHEMA_VERSION) created.cleared = false;
         month.paychecks.push(created);
         return created;
@@ -1121,6 +1219,11 @@
         const month = candidate.months[monthKey];
         if (!month) throw new StoreError('MONTH_NOT_FOUND');
         const paycheck = findOrThrow(month.paychecks, id, 'PAYCHECK_NOT_FOUND');
+        if (residentSchemaVersion === Schema.V6_SCHEMA_VERSION && Object.hasOwn(patch, 'accountId')) {
+          accountFor(candidate, patch.accountId, INCOME_ACCOUNT_KINDS,
+            { allowArchived: patch.accountId === paycheck.accountId });
+          paycheck.accountId = patch.accountId;
+        }
         if (Object.hasOwn(patch, 'earnerId')) {
           const earner = activeEarner(candidate, patch.earnerId);
           paycheck.earnerId = earner.id; paycheck.earner = earner.name;
@@ -1141,13 +1244,13 @@
       });
     }
     function updatePaycheck(monthKey, id, updates) {
-      return mutatePaycheck(monthKey, id, patchOf(updates, ['plannedAmount', 'actualAmount', 'date']));
+      return mutatePaycheck(monthKey, id, patchOf(updates, ['plannedAmount', 'actualAmount', 'date', ...(residentSchemaVersion === Schema.V6_SCHEMA_VERSION ? ['accountId'] : [])]));
     }
     function reassignPaycheckEarner(monthKey, id, earnerId) {
       return mutatePaycheck(monthKey, id, { earnerId });
     }
     function editPaycheck(monthKey, id, updates) {
-      return mutatePaycheck(monthKey, id, patchOf(updates, ['earnerId', 'plannedAmount', 'actualAmount', 'date']));
+      return mutatePaycheck(monthKey, id, patchOf(updates, ['earnerId', 'plannedAmount', 'actualAmount', 'date', ...(residentSchemaVersion === Schema.V6_SCHEMA_VERSION ? ['accountId'] : [])]));
     }
     function deletePaycheck(monthKey, id) {
       return transactMonth(monthKey, candidate => {
@@ -1170,12 +1273,16 @@
       });
     }
     function addExpense(monthKey, input) {
-      const expense = patchOf(input, ['categoryId', 'categoryItemId', 'name', 'date', 'paycheckAmounts', 'plannedAmount', 'actualAmount', 'paymentMethod']);
+      const allowed = ['categoryId', 'categoryItemId', 'name', 'date', 'paycheckAmounts', 'plannedAmount', 'actualAmount', 'paymentMethod'];
+      if (residentSchemaVersion === Schema.V6_SCHEMA_VERSION) allowed.push('accountId');
+      const expense = patchOf(input, allowed);
       if (!Object.hasOwn(expense, 'categoryId') || !Object.hasOwn(expense, 'categoryItemId') ||
           !Object.hasOwn(expense, 'paymentMethod') || !Object.hasOwn(expense, 'date') ||
           !Object.hasOwn(expense, 'plannedAmount') || !Object.hasOwn(expense, 'actualAmount')) throw new StoreError('MISSING_FIELD');
+      if (residentSchemaVersion === Schema.V6_SCHEMA_VERSION && !Object.hasOwn(expense, 'accountId')) expense.accountId = null;
       return transactMonth(monthKey, candidate => {
         const category = activeCategory(candidate, expense.categoryId);
+        if (residentSchemaVersion === Schema.V6_SCHEMA_VERSION) accountFor(candidate, expense.accountId, PAYMENT_ACCOUNT_KINDS[expense.paymentMethod]);
         const created = { id: newId() };
         applyExpenseStructure(created, category, expense.categoryItemId, expense.name);
         created.date = normalizeMonthlyDate(monthKey, expense.date);
@@ -1183,6 +1290,7 @@
         created.plannedAmount = expense.plannedAmount;
         created.actualAmount = expense.actualAmount;
         created.paymentMethod = expense.paymentMethod;
+        if (residentSchemaVersion === Schema.V6_SCHEMA_VERSION) created.accountId = expense.accountId;
         created.sourceTemplateId = null; created.occurrenceKey = null;
         if (residentSchemaVersion >= Schema.V5_SCHEMA_VERSION) created.cleared = false;
         requireMonth(candidate, monthKey).expenses.push(created);
@@ -1198,6 +1306,14 @@
         const month = candidate.months[monthKey];
         if (!month) throw new StoreError('MONTH_NOT_FOUND');
         const expense = findOrThrow(month.expenses, id, 'EXPENSE_NOT_FOUND');
+        if (residentSchemaVersion === Schema.V6_SCHEMA_VERSION &&
+            (Object.hasOwn(patch, 'accountId') || Object.hasOwn(patch, 'paymentMethod'))) {
+          const nextAccountId = Object.hasOwn(patch, 'accountId') ? patch.accountId : expense.accountId;
+          const nextMethod = Object.hasOwn(patch, 'paymentMethod') ? patch.paymentMethod : expense.paymentMethod;
+          accountFor(candidate, nextAccountId, PAYMENT_ACCOUNT_KINDS[nextMethod],
+            { allowArchived: !Object.hasOwn(patch, 'accountId') || nextAccountId === expense.accountId });
+          if (Object.hasOwn(patch, 'accountId')) expense.accountId = patch.accountId;
+        }
         if (structural) {
           const priorName = expense.name;
           applyExpenseStructure(expense, activeCategory(candidate, patch.categoryId), patch.categoryItemId, patch.name);
@@ -1227,7 +1343,7 @@
       });
     }
     function updateExpense(monthKey, id, updates) {
-      return mutateExpense(monthKey, id, patchOf(updates, ['name', 'date', 'plannedAmount', 'actualAmount', 'paymentMethod']));
+      return mutateExpense(monthKey, id, patchOf(updates, ['name', 'date', 'plannedAmount', 'actualAmount', 'paymentMethod', ...(residentSchemaVersion === Schema.V6_SCHEMA_VERSION ? ['accountId'] : [])]));
     }
     function reassignExpenseStructure(monthKey, id, structure) {
       const patch = patchOf(structure, ['categoryId', 'categoryItemId', 'name']);
@@ -1235,7 +1351,7 @@
       return mutateExpense(monthKey, id, patch);
     }
     function editExpense(monthKey, id, updates) {
-      const patch = patchOf(updates, ['categoryId', 'categoryItemId', 'name', 'date', 'plannedAmount', 'actualAmount', 'paymentMethod']);
+      const patch = patchOf(updates, ['categoryId', 'categoryItemId', 'name', 'date', 'plannedAmount', 'actualAmount', 'paymentMethod', ...(residentSchemaVersion === Schema.V6_SCHEMA_VERSION ? ['accountId'] : [])]);
       return mutateExpense(monthKey, id, patch);
     }
     function updateExpensePaycheckAmount(monthKey, expenseId, paycheckId, amount) {
@@ -1422,6 +1538,7 @@
             id: newId(), earnerId: earner.id, earner: earner.name,
             plannedAmount: source.plannedAmount, actualAmount: null, date: item.scheduledDate,
             sourceTemplateId: source.id, occurrenceKey: item.occurrenceKey,
+            ...(residentSchemaVersion === Schema.V6_SCHEMA_VERSION ? { accountId: source.accountId } : {}),
             ...(residentSchemaVersion >= Schema.V5_SCHEMA_VERSION ? { cleared: false } : {})
           });
         }
@@ -1433,6 +1550,7 @@
             categoryItemId: source.categoryItemId, name: source.name, date: item.scheduledDate,
             paycheckAmounts: {}, plannedAmount: source.plannedAmount, actualAmount: null,
             paymentMethod: source.paymentMethod, sourceTemplateId: source.id, occurrenceKey: item.occurrenceKey,
+            ...(residentSchemaVersion === Schema.V6_SCHEMA_VERSION ? { accountId: source.accountId } : {}),
             ...(residentSchemaVersion >= Schema.V5_SCHEMA_VERSION ? { cleared: false } : {})
           });
         }
@@ -2826,11 +2944,12 @@
     return Object.freeze({
       load, reload, getStatus, getData, getMonth: peekMonth, peekMonth, ensureMonth, getAllMonthKeys,
       previewLocalDataPurge, commitLocalDataPurge,
-      getCategories, getCategory, getCategoryItems, getCategoryItem, getEarners, getEarner,
+      getCategories, getCategory, getCategoryItems, getCategoryItem, getEarners, getEarner, getAccounts, getAccountUsage,
       getIncomeTemplates, getExpenseTemplates, getIncomeTemplate, getExpenseTemplate,
       getStructureUsage, addCategory, renameCategory, setCategoryArchived, reorderCategories,
       addCategoryItem, renameCategoryItem, setCategoryItemArchived, reorderCategoryItems,
       addEarner, renameEarner, setEarnerArchived, reorderEarners,
+      createAccount, updateAccount, reorderAccounts,
       addIncomeTemplate, updateIncomeTemplate, archiveIncomeTemplate,
       setIncomeTemplateArchived: archiveIncomeTemplate, reorderIncomeTemplates,
       addExpenseTemplate, updateExpenseTemplate, archiveExpenseTemplate,
