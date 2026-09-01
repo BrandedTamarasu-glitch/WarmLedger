@@ -1221,6 +1221,7 @@ async function run(options) {
     scenario.actualAccountsMigrationPreviewCancelSnapshotConfirm = true;
     const actualAccountsUi = await evaluate(cdp, `(async () => {
       const settle = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const primaryKey = ZeroBudgetStore.STORAGE_KEY || Store.STORAGE_KEY;
       const monthKey = BudgetView.currentMonth;
       const bank = Store.getAccounts().find(item => item.kind === 'bank');
       const card = Store.getAccounts().find(item => item.kind === 'credit_card');
@@ -1316,6 +1317,11 @@ async function run(options) {
       const noEnteredState = document.querySelector('.pay-period-actual-accounts')?.textContent.includes(
         'No actual account labels entered for this month.');
       TransfersView.currentMonth = monthKey;
+      const explicitRecord = Store.getMonth(monthKey).paychecks.find(item => item.actualAccountId === bank.id);
+      sessionStorage.setItem('browser-evidence-actual-accounts-primary', localStorage.getItem(primaryKey));
+      sessionStorage.setItem('browser-evidence-actual-accounts-fixture', JSON.stringify({
+        monthKey, recordId: explicitRecord.id, actualAccountId: bank.id, actualAmount: explicitRecord.actualAmount
+      }));
       return { schema7: Store.getStatus().residentSchemaVersion === 7, gatedUntilComplete, enteredZeroEligible,
         uiAssigned, uiAmountClearPersisted, uiReassigned, uiDateControlCleared, uiDateSaveEnabled, uiDateModalClosed,
         uiDateBlankPersisted, uiDateClearPersisted,
@@ -1411,13 +1417,18 @@ async function run(options) {
       `Multi-tab stale or busy write did not fail closed and recover by reload: ${JSON.stringify(multiTab)}`);
     scenario.multiTabStaleBusyReloadRecovery = true;
     await evaluate(cdp, `localStorage.setItem(ZeroBudgetStore.STORAGE_KEY || Store.STORAGE_KEY,
-      sessionStorage.getItem('browser-evidence-accounts-primary')); Store.reload()`);
+      sessionStorage.getItem('browser-evidence-actual-accounts-primary')); Store.reload()`);
     const shardedMigration = await evaluate(cdp, `(async () => {
       App.switchView('data-health'); DataHealthView.render();
       const primaryKey = ZeroBudgetStore.STORAGE_KEY || Store.STORAGE_KEY;
       const allBytes = () => JSON.stringify(Object.keys(localStorage).sort().map(key => [key, localStorage.getItem(key)]));
       const semantic = value => Array.isArray(value) ? value.map(semantic) : value && typeof value === 'object'
         ? Object.fromEntries(Object.keys(value).sort().map(key => [key, semantic(value[key])])) : value;
+      const fixture = JSON.parse(sessionStorage.getItem('browser-evidence-actual-accounts-fixture'));
+      const explicitBefore = Store.getMonth(fixture.monthKey).paychecks.find(item => item.id === fixture.recordId);
+      const schema7Fixture = Store.getStatus().residentSchemaVersion === 7 &&
+        explicitBefore?.actualAccountId === fixture.actualAccountId && explicitBefore.actualAmount === fixture.actualAmount &&
+        Store.getActualAccountSummary(fixture.monthKey).incomeAccounts.some(item => item.accountId === fixture.actualAccountId);
       const beforePreview = allBytes();
       const trigger = document.getElementById('review-month-sharded-storage');
       if (!trigger) return { available: false, status: Store.getStatus(), summary: Store.getShardedPersistenceSummary(),
@@ -1449,7 +1460,12 @@ async function run(options) {
           manifest.months[monthKey], localStorage.getItem(manifest.months[monthKey].key))));
       sessionStorage.setItem('browser-evidence-sharded-bytes', allBytes());
       sessionStorage.setItem('browser-evidence-sharded-semantic', JSON.stringify(semantic(Store.getData())));
-      return { available: true, previewWriteFree, cancelFocused, cancelWriteFree,
+      const explicitAfter = Store.getMonth(fixture.monthKey).paychecks.find(item => item.id === fixture.recordId);
+      const schema7ExplicitSurvives = Store.getStatus().residentSchemaVersion === 7 &&
+        rootPointer?.residentSchemaVersion === 7 && manifest?.residentSchemaVersion === 7 &&
+        explicitAfter?.actualAccountId === fixture.actualAccountId && explicitAfter.actualAmount === fixture.actualAmount &&
+        Store.getActualAccountSummary(fixture.monthKey).incomeAccounts.some(item => item.accountId === fixture.actualAccountId);
+      return { available: true, previewWriteFree, cancelFocused, cancelWriteFree, schema7Fixture, schema7ExplicitSurvives,
         rootKeyFrozen: primaryKey === 'zeroBudget_data',
         rootPresent: rootPointer !== null,
         migrated: rootPointer?.format === 'zerobudget-active-layout' && rootPointer.layout === 'month-sharded' &&
@@ -1459,7 +1475,8 @@ async function run(options) {
           Store.getShardedPersistenceSummary().state === 'already-sharded' };
     })()`);
     assertEvidence(shardedMigration.available && shardedMigration.previewWriteFree && shardedMigration.cancelFocused &&
-      shardedMigration.cancelWriteFree && shardedMigration.rootKeyFrozen && shardedMigration.rootPresent &&
+      shardedMigration.cancelWriteFree && shardedMigration.schema7Fixture && shardedMigration.schema7ExplicitSurvives &&
+      shardedMigration.rootKeyFrozen && shardedMigration.rootPresent &&
       shardedMigration.migrated && shardedMigration.referencesResolve && shardedMigration.referencesValidate &&
       shardedMigration.summaryActive, `Month-sharded migration evidence failed: ${JSON.stringify(shardedMigration)}`);
     scenario.shardedMigrationPreviewNoWriteCancelConfirm = true;
@@ -1479,6 +1496,11 @@ async function run(options) {
       const reloadByteExact = allBytes() === sessionStorage.getItem('browser-evidence-sharded-bytes');
       const reloadSemanticExact = JSON.stringify(semantic(Store.getData())) ===
         sessionStorage.getItem('browser-evidence-sharded-semantic');
+      const fixture = JSON.parse(sessionStorage.getItem('browser-evidence-actual-accounts-fixture'));
+      const explicitReload = Store.getMonth(fixture.monthKey).paychecks.find(item => item.id === fixture.recordId);
+      const schema7ExplicitReload = Store.getStatus().residentSchemaVersion === 7 &&
+        explicitReload?.actualAccountId === fixture.actualAccountId && explicitReload.actualAmount === fixture.actualAmount &&
+        Store.getActualAccountSummary(fixture.monthKey).incomeAccounts.some(item => item.accountId === fixture.actualAccountId);
       localStorage.setItem(monthShardKey, '{corrupt-browser-evidence');
       const damaged = Store.reload();
       const evidenceRaw = Store.getCorruptEvidence();
@@ -1489,13 +1511,19 @@ async function run(options) {
         evidence.failingKey === monthShardKey && evidence.failingRaw === '{corrupt-browser-evidence' &&
         localStorage.getItem(corruptKey) === null;
       Store.restoreSnapshot(safety.id);
-      const restored = Store.getStatus().state === 'ready' && Store.getShardedPersistenceSummary().state === 'available';
+      const restoredRecord = Store.getMonth(fixture.monthKey).paychecks.find(item => item.id === fixture.recordId);
+      const restored = Store.getStatus().state === 'ready' && Store.getStatus().residentSchemaVersion === 7 &&
+        Store.getShardedPersistenceSummary().state === 'available' && restoredRecord?.actualAccountId === fixture.actualAccountId;
       const preview = Store.previewShardedPersistenceMigration(); Store.commitShardedPersistenceMigration(preview);
-      return { reloadActive, reloadByteExact, reloadSemanticExact, recoveryRequired, restored,
-        remigrated: Store.getShardedPersistenceSummary().state === 'already-sharded' };
+      const remigratedRecord = Store.getMonth(fixture.monthKey).paychecks.find(item => item.id === fixture.recordId);
+      return { reloadActive, reloadByteExact, reloadSemanticExact, schema7ExplicitReload, recoveryRequired, restored,
+        remigrated: Store.getStatus().residentSchemaVersion === 7 &&
+          Store.getShardedPersistenceSummary().state === 'already-sharded' &&
+          remigratedRecord?.actualAccountId === fixture.actualAccountId };
     })()`);
     assertEvidence(shardedReloadRecovery.reloadActive && shardedReloadRecovery.reloadByteExact &&
-      shardedReloadRecovery.reloadSemanticExact && shardedReloadRecovery.recoveryRequired &&
+      shardedReloadRecovery.reloadSemanticExact && shardedReloadRecovery.schema7ExplicitReload &&
+      shardedReloadRecovery.recoveryRequired &&
       shardedReloadRecovery.restored && shardedReloadRecovery.remigrated,
       `Sharded reload or recovery evidence failed: ${JSON.stringify(shardedReloadRecovery)}`);
     scenario.shardedReloadCorruptionEvidenceSnapshotRecovery = true;

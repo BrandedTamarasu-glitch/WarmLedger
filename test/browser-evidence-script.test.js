@@ -156,6 +156,14 @@ test('browser evidence covers month-sharded preview, migration, reload, corrupti
   assert.match(source, /Store\.getShardedPersistenceSummary\(\)\.state === 'already-sharded'/);
   assert.match(source, /allBytes\(\) === sessionStorage\.getItem\('browser-evidence-sharded-bytes'\)/);
   assert.match(source, /sessionStorage\.getItem\('browser-evidence-sharded-semantic'\)/);
+  assert.match(source, /browser-evidence-actual-accounts-primary/);
+  assert.match(source, /browser-evidence-actual-accounts-fixture/);
+  assert.match(source, /schema7Fixture/);
+  assert.match(source, /schema7ExplicitSurvives/);
+  assert.match(source, /schema7ExplicitReload/);
+  assert.match(source, /rootPointer\?\.residentSchemaVersion === 7/);
+  assert.match(source, /manifest\?\.residentSchemaVersion === 7/);
+  assert.match(source, /remigratedRecord\?\.actualAccountId === fixture\.actualAccountId/);
   assert.match(source, /Store\.restoreSnapshot\(safety\.id\)/);
   assert.match(source, /const evidenceRaw = Store\.getCorruptEvidence\(\)/);
   assert.doesNotMatch(source, /Store\.getCorruptEvidence\(\) \|\|/);
