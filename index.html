@@ -145,6 +145,25 @@
           <div id="dashboard-upcoming-content"></div>
         </div>
       </details>
+      <details id="dashboard-record-finder" class="dashboard-record-finder dash-card">
+        <summary>Find a saved record</summary>
+        <div class="dashboard-record-finder-body">
+          <p>Searches saved paycheck earners and saved expense names and categories only. The search stays on this device and is not saved.</p>
+          <form id="dashboard-record-finder-form" autocomplete="off">
+            <div class="dashboard-record-finder-fields">
+              <label for="dashboard-record-query">Search<input id="dashboard-record-query" type="search" minlength="1" maxlength="120" autocomplete="off" required></label>
+              <label for="dashboard-record-kind">Kind<select id="dashboard-record-kind"><option value="all">Paychecks and expenses</option><option value="income">Paychecks</option><option value="expense">Expenses</option></select></label>
+              <label for="dashboard-record-from">From month (optional)<input id="dashboard-record-from" type="month"></label>
+              <label for="dashboard-record-to">To month (optional)<input id="dashboard-record-to" type="month"></label>
+            </div>
+            <div class="dashboard-record-finder-actions">
+              <button class="btn btn-primary" type="submit">Search</button>
+              <button id="dashboard-record-clear" class="btn" type="button" hidden>Clear search</button>
+            </div>
+          </form>
+          <div id="dashboard-record-results" class="dashboard-record-results" aria-live="polite"></div>
+        </div>
+      </details>
       <fieldset class="dashboard-controls" aria-describedby="dashboard-range-help dashboard-state">
         <legend>Reporting range</legend>
         <div class="date-range">

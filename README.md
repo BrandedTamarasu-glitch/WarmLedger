@@ -44,6 +44,14 @@ The Dashboard's **Planned forecast** is a read-only view of saved future months 
 
 The initially closed **Upcoming bills & paydays** disclosure shows only saved paycheck and expense records in an explicit 30-, 60-, or 90-day window anchored to the device's local civil date. Missing months are **No saved plan**, saved empty months remain saved plans, and blank record dates appear separately under **Date needed** instead of being placed on the timeline. Actual **Not entered**, entered zero, and entered values remain distinct; bill funding text comes only from saved paycheck assignments. Dates are neutral scheduled or recorded dates—not due, paid, cleared, settlement, or reconciliation claims. This local planning view does not inspect templates, generate records, infer dates or funding, send reminders, or estimate balances. Print includes the currently selected range, content, and disclaimer while omitting the window controls.
 
+### Find a saved record
+
+The Saved-Record Finder is complete locally and not yet published. It is an initially closed Dashboard disclosure with a submit-only search form and a transient **Clear search** action. Search scans only saved paychecks and expenses across saved months. A trimmed query must contain 1–120 characters. Matching is a literal, case-insensitive substring check: income searches saved earner labels, while expenses search saved names and categories. Optional kind and strict inclusive `YYYY-MM` bounds narrow the scan. Results remain in canonical month order, with paychecks before expenses and each kind in saved array order; at most 200 presentation-safe results are returned, with a truthful full count and truncation notice.
+
+The query and results will stay local and transient. They will not be placed in storage, the URL, history, logs, errors, exports, reports, screenshots, browser evidence, analytics, snapshots, or backups, and searching will not write, migrate, generate identifiers, advance Store generations, or alter live data. The finder will not search IDs, amounts, dates, payment methods, templates, notes, occurrence keys, funding, archived catalog labels, recurring exceptions, snapshots, or backups. It will use literal matching only—no regular expressions, fuzzy matching, stemming, scoring, ranking, suggestions, saved queries, or search history.
+
+Each result shows only its saved identity, kind, month, neutral saved date or **Date needed**, planned amount, and actual amount or **Not entered**. **Open** revalidates the exact current result before routing to that record's existing Budget **Edit** control; it does not open an editor or change the ledger. Finding or opening a result makes no claim about payment, due dates, cleared state, funding, accounts, balances, reconciliation, or month lifecycle.
+
 ## Run locally
 
 Open `index.html` in a modern browser. From this directory on Linux, for example:
@@ -102,7 +110,7 @@ Planned paycheck income drives the funding plan. Actual income is displayed sepa
 
 **Planned payment guidance** shows how explicitly assigned bills are divided between keeping money in the bank and planning for credit card, savings, or investment-funded bills. It appears as a compact tile in Monthly Review and as a month total in Pay periods; the paycheck cards show when each portion is planned. These are planning totals only: they do not send money, pay a bill, or verify an account transfer.
 
-The view is not a calendar pay-period calculator, does not infer boundaries around paycheck dates, and does not move funding across months. A funding assignment is not evidence that a bill was paid, an account was reconciled, money reached a bank, or an account-to-account transfer occurred. This feature keeps data schema version 3 and backup/snapshot envelope version 1 unchanged.
+The view is not a calendar pay-period calculator, does not infer boundaries around paycheck dates, and does not move funding across months. A funding assignment is not evidence that a bill was paid, an account was reconciled, money reached a bank, or an account-to-account transfer occurred. Pay periods operates schema-neutrally over normalized resident schema-version-3, schema-version-4, and schema-version-5 data without changing the resident version; backup/snapshot envelope format version 1 remains unchanged.
 
 ## Data Health
 
@@ -114,7 +122,7 @@ For missing actuals, select only the records to resolve, enter each amount, and 
 
 The closed **Money precision** disclosure is a read-only, aggregate-only audit of stored money values. It reports how many stored values were scanned and, when needed, how many include digits smaller than one cent plus affected month and template counts. It never displays amounts, record labels, identifiers, or month keys, and it does not round, repair, or change ledger values.
 
-For an eligible schema-version-3 ledger whose values are all exact to one cent, Data Health offers an explicit preview and confirmation to move persistence to schema version 4 integer cents. Downloading a JSON backup is offered before confirmation, and Warm Ledger must create and verify a local safety snapshot before the single active-data write. A cancelled, stale, blocked, or failed migration leaves the active ledger unchanged. Ordinary edits do not migrate a version-3 ledger automatically. Sub-cent version-3 ledgers remain valid, editable, and exportable, but the migration action stays unavailable; an entered zero remains distinct from an actual amount that was not entered (`null`). Backup and snapshot envelopes remain format version 1 and may contain either schema version 3 or 4 ledger data.
+For an eligible schema-version-3 ledger whose values are all exact to one cent, Data Health offers an explicit preview and confirmation to move persistence to schema version 4 integer cents. Downloading a JSON backup is offered before confirmation, and Warm Ledger must create and verify a local safety snapshot before the single active-data write. A cancelled, stale, blocked, or failed migration leaves the active ledger unchanged. Ordinary edits do not migrate a version-3 ledger automatically. Sub-cent version-3 ledgers remain valid, editable, and exportable, but the migration action stays unavailable; an entered zero remains distinct from an actual amount that was not entered (`null`). Backup and snapshot envelopes remain format version 1 and may contain resident schema version 3, 4, or 5 ledger data.
 
 ## Recurring templates
 
@@ -146,9 +154,9 @@ The application has no server component and makes no account or financial-data n
 
 ## Data format compatibility
 
-The active data model is schema version 3. Existing unversioned, schema-version-1, and schema-version-2 data is migrated deterministically in memory when opened; loading alone does not rewrite browser storage. The first later successful edit persists schema version 3 atomically. If that write fails, the original stored bytes and the last committed in-memory budget remain unchanged.
+Warm Ledger supports resident data schema versions 3, 4, and 5. All three are normalized to the same decimal-facing runtime money values while retaining their resident persistence contract. Existing unversioned, schema-version-1, and schema-version-2 data is migrated deterministically in memory to version 3 when opened; loading alone does not rewrite browser storage. Ordinary successful edits preserve the resident version. The separately confirmed exact-money upgrade moves an eligible version-3 ledger to version 4, and the first confirmed manual-clearing change to a version-4 ledger moves it atomically to version 5 after a required safety snapshot. Failed writes leave the original stored bytes and last committed in-memory budget unchanged.
 
-Backup and snapshot envelopes remain format version 1 and can contain older ZeroBudget data that Warm Ledger migrates during validation. Backups created by the current application contain schema-version-3 data and may be rejected by older application versions, so download and retain a backup before intentionally downgrading.
+Backup and snapshot envelopes remain format version 1 and can contain resident schema-version-3, schema-version-4, or schema-version-5 data, as well as older ZeroBudget data that Warm Ledger migrates during validation. Current backups preserve the active resident version. Newer resident data may be rejected by older application versions, so download and retain a backup before intentionally downgrading.
 
 ## Back up and restore
 

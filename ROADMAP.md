@@ -1,6 +1,6 @@
 # Warm Ledger Roadmap
 
-This roadmap turns the August 2026 ForgeFlow product audit into sequenced, testable releases. Warm Ledger remains local-only, dependency-free, compatible with direct `file://` startup, schema version 3, and backup envelope version 1 unless a later phase explicitly authorizes a migration.
+This roadmap turns the August 2026 ForgeFlow product audit into sequenced, testable releases. Warm Ledger remains local-only, dependency-free, compatible with direct `file://` startup, resident schema versions 3, 4, and 5, and backup/snapshot envelope format version 1 unless a later phase explicitly authorizes a migration.
 
 ## Phase 1 — Data safety fixes
 
@@ -98,7 +98,7 @@ Status: published on 2026-08-30.
 - Keep assignments explicit and editable only in Budget; recurring templates do not auto-assign generated bills.
 - Keep monthly remaining-funds allocations separate from paycheck funding envelopes.
 - Make no claims about calendar pay-period boundaries, cross-month funding, paid status, bank activity, reconciliation, or actual transfers.
-- Preserve data schema version 3 and backup/snapshot envelope version 1.
+- Operate schema-neutrally over normalized resident schema-version-3, schema-version-4, and schema-version-5 runtime data; preserve backup/snapshot envelope format version 1.
 
 ### Phase 6B — Honest actual transfers and accounts
 
@@ -108,16 +108,30 @@ Status: published on 2026-08-30.
 
 ## Phase 7 — Dashboard truth, accessibility, and reporting
 
-Status: reporting truth, accessible chart tables, date-range safety, and quick ranges published; spending basis, CSV, print, and saved-month forecasting complete locally.
+Status: published, including spending basis, CSV, print, saved-month forecasting, and Upcoming bills & paydays through 2026-08-31.
 
 - Published: honest incomplete-state handling plus corrected Savings Rate, Income, and Payment Method labeling and coverage.
 - Published: an accessible table equivalent for every chart.
 - Published: strict date-range validation, stale-visualization clearing, and Current month, Last 3 months, Last 6 months, and Year to date shortcuts.
-- Complete locally: an explicit Planned/Actual basis control for spending reports, with incomplete actuals preserved and planned-only reports clearly bounded.
-- Complete locally: range- and basis-aware CSV export with explicit completeness and spreadsheet-formula protection.
-- Complete locally: printable dashboard reports with explicit range and basis context, expanded data tables, and paper-safe presentation.
-- Complete locally: planned-only saved-future-month forecasting for the next 3, 6, or 12 months, with explicit gaps, accessible table, CSV, print support, and no recurring-template inference.
-- Complete locally: a closed Upcoming bills & paydays projection for saved records across explicit 30-, 60-, or 90-day local civil windows, with missing-plan gaps, Date needed records, truthful actual/funding states, and print support; reminders, calendar integration, inference, and account claims remain deferred.
+- Published: an explicit Planned/Actual basis control for spending reports, with incomplete actuals preserved and planned-only reports clearly bounded.
+- Published: range- and basis-aware CSV export with explicit completeness and spreadsheet-formula protection.
+- Published: printable dashboard reports with explicit range and basis context, expanded data tables, and paper-safe presentation.
+- Published: planned-only saved-future-month forecasting for the next 3, 6, or 12 months, with explicit gaps, accessible table, CSV, print support, and no recurring-template inference.
+- Published: a closed Upcoming bills & paydays projection for saved records across explicit 30-, 60-, or 90-day local civil windows, with missing-plan gaps, Date needed records, truthful actual/funding states, and print support; reminders, calendar integration, inference, and account claims remain deferred.
+
+### Saved-Record Finder
+
+Status: complete locally; not yet published.
+
+- Add one bounded, deterministic, detached Store scan over saved monthly paychecks and expenses and one initially closed Dashboard disclosure.
+- Use submit-only literal, case-insensitive substring matching over saved income earner labels and saved expense names and categories, with optional kind and inclusive month filters.
+- Keep canonical month/paycheck/expense/saved-array ordering, a 200-result return cap, and truthful full-count and truncation reporting.
+- Keep queries and results local and transient with no persistence, URLs, history, logs, exports, reports, evidence, analytics, snapshots, clocks, identifiers, generation changes, migrations, or memory mutation.
+- Return presentation-safe saved-record facts only, preserving decimal-facing values, `actualAmount:null`, and entered zero across resident schema versions 3, 4, and 5 without exposing cents or internal structure, template, clearing, funding, or recurrence fields.
+- Revalidate the exact current result before routing to its existing Budget Edit control; a route never opens an editor or writes.
+- Make no payment, due-date, cleared, funding, account, balance, reconciliation, or lifecycle claim.
+
+The lean ceiling is a bounded scan, one closed disclosure, and one existing-control focus route. Consider a rebuildable in-memory index only if measured ledger performance requires it; richer filters or saved queries require explicit user demand, and persistence requires a separate privacy and invalidation contract.
 
 ## Global release gates
 

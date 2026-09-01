@@ -1654,6 +1654,68 @@
       });
     }
 
+    function findSavedRecords(request) {
+      requireReady();
+      const allowedKeys = ['query', 'kind', 'fromMonth', 'toMonth', 'limit'];
+      if (!request || typeof request !== 'object' || Array.isArray(request) ||
+          !Object.hasOwn(request, 'query') ||
+          Reflect.ownKeys(request).some(key => typeof key !== 'string' || !allowedKeys.includes(key))) {
+        throw new StoreError('INVALID_SAVED_RECORD_SEARCH');
+      }
+      if (typeof request.query !== 'string') throw new StoreError('INVALID_SAVED_RECORD_QUERY');
+      const query = request.query.trim();
+      if (query.length < 1 || query.length > 120) throw new StoreError('INVALID_SAVED_RECORD_QUERY');
+      const normalizedQuery = query.toLowerCase();
+      const kind = Object.hasOwn(request, 'kind') ? request.kind : 'all';
+      const fromMonth = Object.hasOwn(request, 'fromMonth') ? request.fromMonth : null;
+      const toMonth = Object.hasOwn(request, 'toMonth') ? request.toMonth : null;
+      const limit = Object.hasOwn(request, 'limit') ? request.limit : 200;
+      if (!['all', 'income', 'expense'].includes(kind)) throw new StoreError('INVALID_SAVED_RECORD_KIND');
+      if (fromMonth !== null) validateMonthKey(fromMonth);
+      if (toMonth !== null) validateMonthKey(toMonth);
+      if (fromMonth !== null && toMonth !== null && fromMonth > toMonth) {
+        throw new StoreError('INVALID_MONTH_RANGE');
+      }
+      if (!Number.isInteger(limit) || limit < 1 || limit > 200) {
+        throw new StoreError('INVALID_SAVED_RECORD_LIMIT');
+      }
+
+      const matches = [];
+      const monthKeys = Object.keys(data.months).sort()
+        .filter(monthKey => (fromMonth === null || monthKey >= fromMonth) &&
+          (toMonth === null || monthKey <= toMonth));
+      for (const monthKey of monthKeys) {
+        const month = data.months[monthKey];
+        if (kind !== 'expense') for (const paycheck of month.paychecks) {
+          if (!paycheck.earner.toLowerCase().includes(normalizedQuery)) continue;
+          matches.push({
+            kind: 'income', monthKey, recordId: paycheck.id,
+            primaryLabel: paycheck.earner, secondaryLabel: 'Paycheck', date: paycheck.date,
+            plannedAmount: paycheck.plannedAmount, actualAmount: paycheck.actualAmount,
+            matchedFields: ['earner']
+          });
+        }
+        if (kind !== 'income') for (const expense of month.expenses) {
+          const matchedFields = [];
+          if (expense.name.toLowerCase().includes(normalizedQuery)) matchedFields.push('name');
+          if (expense.category.toLowerCase().includes(normalizedQuery)) matchedFields.push('category');
+          if (matchedFields.length === 0) continue;
+          matches.push({
+            kind: 'expense', monthKey, recordId: expense.id,
+            primaryLabel: expense.name, secondaryLabel: expense.category, date: expense.date,
+            plannedAmount: expense.plannedAmount, actualAmount: expense.actualAmount,
+            paymentMethod: expense.paymentMethod, matchedFields
+          });
+        }
+      }
+      const results = matches.slice(0, limit);
+      return freezeDetached({
+        query, normalizedQuery, filters: { kind, fromMonth, toMonth },
+        totalMatchCount: matches.length, returnedCount: results.length,
+        truncated: matches.length > results.length, results
+      });
+    }
+
     function setRecordCleared(request) {
       requireReady();
       if (!exactObject(request, ['monthKey', 'kind', 'recordId', 'cleared']) ||
@@ -1980,7 +2042,7 @@
       clearMonth, previewRecurringMonth, applyRecurringPreview,
       previewTemplateActivation, applyTemplateActivationPreview,
       getMonthReview, getPayPeriodPlan, getUpcomingBillsAndPaydays, getSuppressedOccurrences, unsuppressOccurrence,
-      getClearedChecklist, getMonthReadiness, setRecordCleared,
+      getClearedChecklist, getMonthReadiness, findSavedRecords, setRecordCleared,
       fundingDirection,
       getDataHealth, getExactMoneyAudit, getExactMoneyMigrationSummary, previewExactMoneyMigration, commitExactMoneyMigration,
       getTemplateReadiness, previewActualResolutions, applyActualResolutions, previewDefaultDateResolutions, applyDefaultDateResolutions, compareAdditiveBackup,

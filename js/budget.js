@@ -398,6 +398,19 @@ const BudgetView = {
     });
   },
 
+  focusSavedRecordResult(result) {
+    if (result.kind === 'expense') this.collapsedCategories.set(result.secondaryLabel, false);
+    this.render();
+    requestAnimationFrame(() => {
+      const controls = [...document.querySelectorAll('[data-edit-type][data-record-id]')];
+      const type = result.kind === 'income' ? 'paycheck' : 'expense';
+      const target = controls.find(control => control.dataset.editType === type &&
+        control.dataset.recordId === result.recordId);
+      (target || document.getElementById(type === 'paycheck' ? 'paychecks-heading' : 'expenses-heading'))
+        ?.focus({ preventScroll: true });
+    });
+  },
+
   focusMoveControl(type, action, id) {
     requestAnimationFrame(() => {
       const controls = [...document.querySelectorAll('[data-move-type][data-move-action]')];

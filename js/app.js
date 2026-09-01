@@ -135,6 +135,50 @@ const App = {
     requestAnimationFrame(() => BudgetView.focusFundingControl(expenseId, paycheckId));
   },
 
+  savedRecordResultFingerprint(result) {
+    if (!result || typeof result !== 'object' || !Array.isArray(result.matchedFields)) return null;
+    return JSON.stringify({
+      kind: result.kind, monthKey: result.monthKey, recordId: result.recordId,
+      primaryLabel: result.primaryLabel, secondaryLabel: result.secondaryLabel,
+      date: result.date, plannedAmount: result.plannedAmount, actualAmount: result.actualAmount,
+      paymentMethod: Object.hasOwn(result, 'paymentMethod') ? result.paymentMethod : null,
+      matchedFields: [...result.matchedFields]
+    });
+  },
+
+  focusSavedRecordSearchFallback(result) {
+    requestAnimationFrame(() => {
+      const actions = [...document.querySelectorAll('[data-record-kind][data-month-key][data-record-id]')];
+      const refreshed = result && actions.find(action => action.dataset.recordKind === result.kind &&
+        action.dataset.monthKey === result.monthKey && action.dataset.recordId === result.recordId);
+      const details = document.getElementById('dashboard-record-finder');
+      (refreshed || details?.querySelector('summary') || document.getElementById('dashboard-heading'))
+        ?.focus({ preventScroll: true });
+    });
+  },
+
+  openSavedRecordResult(result) {
+    if (this.currentView !== 'dashboard') this.switchView('dashboard');
+    let report;
+    try { report = DashboardView.rerunSavedRecordSearch(); }
+    catch (_error) {
+      this.announceStatus('The saved-record search could not be refreshed. Review the search and try again.');
+      this.focusSavedRecordSearchFallback(null); return false;
+    }
+    const fingerprint = this.savedRecordResultFingerprint(result);
+    const refreshed = fingerprint && report?.results?.find(candidate => candidate.kind === result.kind &&
+      candidate.monthKey === result.monthKey && candidate.recordId === result.recordId &&
+      this.savedRecordResultFingerprint(candidate) === fingerprint);
+    if (!refreshed) {
+      this.announceStatus('That saved record changed or is no longer in the current results. Review the refreshed search.');
+      this.focusSavedRecordSearchFallback(result); return false;
+    }
+    BudgetView.currentMonth = refreshed.monthKey;
+    this.switchView('budget');
+    BudgetView.focusSavedRecordResult(refreshed);
+    return true;
+  },
+
   refreshAllViews() {
     BudgetView.render(); TransfersView.syncMonth(); TransfersView.render(); DashboardView.destroyAllCharts(); StructureView.render();
     this.initializeTemplateFeatures();

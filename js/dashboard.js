@@ -55,6 +55,7 @@ const DashboardView = {
   basis: 'planned',
   forecastHorizon: 3,
   upcomingDayCount: 30,
+  savedRecordSearchRequest: null,
 
   init() {
     this.bindEvents();
@@ -67,6 +68,12 @@ const DashboardView = {
     document.getElementById('btn-dashboard-csv').addEventListener('click', () => this.exportCsv());
     document.getElementById('btn-dashboard-print').addEventListener('click', () => this.printReport());
     document.getElementById('btn-dashboard-forecast-csv').addEventListener('click', () => this.exportForecastCsv());
+    const finderForm = document.getElementById('dashboard-record-finder-form');
+    if (finderForm?.addEventListener) finderForm.addEventListener('submit', event => {
+      event.preventDefault(); this.submitSavedRecordSearch();
+    });
+    const finderClear = document.getElementById('dashboard-record-clear');
+    if (finderClear?.addEventListener) finderClear.addEventListener('click', () => this.clearSavedRecordSearch());
     if (typeof document.querySelectorAll === 'function') {
       document.querySelectorAll('[data-dashboard-basis]').forEach(button => {
         button.onclick = () => this.applyBasis(button.dataset.dashboardBasis);
@@ -91,6 +98,75 @@ const DashboardView = {
   localCivilDate() {
     const today = new Date();
     return `${String(today.getFullYear()).padStart(4, '0')}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  },
+
+  savedRecordRequestFromForm() {
+    return {
+      query: document.getElementById('dashboard-record-query').value,
+      kind: document.getElementById('dashboard-record-kind').value,
+      fromMonth: document.getElementById('dashboard-record-from').value || null,
+      toMonth: document.getElementById('dashboard-record-to').value || null,
+      limit: 200
+    };
+  },
+
+  submitSavedRecordSearch() {
+    const request = this.savedRecordRequestFromForm();
+    try {
+      const report = Store.findSavedRecords(request);
+      this.savedRecordSearchRequest = Object.freeze({ ...request, query: report.query });
+      this.renderSavedRecordResults(report);
+      document.getElementById('dashboard-record-clear').hidden = false;
+      return true;
+    } catch (error) { App.showError(error); return false; }
+  },
+
+  rerunSavedRecordSearch() {
+    if (!this.savedRecordSearchRequest) return null;
+    const report = Store.findSavedRecords(this.savedRecordSearchRequest);
+    this.renderSavedRecordResults(report); return report;
+  },
+
+  getSavedRecordSearchRequest() {
+    return this.savedRecordSearchRequest ? { ...this.savedRecordSearchRequest } : null;
+  },
+
+  clearSavedRecordSearch() {
+    this.savedRecordSearchRequest = null;
+    document.getElementById('dashboard-record-finder-form').reset();
+    document.getElementById('dashboard-record-results').replaceChildren();
+    document.getElementById('dashboard-record-clear').hidden = true;
+    document.getElementById('dashboard-record-query').focus({ preventScroll: true });
+  },
+
+  renderSavedRecordResults(report) {
+    const container = document.getElementById('dashboard-record-results'); container.replaceChildren();
+    if (!report.returnedCount) {
+      container.append(this.upcomingNode('p', 'dashboard-record-results-empty', 'No saved records matched this search.'));
+      return;
+    }
+    container.append(this.upcomingNode('p', 'dashboard-record-results-summary',
+      `${report.returnedCount} of ${report.totalMatchCount} matching saved ${report.totalMatchCount === 1 ? 'record' : 'records'} shown.`));
+    if (report.truncated) container.append(this.upcomingNode('p', 'dashboard-record-results-truncated',
+      `Results are limited to ${report.returnedCount}. Narrow the search or month range to see other matches.`));
+    const list = this.upcomingNode('ul', 'dashboard-record-result-list');
+    report.results.forEach(result => list.append(this.savedRecordResultItem(result)));
+    container.append(list);
+  },
+
+  savedRecordResultItem(result) {
+    const item = this.upcomingNode('li', 'dashboard-record-result');
+    item.append(this.upcomingNode('strong', 'dashboard-record-result-name', result.primaryLabel),
+      this.upcomingNode('span', 'dashboard-record-result-meta',
+        `${result.kind === 'income' ? 'Paycheck' : 'Expense'} · ${result.secondaryLabel} · ${App.formatMonth(result.monthKey)}`),
+      this.upcomingNode('span', 'dashboard-record-result-meta',
+        `${result.date || 'Date needed'} · Planned ${BudgetView.fmt(result.plannedAmount)} · ${result.actualAmount === null ? 'Actual: Not entered' : `Actual: ${BudgetView.fmt(result.actualAmount)}`}`));
+    const button = this.upcomingNode('button', 'btn btn-sm dashboard-record-result-action',
+      `Open ${result.primaryLabel} in ${App.formatMonth(result.monthKey)}`);
+    button.type = 'button'; button.dataset.recordKind = result.kind;
+    button.dataset.monthKey = result.monthKey; button.dataset.recordId = result.recordId;
+    button.addEventListener('click', () => App.openSavedRecordResult(result)); item.append(button);
+    return item;
   },
 
   upcomingNode(tag, className, text) {

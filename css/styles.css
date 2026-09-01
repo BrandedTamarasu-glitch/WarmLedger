@@ -1306,6 +1306,26 @@ label:has(> #field-template-enabled) { display: flex; align-items: center; min-h
 .dashboard-upcoming-item > * { min-width: 0; overflow-wrap: anywhere; }
 .dashboard-upcoming-kind { color: var(--color-accent); }
 .dashboard-upcoming-name { font-weight: 700; }
+.dashboard-record-finder { min-width: 0; margin-bottom: 18px; padding: 0; }
+.dashboard-record-finder > summary { min-height: 44px; padding: 12px 16px; font-weight: 750; line-height: 1.4; cursor: pointer; overflow-wrap: anywhere; }
+.dashboard-record-finder-body { min-width: 0; padding: 0 16px 16px; }
+.dashboard-record-finder-body > p { color: var(--color-text-muted); line-height: 1.55; overflow-wrap: anywhere; }
+#dashboard-record-finder-form { min-width: 0; margin-top: 14px; }
+.dashboard-record-finder-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; min-width: 0; }
+.dashboard-record-finder-fields label { display: grid; gap: 6px; min-width: 0; font-weight: 650; overflow-wrap: anywhere; }
+.dashboard-record-finder-fields input, .dashboard-record-finder-fields select { width: 100%; min-width: 0; min-height: 44px; }
+.dashboard-record-finder-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.dashboard-record-finder-actions .btn { min-height: 44px; white-space: normal; overflow-wrap: anywhere; }
+.dashboard-record-results { min-width: 0; margin-top: 14px; }
+.dashboard-record-results-summary, .dashboard-record-results-empty,
+.dashboard-record-results-truncated { line-height: 1.5; overflow-wrap: anywhere; }
+.dashboard-record-results-truncated { color: var(--color-warning); font-weight: 650; }
+.dashboard-record-result-list { display: grid; gap: 8px; min-width: 0; margin-top: 10px; list-style: none; }
+.dashboard-record-result { display: grid; gap: 5px; min-width: 0; padding: 12px; border: 1px solid var(--color-divider); border-radius: var(--radius-control); background: var(--color-surface-raised); }
+.dashboard-record-result > * { min-width: 0; overflow-wrap: anywhere; }
+.dashboard-record-result-name { font-weight: 700; }
+.dashboard-record-result-meta { color: var(--color-text-muted); line-height: 1.45; }
+.dashboard-record-result .btn { justify-self: start; min-height: 44px; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 .dashboard-overview {
   display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px;
   min-width: 0; margin-bottom: 18px;
@@ -1549,6 +1569,10 @@ label:has(> #field-template-enabled) { display: flex; align-items: center; min-h
   .dashboard-upcoming-controls { display: grid; grid-template-columns: minmax(0, 1fr); }
   .dashboard-upcoming-item { grid-template-columns: minmax(0, 1fr); }
   .dashboard-upcoming-coverage-list li { align-items: flex-start; flex-direction: column; gap: 3px; }
+  .dashboard-record-finder-body { padding-inline: 12px; }
+  .dashboard-record-finder-fields { grid-template-columns: minmax(0, 1fr); }
+  .dashboard-record-finder-actions { display: grid; grid-template-columns: minmax(0, 1fr); }
+  .dashboard-record-finder-actions .btn, .dashboard-record-result .btn { width: 100%; }
   .dashboard-basis-actions .btn, .dashboard-quick-range-actions .btn, .dashboard-export-actions .btn { width: 100%; }
   .dashboard-forecast-header { flex-direction: column; }
   .dashboard-forecast-controls { width: 100%; flex-basis: auto; }
@@ -1660,6 +1684,7 @@ label:has(> #field-template-enabled) { display: flex; align-items: center; min-h
   .dashboard-report-details, .dashboard-report-details > summary,
   .dashboard-table-disclosure, .dashboard-table-disclosure > summary, .dashboard-yoy-state,
   .dashboard-upcoming, .dashboard-upcoming > summary, .dashboard-upcoming-item,
+  .dashboard-record-finder, .dashboard-record-finder > summary, .dashboard-record-result,
   .monthly-review-cleared, .monthly-review-cleared > summary, .monthly-review-cleared-item {
     transition: none !important;
     animation: none !important;
@@ -1759,6 +1784,12 @@ label:has(> #field-template-enabled) { display: flex; align-items: center; min-h
   .dashboard-upcoming-item { color: CanvasText; background: Canvas; border-color: CanvasText; box-shadow: none; }
   .dashboard-upcoming-disclaimer, .dashboard-upcoming-kind, .dashboard-upcoming-item .muted-text { color: CanvasText; }
   .dashboard-upcoming-controls input { color: ButtonText; background: ButtonFace; border: 1px solid ButtonText; forced-color-adjust: auto; }
+  .dashboard-record-finder, .dashboard-record-finder-body, .dashboard-record-result,
+  .dashboard-record-results { color: CanvasText; background: Canvas; border-color: CanvasText; box-shadow: none; }
+  .dashboard-record-finder-body > p, .dashboard-record-result-meta,
+  .dashboard-record-results-truncated { color: CanvasText; }
+  .dashboard-record-finder-fields input, .dashboard-record-finder-fields select,
+  .dashboard-record-result .btn { color: ButtonText; background: ButtonFace; border-color: ButtonText; }
   .dashboard-basis, #dashboard-basis-label, .dashboard-basis-actions,
   .dashboard-quick-ranges, #dashboard-quick-ranges-label, .dashboard-quick-range-actions { color: CanvasText; background: Canvas; }
   .dashboard-basis-actions .btn, .dashboard-quick-range-actions .btn { color: ButtonText; background: ButtonFace; border-color: ButtonText; }
@@ -1808,6 +1839,7 @@ label:has(> #field-template-enabled) { display: flex; align-items: center; min-h
   #application-shell { padding: 0; }
   .topnav, .feedback-center, .dashboard-controls, .dashboard-range-status, .dashboard-forecast-controls,
   .dashboard-upcoming-controls,
+  .dashboard-record-finder,
   .dashboard-table-disclosure > summary, .dashboard-report-details > summary { display: none !important; }
   .view { display: none !important; }
   #view-dashboard { display: block !important; max-width: none; padding: 0; }

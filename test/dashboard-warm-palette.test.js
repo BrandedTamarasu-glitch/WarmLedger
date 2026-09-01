@@ -137,7 +137,7 @@ test('palette wave preserves render and destruction lifecycle boundaries', () =>
   dashboard.destroyAllCharts(); assert.equal(destroyed, 2);
   assert.equal(dashboard.charts.first, null); assert.equal(dashboard.charts.second, null);
 
-  assert.equal((source.match(/addEventListener\s*\(/g) || []).length, 7,
-    'two range listeners plus CSV, print, forecast CSV, reporting-only Budget, and Data Health actions');
+  assert.equal((source.match(/addEventListener\s*\(/g) || []).length, 10,
+    'existing Dashboard listeners plus saved-record finder submit, clear, and delegated result actions');
   assert.doesNotMatch(source, /MutationObserver|ResizeObserver|localStorage|sessionStorage|fetch\s*\(|XMLHttpRequest|WebSocket|setTimeout|setInterval/);
 });
