@@ -13,6 +13,7 @@
   const V4_SCHEMA_VERSION = 4;
   const V5_SCHEMA_VERSION = 5;
   const V6_SCHEMA_VERSION = 6;
+  const V7_SCHEMA_VERSION = 7;
   const LEGACY_SCHEMA_VERSION = 1;
   const BACKUP_FORMAT = 'zerobudget-backup';
   const BACKUP_FORMAT_VERSION = 1;
@@ -30,7 +31,7 @@
   const ACCOUNT_KINDS = new Set(['bank', 'credit_card', 'savings', 'investments', 'cash', 'other']);
   const INCOME_ACCOUNT_KINDS = new Set(['bank', 'savings', 'cash', 'investments', 'other']);
   const PAYMENT_ACCOUNT_KINDS = Object.freeze({ bank: new Set(['bank', 'cash', 'other']), credit_card: new Set(['credit_card']), savings: new Set(['savings']), investments: new Set(['investments']) });
-  const SNAPSHOT_REASONS = new Set(['daily', 'pre-import', 'pre-sharding', 'pre-reset', 'pre-accounts']);
+  const SNAPSHOT_REASONS = new Set(['daily', 'pre-import', 'pre-sharding', 'pre-reset', 'pre-accounts', 'pre-actual-accounts']);
   const DEFAULT_CATEGORIES = Object.freeze([
     'Housing', 'Transportation', 'Insurance', 'Food', 'Pets', 'Personal Care',
     'Miscellaneous', 'Debt', 'Taxes', 'Subscriptions', 'Other'
@@ -860,6 +861,51 @@
   function hydrateV6ExactMoney(input) { validateV6(input); const hydrated = transformV3Money(input, centsToDecimalMoney, V3_SCHEMA_VERSION); validateV6Shape(hydrated, false); return clone(hydrated); }
   function dehydrateV6ExactMoney(input) { validateV6Shape(input, false); const persisted = transformV3Money(input, decimalMoneyToCents, V6_SCHEMA_VERSION); validateV6(persisted); return clone(persisted); }
 
+  function validateV7Shape(input, persisted) {
+    clone(input);
+    const expectedVersion = persisted ? V7_SCHEMA_VERSION : V3_SCHEMA_VERSION;
+    if (!isPlainObject(input) || input.schemaVersion !== expectedVersion) fail('UNSUPPORTED_SCHEMA_VERSION', '$.schemaVersion');
+    const accounts = new Map(input.settings.accounts.map(account => [account.id, account]));
+    const validateActualRef = (record, path, allowedKinds) => {
+      if (record.actualAccountId === null) return;
+      expectIdentifier(record.actualAccountId, `${path}.actualAccountId`);
+      const account = accounts.get(record.actualAccountId);
+      if (!account) fail('DANGLING_ACCOUNT_REFERENCE', `${path}.actualAccountId`);
+      if (!allowedKinds.has(account.kind)) fail('INCOMPATIBLE_ACCOUNT_KIND', `${path}.actualAccountId`);
+      if (record.actualAmount === null || record.date === '') fail('INELIGIBLE_ACTUAL_ACCOUNT_REFERENCE', `${path}.actualAccountId`);
+    };
+    for (const [monthKey, month] of Object.entries(input.months)) {
+      const monthPath = childPath('$.months', monthKey);
+      month.paychecks.forEach((record, index) => {
+        const path = `${monthPath}.paychecks[${index}]`;
+        expectExactKeys(record, [...V3_PAYCHECK_KEYS, 'cleared', 'accountId', 'actualAccountId'], path);
+        validateActualRef(record, path, INCOME_ACCOUNT_KINDS);
+      });
+      month.expenses.forEach((record, index) => {
+        const path = `${monthPath}.expenses[${index}]`;
+        expectExactKeys(record, [...V3_EXPENSE_KEYS, 'cleared', 'accountId', 'actualAccountId'], path);
+        validateActualRef(record, path, PAYMENT_ACCOUNT_KINDS[record.paymentMethod] || new Set());
+      });
+    }
+    const base = clone(input); base.schemaVersion = persisted ? V6_SCHEMA_VERSION : V3_SCHEMA_VERSION;
+    for (const month of Object.values(base.months)) {
+      month.paychecks.forEach(record => { delete record.actualAccountId; });
+      month.expenses.forEach(record => { delete record.actualAccountId; });
+    }
+    validateV6Shape(base, persisted); return true;
+  }
+  function validateV7(input) { return validateV7Shape(input, true); }
+  function migrateV6ToV7(input) {
+    validateV6(input); const migrated = clone(input); migrated.schemaVersion = V7_SCHEMA_VERSION;
+    for (const month of Object.values(migrated.months)) {
+      month.paychecks.forEach(record => { record.actualAccountId = null; });
+      month.expenses.forEach(record => { record.actualAccountId = null; });
+    }
+    validateV7(migrated); return clone(migrated);
+  }
+  function hydrateV7ExactMoney(input) { validateV7(input); const hydrated = transformV3Money(input, centsToDecimalMoney, V3_SCHEMA_VERSION); validateV7Shape(hydrated, false); return clone(hydrated); }
+  function dehydrateV7ExactMoney(input) { validateV7Shape(input, false); const persisted = transformV3Money(input, decimalMoneyToCents, V7_SCHEMA_VERSION); validateV7(persisted); return clone(persisted); }
+
   function migrateToV1(input) {
     const migrated = clone(input);
     if (!isPlainObject(migrated)) fail('EXPECTED_OBJECT', '$');
@@ -1181,9 +1227,16 @@
   function parseV6Backup(text) { const envelope = parseCanonicalBackup(text, canonicalizeV6); return { ...envelope, data: hydrateV6ExactMoney(envelope.data) }; }
   function buildV6Snapshot(data, metadata) { return buildCanonicalSnapshot(data, metadata, canonicalizeV6); }
   function parseV6Snapshot(text) { const envelope = parseCanonicalSnapshot(text, canonicalizeV6); return { ...envelope, data: hydrateV6ExactMoney(envelope.data) }; }
+  function canonicalizeV7(input) { if (isPlainObject(input) && input.schemaVersion === V7_SCHEMA_VERSION) { validateV7(input); return clone(input); } return dehydrateV7ExactMoney(input); }
+  function parseV7Active(text) { const persisted = parseJson(text, '$'); validateV7(persisted); return hydrateV7ExactMoney(persisted); }
+  function buildV7Backup(data, exportedAt) { return buildCanonicalBackup(data, exportedAt, canonicalizeV7); }
+  function parseV7Backup(text) { const envelope = parseCanonicalBackup(text, canonicalizeV7); return { ...envelope, data: hydrateV7ExactMoney(envelope.data) }; }
+  function buildV7Snapshot(data, metadata) { return buildCanonicalSnapshot(data, metadata, canonicalizeV7); }
+  function parseV7Snapshot(text) { const envelope = parseCanonicalSnapshot(text, canonicalizeV7); return { ...envelope, data: hydrateV7ExactMoney(envelope.data) }; }
 
   function parseActiveData(text) {
     const parsed = parseJson(text, '$');
+    if (isPlainObject(parsed) && parsed.schemaVersion === V7_SCHEMA_VERSION) { validateV7(parsed); return hydrateV7ExactMoney(parsed); }
     if (isPlainObject(parsed) && parsed.schemaVersion === V6_SCHEMA_VERSION) { validateV6(parsed); return hydrateV6ExactMoney(parsed); }
     if (isPlainObject(parsed) && parsed.schemaVersion === V5_SCHEMA_VERSION) {
       validateV5(parsed);
@@ -1201,6 +1254,7 @@
     if (residentSchemaVersion === V4_SCHEMA_VERSION) return canonicalizeV4(data);
     if (residentSchemaVersion === V5_SCHEMA_VERSION) return canonicalizeV5(data);
     if (residentSchemaVersion === V6_SCHEMA_VERSION) return canonicalizeV6(data);
+    if (residentSchemaVersion === V7_SCHEMA_VERSION) return canonicalizeV7(data);
     fail('UNSUPPORTED_SCHEMA_VERSION', '$.schemaVersion');
   }
 
@@ -1223,7 +1277,7 @@
   function validateShardedFragments(globalFragment, monthFragments, residentSchemaVersion) {
     clone(globalFragment);
     expectExactKeys(globalFragment, ['schemaVersion', 'categories', 'settings', 'templates'], '$.global');
-    if (globalFragment.schemaVersion !== residentSchemaVersion || ![V3_SCHEMA_VERSION, V4_SCHEMA_VERSION, V5_SCHEMA_VERSION, V6_SCHEMA_VERSION].includes(residentSchemaVersion)) {
+    if (globalFragment.schemaVersion !== residentSchemaVersion || ![V3_SCHEMA_VERSION, V4_SCHEMA_VERSION, V5_SCHEMA_VERSION, V6_SCHEMA_VERSION, V7_SCHEMA_VERSION].includes(residentSchemaVersion)) {
       fail('UNSUPPORTED_SCHEMA_VERSION', '$.global.schemaVersion');
     }
     expectObject(monthFragments, '$.months');
@@ -1307,6 +1361,7 @@
     parseSnapshot: parseV5Snapshot
   });
   const V6_SCHEMA_POLICY = Object.freeze({ SCHEMA_VERSION: V6_SCHEMA_VERSION, clone, DataError, migrateActive: canonicalizeV6, validateActive: validateV6, parseActive: parseV6Active, buildBackup: buildV6Backup, parseBackup: parseV6Backup, buildSnapshot: buildV6Snapshot, parseSnapshot: parseV6Snapshot });
+  const V7_SCHEMA_POLICY = Object.freeze({ SCHEMA_VERSION: V7_SCHEMA_VERSION, clone, DataError, migrateActive: canonicalizeV7, validateActive: validateV7, parseActive: parseV7Active, buildBackup: buildV7Backup, parseBackup: parseV7Backup, buildSnapshot: buildV7Snapshot, parseSnapshot: parseV7Snapshot });
 
   return Object.freeze({
     SCHEMA_VERSION,
@@ -1315,6 +1370,7 @@
     V4_SCHEMA_VERSION,
     V5_SCHEMA_VERSION,
     V6_SCHEMA_VERSION,
+    V7_SCHEMA_VERSION,
     BACKUP_FORMAT,
     BACKUP_FORMAT_VERSION,
     SNAPSHOT_FORMAT,
@@ -1324,6 +1380,7 @@
     V4_SCHEMA_POLICY,
     V5_SCHEMA_POLICY,
     V6_SCHEMA_POLICY,
+    V7_SCHEMA_POLICY,
     DataError,
     clone,
     migrateActive,
@@ -1332,12 +1389,15 @@
     migrateV3ToV4ExactMoney,
     migrateV4ToV5,
     migrateV5ToV6,
+    migrateV6ToV7,
     hydrateV4ExactMoney,
     dehydrateV4ExactMoney,
     hydrateV5ExactMoney,
     dehydrateV5ExactMoney,
     hydrateV6ExactMoney,
     dehydrateV6ExactMoney,
+    hydrateV7ExactMoney,
+    dehydrateV7ExactMoney,
     decimalMoneyToCents,
     centsToDecimalMoney,
     validateActive,
@@ -1346,6 +1406,7 @@
     validateV4,
     validateV5,
     validateV6,
+    validateV7,
     parseActiveData,
     buildActiveData,
     buildShardedFragments,
@@ -1368,6 +1429,11 @@
     parseV6Backup,
     buildV6Snapshot,
     parseV6Snapshot,
+    parseV7Active,
+    buildV7Backup,
+    parseV7Backup,
+    buildV7Snapshot,
+    parseV7Snapshot,
     parseActive,
     buildBackup,
     parseBackup,

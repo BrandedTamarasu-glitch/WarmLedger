@@ -453,6 +453,44 @@ test('schema v6 active, backup, snapshot, and sharded codecs preserve accounts a
   assert.deepEqual(Schema.assembleShardedActiveData(parts.global, parts.months, 6), runtime);
 });
 
+test('schema v7 migration adds actual-account fields only to saved records and preserves format-v1 codecs', () => {
+  const v6 = Schema.migrateV5ToV6(Schema.migrateV4ToV5(Schema.migrateV3ToV4ExactMoney(makeV3WithTemplates())));
+  const before = JSON.stringify(v6); const v7 = Schema.migrateV6ToV7(v6);
+  assert.equal(v7.schemaVersion, 7); assert.equal(JSON.stringify(v6), before);
+  assert.equal(Object.values(v7.months).every(month => [...month.paychecks, ...month.expenses]
+    .every(record => record.actualAccountId === null)), true);
+  assert.equal(Object.hasOwn(v7.templates.income[0], 'actualAccountId'), false);
+  assert.equal(Object.hasOwn(v7.templates.expenses[0], 'actualAccountId'), false);
+  const runtime = Schema.hydrateV7ExactMoney(v7);
+  assert.deepEqual(Schema.dehydrateV7ExactMoney(runtime), v7);
+  const backup = Schema.buildV7Backup(runtime, '2026-01-15T12:00:00.000Z');
+  assert.equal(backup.formatVersion, 1); assert.deepEqual(Schema.parseV7Backup(JSON.stringify(backup)).data, runtime);
+  const snapshot = Schema.buildV7Snapshot(runtime, { createdAt: '2026-01-15T12:00:00.000Z', localDate: '2026-01-15', reason: 'pre-actual-accounts' });
+  assert.equal(snapshot.formatVersion, 1); assert.deepEqual(Schema.parseV7Snapshot(JSON.stringify(snapshot)).data, runtime);
+  const parts = Schema.buildShardedFragments(runtime, 7);
+  assert.deepEqual(Schema.assembleShardedActiveData(parts.global, parts.months, 7), runtime);
+});
+
+test('schema v7 strictly validates actual-account eligibility and compatibility', () => {
+  const v7 = Schema.migrateV6ToV7(Schema.migrateV5ToV6(Schema.migrateV4ToV5(Schema.migrateV3ToV4ExactMoney(makeV3WithTemplates()))));
+  v7.settings.accounts.push(
+    { id: 'account-bank', name: 'House Checking', kind: 'bank', archived: true },
+    { id: 'account-card', name: 'House Card', kind: 'credit_card', archived: false }
+  );
+  const monthKey = Object.keys(v7.months)[0]; const month = v7.months[monthKey];
+  month.paychecks[0].actualAmount = 100; month.paychecks[0].date = `${monthKey}-01`; month.paychecks[0].actualAccountId = 'account-bank';
+  month.expenses[0].actualAmount = 100; month.expenses[0].date = `${monthKey}-02`; month.expenses[0].actualAccountId = 'account-bank';
+  assert.equal(Schema.validateV7(v7), true);
+  const noAmount = structuredClone(v7); noAmount.months[Object.keys(noAmount.months)[0]].paychecks[0].actualAmount = null;
+  expectCode('INELIGIBLE_ACTUAL_ACCOUNT_REFERENCE', () => Schema.validateV7(noAmount));
+  const noDate = structuredClone(v7); noDate.months[Object.keys(noDate.months)[0]].expenses[0].date = '';
+  expectCode('INELIGIBLE_ACTUAL_ACCOUNT_REFERENCE', () => Schema.validateV7(noDate));
+  const incompatible = structuredClone(v7); incompatible.months[Object.keys(incompatible.months)[0]].expenses[0].actualAccountId = 'account-card';
+  expectCode('INCOMPATIBLE_ACCOUNT_KIND', () => Schema.validateV7(incompatible));
+  const templateField = structuredClone(v7); templateField.templates.income[0].actualAccountId = null;
+  expectCode('UNKNOWN_FIELD', () => Schema.validateV7(templateField));
+});
+
 test('legacy migration rejects missing months and backfills missing month collections', () => {
   expectCode('MISSING_FIELD', () => Schema.migrateActive({ categories: [], settings: { earners: [] } }));
   const legacy = {
@@ -651,15 +689,15 @@ test('classic-script and CommonJS expose the exact same public API and behavior'
   const expectedKeys = [
     'ACTIVE_SCHEMA_POLICY', 'BACKUP_FORMAT', 'BACKUP_FORMAT_VERSION', 'DataError', 'SCHEMA_VERSION', 'SNAPSHOT_FORMAT',
     'SNAPSHOT_FORMAT_VERSION', 'V2_SCHEMA_VERSION', 'V3_SCHEMA_POLICY', 'V3_SCHEMA_VERSION', 'V4_SCHEMA_POLICY', 'V4_SCHEMA_VERSION',
-    'V5_SCHEMA_POLICY', 'V5_SCHEMA_VERSION', 'V6_SCHEMA_POLICY', 'V6_SCHEMA_VERSION',
+    'V5_SCHEMA_POLICY', 'V5_SCHEMA_VERSION', 'V6_SCHEMA_POLICY', 'V6_SCHEMA_VERSION', 'V7_SCHEMA_POLICY', 'V7_SCHEMA_VERSION',
     'assembleShardedActiveData', 'buildActiveData', 'buildBackup', 'buildShardedFragments', 'buildSnapshot',
-    'buildV4Backup', 'buildV4Snapshot', 'buildV5Backup', 'buildV5Snapshot', 'buildV6Backup', 'buildV6Snapshot',
-    'centsToDecimalMoney', 'clone', 'decimalMoneyToCents', 'dehydrateV4ExactMoney', 'dehydrateV5ExactMoney', 'dehydrateV6ExactMoney',
-    'hydrateV4ExactMoney', 'hydrateV5ExactMoney', 'hydrateV6ExactMoney', 'migrateActive', 'migrateToV2', 'migrateToV3',
-    'migrateV3ToV4ExactMoney', 'migrateV4ToV5', 'migrateV5ToV6', 'parseActive', 'parseActiveData', 'parseBackup', 'parseSnapshot',
-    'parseV4Active', 'parseV4Backup', 'parseV4Snapshot', 'parseV5Active', 'parseV5Backup', 'parseV5Snapshot', 'parseV6Active', 'parseV6Backup', 'parseV6Snapshot',
+    'buildV4Backup', 'buildV4Snapshot', 'buildV5Backup', 'buildV5Snapshot', 'buildV6Backup', 'buildV6Snapshot', 'buildV7Backup', 'buildV7Snapshot',
+    'centsToDecimalMoney', 'clone', 'decimalMoneyToCents', 'dehydrateV4ExactMoney', 'dehydrateV5ExactMoney', 'dehydrateV6ExactMoney', 'dehydrateV7ExactMoney',
+    'hydrateV4ExactMoney', 'hydrateV5ExactMoney', 'hydrateV6ExactMoney', 'hydrateV7ExactMoney', 'migrateActive', 'migrateToV2', 'migrateToV3',
+    'migrateV3ToV4ExactMoney', 'migrateV4ToV5', 'migrateV5ToV6', 'migrateV6ToV7', 'parseActive', 'parseActiveData', 'parseBackup', 'parseSnapshot',
+    'parseV4Active', 'parseV4Backup', 'parseV4Snapshot', 'parseV5Active', 'parseV5Backup', 'parseV5Snapshot', 'parseV6Active', 'parseV6Backup', 'parseV6Snapshot', 'parseV7Active', 'parseV7Backup', 'parseV7Snapshot',
     'validateActive', 'validateGlobalFragment', 'validateMonthFragment', 'validateShardedFragments',
-    'validateV2', 'validateV3', 'validateV4', 'validateV5', 'validateV6'
+    'validateV2', 'validateV3', 'validateV4', 'validateV5', 'validateV6', 'validateV7'
   ].sort();
   assert.deepEqual(Object.keys(Schema).sort(), expectedKeys);
   assert.deepEqual(Array.from(Object.keys(browserApi).sort()), expectedKeys);

@@ -25,6 +25,8 @@ function makeV5Budget() {
   return Schema.migrateV4ToV5(Schema.migrateV3ToV4ExactMoney(makeV3Budget()));
 }
 
+function makeV6Budget() { return Schema.migrateV5ToV6(makeV5Budget()); }
+
 test('accounts migration is schema-5-only, preview-write-free, generation-bound, and reloadable', () => {
   const persisted = makeV5Budget();
   const storage = new MemoryStorage({ [STORAGE_KEY]: JSON.stringify(persisted) });
@@ -99,6 +101,70 @@ test('accounts migration safely activates schema 6 in sharded layout and preserv
   const preAccounts = imported.listSnapshotMetadata().find(item => item.reason === 'pre-accounts');
   assert.ok(preAccounts); imported.restoreSnapshot(preAccounts.id);
   assert.equal(imported.getStatus().residentSchemaVersion, 5);
+});
+
+test('actual-account migration is schema-6-only, count-only, preview-write-free, and reloadable', () => {
+  const persisted = makeV6Budget(); const storage = new MemoryStorage({ [STORAGE_KEY]: JSON.stringify(persisted) });
+  const { store } = loaded({ storage, prefix: 'actual-accounts' });
+  const before = storage.getItem(STORAGE_KEY); storage.operations.length = 0;
+  const preview = store.previewActualAccountMigration();
+  assert.deepEqual(Object.keys(preview).sort(), ['accountCount', 'expenseCount', 'generation', 'paycheckCount', 'state']);
+  assert.equal(preview.state, 'eligible'); assert.equal(Object.isFrozen(preview), true);
+  assert.equal(storage.operations.some(item => item.op !== 'getItem' && item.op !== 'key'), false);
+  assert.equal(storage.getItem(STORAGE_KEY), before);
+  code('INVALID_ACTUAL_ACCOUNT_MIGRATION_PREVIEW', () => store.commitActualAccountMigration({ ...preview }));
+  store.commitActualAccountMigration(preview);
+  assert.equal(JSON.parse(storage.getItem(STORAGE_KEY)).schemaVersion, 7);
+  const snapshotKeys = Array.from({ length: storage.length }, (_, index) => storage.key(index)).filter(key => key.startsWith(SNAPSHOT_PREFIX));
+  const snapshot = JSON.parse(storage.getItem(snapshotKeys[0]));
+  assert.equal(snapshot.reason, 'pre-actual-accounts'); assert.equal(snapshot.data.schemaVersion, 6);
+  const reloaded = createStore({ storage, now: makeClock(), uuid: () => 'actual-accounts-reload' });
+  assert.equal(reloaded.load().state, 'ready'); assert.equal(reloaded.getStatus().residentSchemaVersion, 7);
+  code('ACTUAL_ACCOUNTS_ALREADY_MIGRATED', () => reloaded.previewActualAccountMigration());
+});
+
+test('schema-7 migration preserves established planned-account CRUD, ordering, usage, and record mutations', () => {
+  const storage = new MemoryStorage({ [STORAGE_KEY]: JSON.stringify(makeV6Budget()) });
+  const { store } = loaded({ storage, prefix: 'v7-planned-account' });
+  store.commitActualAccountMigration(store.previewActualAccountMigration());
+  const bank = store.createAccount({ name: 'Checking', kind: 'bank' });
+  const savings = store.createAccount({ name: 'Savings', kind: 'savings' });
+  assert.deepEqual(store.getAccounts().map(account => account.id), [bank.id, savings.id]);
+  store.updateAccount(bank.id, { name: 'House Checking' });
+  assert.deepEqual(store.reorderAccounts([savings.id, bank.id]).map(account => account.id), [savings.id, bank.id]);
+  store.updatePaycheck('2026-01', 'paycheck-example-1', { accountId: bank.id });
+  store.updateExpense('2026-01', 'expense-example-1', { accountId: bank.id });
+  assert.equal(store.getAccountUsage()[bank.id], 2);
+  const month = store.getMonth('2026-01');
+  assert.equal(month.paychecks[0].accountId, bank.id); assert.equal(month.paychecks[0].actualAccountId, null);
+  assert.equal(month.expenses[0].accountId, bank.id); assert.equal(month.expenses[0].actualAccountId, null);
+});
+
+test('actual-account migration blocks schemas 3 through 5 and rejects stale previews without writes', () => {
+  for (const persisted of [makeV3Budget(), Schema.migrateV3ToV4ExactMoney(makeV3Budget()), makeV5Budget()]) {
+    const current = loaded({ storage: new MemoryStorage({ [STORAGE_KEY]: JSON.stringify(persisted) }) });
+    assert.equal(current.store.getActualAccountMigrationSummary().message,
+      'Actual account labels require the current local-accounts data format. Complete the accounts upgrade before adding actual account labels.');
+    code('ACTUAL_ACCOUNT_MIGRATION_REQUIRES_ACCOUNTS', () => current.store.previewActualAccountMigration());
+  }
+  const storage = new MemoryStorage({ [STORAGE_KEY]: JSON.stringify(makeV6Budget()) });
+  const current = loaded({ storage }); const preview = current.store.previewActualAccountMigration();
+  current.store.updateAllocation('2026-01', 'savings', 401); storage.operations.length = 0;
+  code('STALE_ACTUAL_ACCOUNT_MIGRATION_PREVIEW', () => current.store.commitActualAccountMigration(preview));
+  assert.equal(storage.operations.some(item => item.op === 'setItem'), false);
+});
+
+test('actual-account migration supports sharded activation and preserves schema-7 backup restore', () => {
+  const storage = new MemoryStorage({ [STORAGE_KEY]: JSON.stringify(makeV6Budget()) });
+  const { store } = loaded({ storage, prefix: 'actual-sharded' });
+  store.commitShardedPersistenceMigration(store.previewShardedPersistenceMigration());
+  store.commitActualAccountMigration(store.previewActualAccountMigration());
+  const root = StorageEngine.parseRootPointer(storage.getItem(STORAGE_KEY)); assert.equal(root.residentSchemaVersion, 7);
+  const reloaded = createStore({ storage, now: makeClock(), uuid: () => 'actual-sharded-reload' }); reloaded.load();
+  const backup = reloaded.exportData(); assert.equal(JSON.parse(backup).data.schemaVersion, 7);
+  reloaded.importData(backup); assert.equal(reloaded.getStatus().residentSchemaVersion, 7);
+  const safety = reloaded.listSnapshotMetadata().find(item => item.reason === 'pre-actual-accounts');
+  assert.ok(safety); reloaded.restoreSnapshot(safety.id); assert.equal(reloaded.getStatus().residentSchemaVersion, 6);
 });
 
 test('semantic no-ops and passive Store paths perform no writes and never acquire the lock', () => {

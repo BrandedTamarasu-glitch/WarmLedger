@@ -132,7 +132,7 @@
   function createStore({ storage, now = () => new Date(), uuid = () => crypto.randomUUID(), schemaPolicy = Schema.ACTIVE_SCHEMA_POLICY } = {}) {
     if (schemaPolicy !== Schema.ACTIVE_SCHEMA_POLICY && schemaPolicy !== Schema.V3_SCHEMA_POLICY &&
         schemaPolicy !== Schema.V4_SCHEMA_POLICY && schemaPolicy !== Schema.V5_SCHEMA_POLICY &&
-        schemaPolicy !== Schema.V6_SCHEMA_POLICY) {
+        schemaPolicy !== Schema.V6_SCHEMA_POLICY && schemaPolicy !== Schema.V7_SCHEMA_POLICY) {
       throw new StoreError('INVALID_SCHEMA_POLICY');
     }
     if (!storage || typeof storage.getItem !== 'function' || typeof storage.setItem !== 'function') {
@@ -146,6 +146,7 @@
     const defaultDateResolutionCapabilities = new WeakMap();
     const exactMoneyMigrationCapabilities = new WeakMap();
     const accountsMigrationCapabilities = new WeakMap();
+    const actualAccountMigrationCapabilities = new WeakMap();
     const monthShardMigrationCapabilities = new WeakMap();
     const purgeCapabilities = new WeakMap();
     const ownerId = `store-${Math.random().toString(36).slice(2)}-${Date.now().toString(36)}`;
@@ -167,6 +168,7 @@
 
     function policyForVersion(version) {
       if (schemaPolicy !== Schema.ACTIVE_SCHEMA_POLICY) return schemaPolicy;
+      if (version === Schema.V7_SCHEMA_VERSION) return Schema.V7_SCHEMA_POLICY;
       if (version === Schema.V6_SCHEMA_VERSION) return Schema.V6_SCHEMA_POLICY;
       if (version === Schema.V5_SCHEMA_VERSION) return Schema.V5_SCHEMA_POLICY;
       if (version === Schema.V4_SCHEMA_VERSION) return Schema.V4_SCHEMA_POLICY;
@@ -178,6 +180,7 @@
         const parsed = JSON.parse(text);
         const embedded = parsed && parsed.data ? parsed.data.schemaVersion : parsed && parsed.schemaVersion;
         if (embedded === Schema.V6_SCHEMA_VERSION) return Schema.V6_SCHEMA_VERSION;
+        if (embedded === Schema.V7_SCHEMA_VERSION) return Schema.V7_SCHEMA_VERSION;
         if (embedded === Schema.V5_SCHEMA_VERSION) return Schema.V5_SCHEMA_VERSION;
         if (embedded === Schema.V4_SCHEMA_VERSION) return Schema.V4_SCHEMA_VERSION;
         return fallback;
@@ -495,7 +498,9 @@
       targetSchemaVersion = residentSchemaVersion } = {}) {
       requireReady();
       const persisted = canonicalizeForWrite(targetSchemaVersion, candidate);
-      const canonical = targetSchemaVersion === Schema.V6_SCHEMA_VERSION
+      const canonical = targetSchemaVersion === Schema.V7_SCHEMA_VERSION
+        ? Schema.hydrateV7ExactMoney(persisted)
+        : targetSchemaVersion === Schema.V6_SCHEMA_VERSION
         ? Schema.hydrateV6ExactMoney(persisted)
         : targetSchemaVersion === Schema.V5_SCHEMA_VERSION ? Schema.hydrateV5ExactMoney(persisted)
         : targetSchemaVersion === Schema.V4_SCHEMA_VERSION
@@ -612,7 +617,9 @@
 
     function commitRecoveryCandidate(candidate, targetSchemaVersion) {
       const persisted = canonicalizeForWrite(targetSchemaVersion, candidate);
-      const canonical = targetSchemaVersion === Schema.V6_SCHEMA_VERSION
+      const canonical = targetSchemaVersion === Schema.V7_SCHEMA_VERSION
+        ? Schema.hydrateV7ExactMoney(persisted)
+        : targetSchemaVersion === Schema.V6_SCHEMA_VERSION
         ? Schema.hydrateV6ExactMoney(persisted)
         : targetSchemaVersion === Schema.V5_SCHEMA_VERSION ? Schema.hydrateV5ExactMoney(persisted)
         : targetSchemaVersion === Schema.V4_SCHEMA_VERSION
@@ -784,7 +791,7 @@
     }
     function requireAccounts() {
       requireReady();
-      if (residentSchemaVersion !== Schema.V6_SCHEMA_VERSION) throw new StoreError('ACCOUNTS_UNAVAILABLE');
+      if (residentSchemaVersion < Schema.V6_SCHEMA_VERSION) throw new StoreError('ACCOUNTS_UNAVAILABLE');
     }
     function getAccounts({ includeArchived = false } = {}) {
       requireAccounts();
@@ -1124,17 +1131,17 @@
     function addTemplate(kind, input) {
       const structural = kind === 'income' ? ['earnerId'] : ['categoryId', 'categoryItemId', 'paymentMethod'];
       const requiredStructural = [...structural];
-      if (residentSchemaVersion === Schema.V6_SCHEMA_VERSION) structural.push('accountId');
+      if (residentSchemaVersion >= Schema.V6_SCHEMA_VERSION) structural.push('accountId');
       const patch = patchOf(input, [...TEMPLATE_COMMON, ...structural]);
       if ([...TEMPLATE_COMMON, ...requiredStructural].some(key => !Object.hasOwn(patch, key))) throw new StoreError('MISSING_FIELD');
-      if (residentSchemaVersion === Schema.V6_SCHEMA_VERSION && !Object.hasOwn(patch, 'accountId')) patch.accountId = null;
+      if (residentSchemaVersion >= Schema.V6_SCHEMA_VERSION && !Object.hasOwn(patch, 'accountId')) patch.accountId = null;
       return transactGlobal(candidate => {
         if (kind === 'income') activeEarner(candidate, patch.earnerId);
         else {
           const category = activeCategory(candidate, patch.categoryId);
           if (patch.categoryItemId !== null) activeCategoryItem(category, patch.categoryItemId);
         }
-        if (residentSchemaVersion === Schema.V6_SCHEMA_VERSION) accountFor(candidate, patch.accountId,
+        if (residentSchemaVersion >= Schema.V6_SCHEMA_VERSION) accountFor(candidate, patch.accountId,
           kind === 'income' ? INCOME_ACCOUNT_KINDS : PAYMENT_ACCOUNT_KINDS[patch.paymentMethod]);
         const created = { id: newId(), ...patch, archived: false };
         candidate.templates[kind].push(created);
@@ -1143,7 +1150,7 @@
     }
     function updateTemplate(kind, id, updates) {
       const structural = kind === 'income' ? ['earnerId'] : ['categoryId', 'categoryItemId', 'paymentMethod'];
-      if (residentSchemaVersion === Schema.V6_SCHEMA_VERSION) structural.push('accountId');
+      if (residentSchemaVersion >= Schema.V6_SCHEMA_VERSION) structural.push('accountId');
       const patch = patchOf(updates, [...TEMPLATE_COMMON, ...structural]);
       return transactGlobal(candidate => {
         const current = findOrThrow(candidate.templates[kind], id, kind === 'income' ? 'INCOME_TEMPLATE_NOT_FOUND' : 'EXPENSE_TEMPLATE_NOT_FOUND');
@@ -1159,7 +1166,7 @@
             if (nextItemId !== null) activeCategoryItem(category, nextItemId);
           }
         }
-        if (residentSchemaVersion === Schema.V6_SCHEMA_VERSION &&
+        if (residentSchemaVersion >= Schema.V6_SCHEMA_VERSION &&
             (Object.hasOwn(patch, 'accountId') || (kind === 'expenses' && Object.hasOwn(patch, 'paymentMethod')))) {
           const nextAccountId = Object.hasOwn(patch, 'accountId') ? patch.accountId : current.accountId;
           const nextMethod = Object.hasOwn(patch, 'paymentMethod') ? patch.paymentMethod : current.paymentMethod;
@@ -1195,20 +1202,21 @@
 
     function addPaycheck(monthKey, input) {
       const allowed = ['earnerId', 'plannedAmount', 'actualAmount', 'date'];
-      if (residentSchemaVersion === Schema.V6_SCHEMA_VERSION) allowed.push('accountId');
+      if (residentSchemaVersion >= Schema.V6_SCHEMA_VERSION) allowed.push('accountId');
       const paycheck = patchOf(input, allowed);
       const amountFieldsPresent = Object.hasOwn(paycheck, 'plannedAmount') && Object.hasOwn(paycheck, 'actualAmount');
       if (!Object.hasOwn(paycheck, 'earnerId') || !amountFieldsPresent || !Object.hasOwn(paycheck, 'date')) {
         throw new StoreError('MISSING_FIELD');
       }
-      if (residentSchemaVersion === Schema.V6_SCHEMA_VERSION && !Object.hasOwn(paycheck, 'accountId')) paycheck.accountId = null;
+      if (residentSchemaVersion >= Schema.V6_SCHEMA_VERSION && !Object.hasOwn(paycheck, 'accountId')) paycheck.accountId = null;
       return transactMonth(monthKey, candidate => {
         const earner = activeEarner(candidate, paycheck.earnerId);
-        if (residentSchemaVersion === Schema.V6_SCHEMA_VERSION) accountFor(candidate, paycheck.accountId, INCOME_ACCOUNT_KINDS);
+        if (residentSchemaVersion >= Schema.V6_SCHEMA_VERSION) accountFor(candidate, paycheck.accountId, INCOME_ACCOUNT_KINDS);
         const month = requireMonth(candidate, monthKey);
         const created = { id: newId(), earnerId: earner.id, earner: earner.name, plannedAmount: paycheck.plannedAmount,
           actualAmount: paycheck.actualAmount, date: normalizeMonthlyDate(monthKey, paycheck.date), sourceTemplateId: null, occurrenceKey: null,
-          ...(residentSchemaVersion === Schema.V6_SCHEMA_VERSION ? { accountId: paycheck.accountId } : {}) };
+          ...(residentSchemaVersion >= Schema.V6_SCHEMA_VERSION ? { accountId: paycheck.accountId } : {}),
+          ...(residentSchemaVersion >= Schema.V7_SCHEMA_VERSION ? { actualAccountId: null } : {}) };
         if (residentSchemaVersion >= Schema.V5_SCHEMA_VERSION) created.cleared = false;
         month.paychecks.push(created);
         return created;
@@ -1219,7 +1227,7 @@
         const month = candidate.months[monthKey];
         if (!month) throw new StoreError('MONTH_NOT_FOUND');
         const paycheck = findOrThrow(month.paychecks, id, 'PAYCHECK_NOT_FOUND');
-        if (residentSchemaVersion === Schema.V6_SCHEMA_VERSION && Object.hasOwn(patch, 'accountId')) {
+        if (residentSchemaVersion >= Schema.V6_SCHEMA_VERSION && Object.hasOwn(patch, 'accountId')) {
           accountFor(candidate, patch.accountId, INCOME_ACCOUNT_KINDS,
             { allowArchived: patch.accountId === paycheck.accountId });
           paycheck.accountId = patch.accountId;
@@ -1244,13 +1252,13 @@
       });
     }
     function updatePaycheck(monthKey, id, updates) {
-      return mutatePaycheck(monthKey, id, patchOf(updates, ['plannedAmount', 'actualAmount', 'date', ...(residentSchemaVersion === Schema.V6_SCHEMA_VERSION ? ['accountId'] : [])]));
+      return mutatePaycheck(monthKey, id, patchOf(updates, ['plannedAmount', 'actualAmount', 'date', ...(residentSchemaVersion >= Schema.V6_SCHEMA_VERSION ? ['accountId'] : [])]));
     }
     function reassignPaycheckEarner(monthKey, id, earnerId) {
       return mutatePaycheck(monthKey, id, { earnerId });
     }
     function editPaycheck(monthKey, id, updates) {
-      return mutatePaycheck(monthKey, id, patchOf(updates, ['earnerId', 'plannedAmount', 'actualAmount', 'date', ...(residentSchemaVersion === Schema.V6_SCHEMA_VERSION ? ['accountId'] : [])]));
+      return mutatePaycheck(monthKey, id, patchOf(updates, ['earnerId', 'plannedAmount', 'actualAmount', 'date', ...(residentSchemaVersion >= Schema.V6_SCHEMA_VERSION ? ['accountId'] : [])]));
     }
     function deletePaycheck(monthKey, id) {
       return transactMonth(monthKey, candidate => {
@@ -1274,15 +1282,15 @@
     }
     function addExpense(monthKey, input) {
       const allowed = ['categoryId', 'categoryItemId', 'name', 'date', 'paycheckAmounts', 'plannedAmount', 'actualAmount', 'paymentMethod'];
-      if (residentSchemaVersion === Schema.V6_SCHEMA_VERSION) allowed.push('accountId');
+      if (residentSchemaVersion >= Schema.V6_SCHEMA_VERSION) allowed.push('accountId');
       const expense = patchOf(input, allowed);
       if (!Object.hasOwn(expense, 'categoryId') || !Object.hasOwn(expense, 'categoryItemId') ||
           !Object.hasOwn(expense, 'paymentMethod') || !Object.hasOwn(expense, 'date') ||
           !Object.hasOwn(expense, 'plannedAmount') || !Object.hasOwn(expense, 'actualAmount')) throw new StoreError('MISSING_FIELD');
-      if (residentSchemaVersion === Schema.V6_SCHEMA_VERSION && !Object.hasOwn(expense, 'accountId')) expense.accountId = null;
+      if (residentSchemaVersion >= Schema.V6_SCHEMA_VERSION && !Object.hasOwn(expense, 'accountId')) expense.accountId = null;
       return transactMonth(monthKey, candidate => {
         const category = activeCategory(candidate, expense.categoryId);
-        if (residentSchemaVersion === Schema.V6_SCHEMA_VERSION) accountFor(candidate, expense.accountId, PAYMENT_ACCOUNT_KINDS[expense.paymentMethod]);
+        if (residentSchemaVersion >= Schema.V6_SCHEMA_VERSION) accountFor(candidate, expense.accountId, PAYMENT_ACCOUNT_KINDS[expense.paymentMethod]);
         const created = { id: newId() };
         applyExpenseStructure(created, category, expense.categoryItemId, expense.name);
         created.date = normalizeMonthlyDate(monthKey, expense.date);
@@ -1290,7 +1298,8 @@
         created.plannedAmount = expense.plannedAmount;
         created.actualAmount = expense.actualAmount;
         created.paymentMethod = expense.paymentMethod;
-        if (residentSchemaVersion === Schema.V6_SCHEMA_VERSION) created.accountId = expense.accountId;
+        if (residentSchemaVersion >= Schema.V6_SCHEMA_VERSION) created.accountId = expense.accountId;
+        if (residentSchemaVersion >= Schema.V7_SCHEMA_VERSION) created.actualAccountId = null;
         created.sourceTemplateId = null; created.occurrenceKey = null;
         if (residentSchemaVersion >= Schema.V5_SCHEMA_VERSION) created.cleared = false;
         requireMonth(candidate, monthKey).expenses.push(created);
@@ -1306,7 +1315,7 @@
         const month = candidate.months[monthKey];
         if (!month) throw new StoreError('MONTH_NOT_FOUND');
         const expense = findOrThrow(month.expenses, id, 'EXPENSE_NOT_FOUND');
-        if (residentSchemaVersion === Schema.V6_SCHEMA_VERSION &&
+        if (residentSchemaVersion >= Schema.V6_SCHEMA_VERSION &&
             (Object.hasOwn(patch, 'accountId') || Object.hasOwn(patch, 'paymentMethod'))) {
           const nextAccountId = Object.hasOwn(patch, 'accountId') ? patch.accountId : expense.accountId;
           const nextMethod = Object.hasOwn(patch, 'paymentMethod') ? patch.paymentMethod : expense.paymentMethod;
@@ -1343,7 +1352,7 @@
       });
     }
     function updateExpense(monthKey, id, updates) {
-      return mutateExpense(monthKey, id, patchOf(updates, ['name', 'date', 'plannedAmount', 'actualAmount', 'paymentMethod', ...(residentSchemaVersion === Schema.V6_SCHEMA_VERSION ? ['accountId'] : [])]));
+      return mutateExpense(monthKey, id, patchOf(updates, ['name', 'date', 'plannedAmount', 'actualAmount', 'paymentMethod', ...(residentSchemaVersion >= Schema.V6_SCHEMA_VERSION ? ['accountId'] : [])]));
     }
     function reassignExpenseStructure(monthKey, id, structure) {
       const patch = patchOf(structure, ['categoryId', 'categoryItemId', 'name']);
@@ -1351,7 +1360,7 @@
       return mutateExpense(monthKey, id, patch);
     }
     function editExpense(monthKey, id, updates) {
-      const patch = patchOf(updates, ['categoryId', 'categoryItemId', 'name', 'date', 'plannedAmount', 'actualAmount', 'paymentMethod', ...(residentSchemaVersion === Schema.V6_SCHEMA_VERSION ? ['accountId'] : [])]);
+      const patch = patchOf(updates, ['categoryId', 'categoryItemId', 'name', 'date', 'plannedAmount', 'actualAmount', 'paymentMethod', ...(residentSchemaVersion >= Schema.V6_SCHEMA_VERSION ? ['accountId'] : [])]);
       return mutateExpense(monthKey, id, patch);
     }
     function updateExpensePaycheckAmount(monthKey, expenseId, paycheckId, amount) {
@@ -1443,6 +1452,7 @@
           const id = newId(); idMap[paycheck.id] = id;
           return { ...paycheck, id, date: paycheck.date.startsWith(`${targetKey}-`) ? paycheck.date : firstDayOfMonth(targetKey),
             actualAmount: null, sourceTemplateId: null, occurrenceKey: null,
+            ...(residentSchemaVersion >= Schema.V7_SCHEMA_VERSION ? { actualAccountId: null } : {}),
             ...(residentSchemaVersion >= Schema.V5_SCHEMA_VERSION ? { cleared: false } : {}) };
         });
         const expenses = source.expenses.map(expense => {
@@ -1452,6 +1462,7 @@
           }
           return { ...expense, id: newId(), date: expense.date.startsWith(`${targetKey}-`) ? expense.date : firstDayOfMonth(targetKey),
             actualAmount: null, sourceTemplateId: null, occurrenceKey: null, paycheckAmounts,
+            ...(residentSchemaVersion >= Schema.V7_SCHEMA_VERSION ? { actualAccountId: null } : {}),
             ...(residentSchemaVersion >= Schema.V5_SCHEMA_VERSION ? { cleared: false } : {}) };
         });
         candidate.months[targetKey] = { paychecks, expenses, allocations: { ...EMPTY_ALLOCATIONS } };
@@ -1538,7 +1549,8 @@
             id: newId(), earnerId: earner.id, earner: earner.name,
             plannedAmount: source.plannedAmount, actualAmount: null, date: item.scheduledDate,
             sourceTemplateId: source.id, occurrenceKey: item.occurrenceKey,
-            ...(residentSchemaVersion === Schema.V6_SCHEMA_VERSION ? { accountId: source.accountId } : {}),
+            ...(residentSchemaVersion >= Schema.V6_SCHEMA_VERSION ? { accountId: source.accountId } : {}),
+            ...(residentSchemaVersion >= Schema.V7_SCHEMA_VERSION ? { actualAccountId: null } : {}),
             ...(residentSchemaVersion >= Schema.V5_SCHEMA_VERSION ? { cleared: false } : {})
           });
         }
@@ -1550,7 +1562,8 @@
             categoryItemId: source.categoryItemId, name: source.name, date: item.scheduledDate,
             paycheckAmounts: {}, plannedAmount: source.plannedAmount, actualAmount: null,
             paymentMethod: source.paymentMethod, sourceTemplateId: source.id, occurrenceKey: item.occurrenceKey,
-            ...(residentSchemaVersion === Schema.V6_SCHEMA_VERSION ? { accountId: source.accountId } : {}),
+            ...(residentSchemaVersion >= Schema.V6_SCHEMA_VERSION ? { accountId: source.accountId } : {}),
+            ...(residentSchemaVersion >= Schema.V7_SCHEMA_VERSION ? { actualAccountId: null } : {}),
             ...(residentSchemaVersion >= Schema.V5_SCHEMA_VERSION ? { cleared: false } : {})
           });
         }
@@ -2578,7 +2591,7 @@
     function getExactMoneyMigrationSummary() {
       requireReady();
       if (residentSchemaVersion === Schema.V4_SCHEMA_VERSION || residentSchemaVersion === Schema.V5_SCHEMA_VERSION ||
-          residentSchemaVersion === Schema.V6_SCHEMA_VERSION) {
+          residentSchemaVersion >= Schema.V6_SCHEMA_VERSION) {
         return freezeDetached({ state: 'already-migrated', subCentValueCount: 0, affectedMonthCount: 0, affectedTemplateCount: 0 });
       }
       const audit = getExactMoneyAudit();
@@ -2699,7 +2712,7 @@
 
     function getAccountsMigrationSummary() {
       requireReady();
-      if (residentSchemaVersion === Schema.V6_SCHEMA_VERSION) return freezeDetached({
+      if (residentSchemaVersion >= Schema.V6_SCHEMA_VERSION) return freezeDetached({
         state: 'already-migrated', paycheckCount: 0, expenseCount: 0, templateCount: 0
       });
       if (residentSchemaVersion === Schema.V3_SCHEMA_VERSION || residentSchemaVersion === Schema.V4_SCHEMA_VERSION) {
@@ -2743,6 +2756,54 @@
       } catch { throw new StoreError('ACCOUNTS_MIGRATION_VALIDATION_FAILED'); }
       return commitCandidate(hydrated, { snapshotReason: 'pre-accounts', requiredSnapshot: true,
         daily: false, prune: false, targetSchemaVersion: Schema.V6_SCHEMA_VERSION });
+    }
+
+    function getActualAccountMigrationSummary() {
+      requireReady();
+      if (residentSchemaVersion === Schema.V7_SCHEMA_VERSION) return freezeDetached({
+        state: 'already-migrated', paycheckCount: 0, expenseCount: 0, accountCount: 0
+      });
+      if (residentSchemaVersion !== Schema.V6_SCHEMA_VERSION) return freezeDetached({
+        state: 'blocked', paycheckCount: 0, expenseCount: 0, accountCount: 0,
+        message: 'Actual account labels require the current local-accounts data format. Complete the accounts upgrade before adding actual account labels.'
+      });
+      let paycheckCount = 0; let expenseCount = 0;
+      for (const month of Object.values(data.months)) {
+        paycheckCount += month.paychecks.length; expenseCount += month.expenses.length;
+      }
+      return freezeDetached({ state: 'eligible', paycheckCount, expenseCount,
+        accountCount: data.settings.accounts.length });
+    }
+
+    function previewActualAccountMigration() {
+      const summary = getActualAccountMigrationSummary();
+      if (summary.state === 'blocked') throw new StoreError('ACTUAL_ACCOUNT_MIGRATION_REQUIRES_ACCOUNTS');
+      if (summary.state === 'already-migrated') throw new StoreError('ACTUAL_ACCOUNTS_ALREADY_MIGRATED');
+      const preview = freezeDetached({ ...summary, generation });
+      actualAccountMigrationCapabilities.set(preview, { generation, committedRaw, residentSchemaVersion, activeLayout,
+        activeGeneration: activeManifest ? activeManifest.generation : null });
+      return preview;
+    }
+
+    function commitActualAccountMigration(preview) {
+      requireReady();
+      const capability = preview && typeof preview === 'object' ? actualAccountMigrationCapabilities.get(preview) : null;
+      if (preview && typeof preview === 'object') actualAccountMigrationCapabilities.delete(preview);
+      if (!capability) throw new StoreError('INVALID_ACTUAL_ACCOUNT_MIGRATION_PREVIEW');
+      const currentActiveGeneration = activeManifest ? activeManifest.generation : null;
+      if (capability.generation !== generation || capability.committedRaw !== committedRaw ||
+          capability.residentSchemaVersion !== residentSchemaVersion || capability.activeLayout !== activeLayout ||
+          capability.activeGeneration !== currentActiveGeneration) throw new StoreError('STALE_ACTUAL_ACCOUNT_MIGRATION_PREVIEW');
+      if (residentSchemaVersion !== Schema.V6_SCHEMA_VERSION) throw new StoreError('ACTUAL_ACCOUNTS_ALREADY_MIGRATED');
+      let hydrated;
+      try {
+        const persistedV6 = Schema.buildActiveData(data, Schema.V6_SCHEMA_VERSION);
+        const persistedV7 = Schema.migrateV6ToV7(persistedV6);
+        Schema.validateV7(persistedV7);
+        hydrated = Schema.hydrateV7ExactMoney(persistedV7);
+      } catch { throw new StoreError('ACTUAL_ACCOUNT_MIGRATION_VALIDATION_FAILED'); }
+      return commitCandidate(hydrated, { snapshotReason: 'pre-actual-accounts', requiredSnapshot: true,
+        daily: false, prune: false, targetSchemaVersion: Schema.V7_SCHEMA_VERSION });
     }
 
     function getTemplateReadiness(options) {
@@ -2976,6 +3037,7 @@
       fundingDirection,
       getDataHealth, getExactMoneyAudit, getExactMoneyMigrationSummary, previewExactMoneyMigration, commitExactMoneyMigration,
       getAccountsMigrationSummary, previewAccountsMigration, commitAccountsMigration,
+      getActualAccountMigrationSummary, previewActualAccountMigration, commitActualAccountMigration,
       getShardedPersistenceSummary, previewShardedPersistenceMigration, commitShardedPersistenceMigration,
       previewMonthShardMigration, commitMonthShardMigration,
       getTemplateReadiness, previewActualResolutions, applyActualResolutions, previewDefaultDateResolutions, applyDefaultDateResolutions, compareAdditiveBackup,
