@@ -42,6 +42,8 @@ Printable dashboard reports use the same validated range and spending basis. Pri
 
 The Dashboard's **Planned forecast** is a read-only view of saved future months beginning with the next local calendar month. Choose a three-, six-, or twelve-month horizon to compare planned income, expenses, allocations, and month-local remainder. Months without a saved plan are shown as **No saved plan** and are never estimated. The forecast does not inspect or generate recurring-template occurrences, carry a remainder between months, or predict bank balances, payments, transfers, or reconciled cash. Its table, CSV export, and print presentation use the same saved-only contract.
 
+The initially closed **Upcoming bills & paydays** disclosure shows only saved paycheck and expense records in an explicit 30-, 60-, or 90-day window anchored to the device's local civil date. Missing months are **No saved plan**, saved empty months remain saved plans, and blank record dates appear separately under **Date needed** instead of being placed on the timeline. Actual **Not entered**, entered zero, and entered values remain distinct; bill funding text comes only from saved paycheck assignments. Dates are neutral scheduled or recorded dates—not due, paid, cleared, settlement, or reconciliation claims. This local planning view does not inspect templates, generate records, infer dates or funding, send reminders, or estimate balances. Print includes the currently selected range, content, and disclaimer while omitting the window controls.
+
 ## Run locally
 
 Open `index.html` in a modern browser. From this directory on Linux, for example:

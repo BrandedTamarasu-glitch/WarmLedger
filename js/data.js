@@ -1337,6 +1337,99 @@
       });
     }
 
+    function upcomingCivilWindow(anchorDate, dayCount) {
+      if (typeof anchorDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(anchorDate)) {
+        throw new StoreError('INVALID_ANCHOR_DATE');
+      }
+      if (![30, 60, 90].includes(dayCount)) throw new StoreError('INVALID_DAY_COUNT');
+      const dates = [];
+      try {
+        for (let index = 0; index < dayCount; index++) dates.push(Recurrence.addCivilDays(anchorDate, index));
+      } catch { throw new StoreError('INVALID_ANCHOR_DATE'); }
+      return dates;
+    }
+
+    function getUpcomingBillsAndPaydays(request = {}) {
+      requireReady();
+      const anchorDate = request && typeof request === 'object' ? request.anchorDate : undefined;
+      const dayCount = request && typeof request === 'object' ? request.dayCount : undefined;
+      const dates = upcomingCivilWindow(anchorDate, dayCount);
+      const endDate = dates[dates.length - 1];
+      const dateGroupsByDate = new Map(dates.map(date => [date, { date, paydays: [], bills: [] }]));
+      const monthKeys = [];
+      for (const date of dates) {
+        const monthKey = date.slice(0, 7);
+        if (monthKeys[monthKeys.length - 1] !== monthKey) monthKeys.push(monthKey);
+      }
+      const coverage = monthKeys.map(monthKey => ({
+        monthKey,
+        state: data.months[monthKey] ? 'saved-plan' : 'no-saved-plan'
+      }));
+      const dateNeeded = [];
+      let paydayCount = 0; let billCount = 0;
+      let datedPaydayCount = 0; let datedBillCount = 0;
+      let dateNeededPaydayCount = 0; let dateNeededBillCount = 0;
+
+      for (const monthKey of monthKeys) {
+        const month = data.months[monthKey];
+        if (!month) continue;
+        const paychecksById = new Map(month.paychecks.map(paycheck => [paycheck.id, paycheck]));
+        const needed = { monthKey, paydays: [], bills: [] };
+        for (const paycheck of month.paychecks) {
+          const item = {
+            paycheckId: paycheck.id, earner: paycheck.earner, date: paycheck.date,
+            plannedAmount: paycheck.plannedAmount, actualAmount: paycheck.actualAmount,
+            actualState: paycheck.actualAmount === null ? 'not-entered' : 'entered'
+          };
+          if (paycheck.date === '') { needed.paydays.push(item); dateNeededPaydayCount++; paydayCount++; }
+          else if (dateGroupsByDate.has(paycheck.date)) {
+            dateGroupsByDate.get(paycheck.date).paydays.push(item); datedPaydayCount++; paydayCount++;
+          }
+        }
+        for (const expense of month.expenses) {
+          let fundedAcrossPaychecks = 0;
+          const fundingSources = [];
+          for (const paycheck of month.paychecks) {
+            const amount = expense.paycheckAmounts[paycheck.id] || 0;
+            fundedAcrossPaychecks += amount;
+            if (amount > 0) fundingSources.push({
+              paycheckId: paycheck.id, earner: paycheck.earner, paycheckDate: paycheck.date, amount
+            });
+          }
+          for (const [paycheckId, amount] of Object.entries(expense.paycheckAmounts)) {
+            if (!paychecksById.has(paycheckId)) fundedAcrossPaychecks += amount;
+          }
+          const rawRemaining = expense.plannedAmount - fundedAcrossPaychecks;
+          const remainingDirection = fundingDirection(rawRemaining);
+          const fundingState = remainingDirection > 0
+            ? (fundedAcrossPaychecks > 0 ? 'partially-funded' : 'unfunded') : 'fully-funded';
+          const item = {
+            expenseId: expense.id, name: expense.name, category: expense.category, date: expense.date,
+            paymentMethod: expense.paymentMethod, plannedAmount: expense.plannedAmount,
+            actualAmount: expense.actualAmount,
+            actualState: expense.actualAmount === null ? 'not-entered' : 'entered',
+            fundedAcrossPaychecks, remainingToFund: remainingDirection > 0 ? rawRemaining : 0,
+            fundedPaycheckCount: fundingSources.length, splitAcrossPaychecks: fundingSources.length > 1,
+            fundingState, fundingSources
+          };
+          if (expense.date === '') { needed.bills.push(item); dateNeededBillCount++; billCount++; }
+          else if (dateGroupsByDate.has(expense.date)) {
+            dateGroupsByDate.get(expense.date).bills.push(item); datedBillCount++; billCount++;
+          }
+        }
+        if (needed.paydays.length || needed.bills.length) dateNeeded.push(needed);
+      }
+      return freezeDetached({
+        anchorDate, endDate, dayCount, coverage, dateGroups: [...dateGroupsByDate.values()], dateNeeded,
+        counts: {
+          savedPlanMonthCount: coverage.filter(item => item.state === 'saved-plan').length,
+          noSavedPlanMonthCount: coverage.filter(item => item.state === 'no-saved-plan').length,
+          paydayCount, billCount, datedPaydayCount, datedBillCount,
+          dateNeededPaydayCount, dateNeededBillCount
+        }
+      });
+    }
+
     function unsuppressOccurrence(monthKey, sourceTemplateId, occurrenceKey) {
       requireReady();
       return transact(candidate => {
@@ -1680,7 +1773,7 @@
       updateExpensePaycheckAmount, deleteExpense, undoDeleteExpense, reorderExpenses, updateAllocations, updateAllocation, copyFromMonth,
       clearMonth, previewRecurringMonth, applyRecurringPreview,
       previewTemplateActivation, applyTemplateActivationPreview,
-      getMonthReview, getPayPeriodPlan, getSuppressedOccurrences, unsuppressOccurrence,
+      getMonthReview, getPayPeriodPlan, getUpcomingBillsAndPaydays, getSuppressedOccurrences, unsuppressOccurrence,
       fundingDirection,
       getDataHealth, getExactMoneyAudit, getExactMoneyMigrationSummary, previewExactMoneyMigration, commitExactMoneyMigration,
       getTemplateReadiness, previewActualResolutions, applyActualResolutions, previewDefaultDateResolutions, applyDefaultDateResolutions, compareAdditiveBackup,

@@ -54,6 +54,7 @@ const DashboardView = {
   charts: {},
   basis: 'planned',
   forecastHorizon: 3,
+  upcomingDayCount: 30,
 
   init() {
     this.bindEvents();
@@ -76,7 +77,117 @@ const DashboardView = {
       document.querySelectorAll('[data-dashboard-quick-range]').forEach(button => {
         button.onclick = () => this.applyQuickRange(button.dataset.dashboardQuickRange);
       });
+      const upcomingControls = typeof document.getElementsByName === 'function'
+        ? document.getElementsByName('dashboard-upcoming-days') : [];
+      [...upcomingControls].forEach(control => {
+        control.onchange = () => {
+          if (!control.checked) return;
+          this.upcomingDayCount = Number(control.value); this.renderUpcoming();
+        };
+      });
     }
+  },
+
+  localCivilDate() {
+    const today = new Date();
+    return `${String(today.getFullYear()).padStart(4, '0')}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  },
+
+  upcomingNode(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  },
+
+  renderUpcoming() {
+    const container = document.getElementById('dashboard-upcoming-content');
+    if (!container || typeof Store.getUpcomingBillsAndPaydays !== 'function') return;
+    container.replaceChildren();
+    let projection;
+    try { projection = Store.getUpcomingBillsAndPaydays({ anchorDate: this.localCivilDate(), dayCount: this.upcomingDayCount }); }
+    catch (error) { App.showError(error); return; }
+    container.append(this.upcomingNode('p', 'dashboard-upcoming-range',
+      `${projection.dayCount}-day window: ${this.fullDate(projection.anchorDate)} through ${this.fullDate(projection.endDate)}.`),
+    this.upcomingNode('p', 'dashboard-upcoming-counts',
+      `${projection.counts.paydayCount} ${projection.counts.paydayCount === 1 ? 'payday' : 'paydays'} and ${projection.counts.billCount} ${projection.counts.billCount === 1 ? 'bill' : 'bills'} in saved plans.`),
+    this.upcomingCoverage(projection.coverage));
+    const timeline = this.upcomingNode('section', 'dashboard-upcoming-timeline');
+    timeline.append(this.upcomingNode('h3', '', 'Scheduled records'));
+    const dated = projection.dateGroups.filter(group => group.paydays.length || group.bills.length);
+    if (!dated.length) timeline.append(this.upcomingNode('p', 'muted-text', 'No saved records with dates fall inside this window.'));
+    dated.forEach(group => timeline.append(this.upcomingDateGroup(group)));
+    container.append(timeline, this.upcomingDateNeeded(projection.dateNeeded));
+  },
+
+  upcomingCoverage(coverage) {
+    const section = this.upcomingNode('section', 'dashboard-upcoming-coverage');
+    section.append(this.upcomingNode('h3', '', 'Saved-plan coverage'));
+    const list = this.upcomingNode('ul', 'dashboard-upcoming-coverage-list');
+    coverage.forEach(entry => {
+      const item = this.upcomingNode('li'); item.append(this.upcomingNode('span', '', App.formatMonth(entry.monthKey)),
+        this.upcomingNode('strong', '', entry.state === 'saved-plan' ? 'Saved plan' : 'No saved plan')); list.append(item);
+    });
+    section.append(list); return section;
+  },
+
+  upcomingDateGroup(group) {
+    const section = this.upcomingNode('section', 'dashboard-upcoming-date-group');
+    const heading = this.upcomingNode('h4'); const time = this.upcomingNode('time', '', this.fullDate(group.date));
+    time.dateTime = group.date; heading.append(time); section.append(heading);
+    const list = this.upcomingNode('ul', 'dashboard-upcoming-list');
+    group.paydays.forEach(item => list.append(this.upcomingPayday(item)));
+    group.bills.forEach(item => list.append(this.upcomingBill(item)));
+    section.append(list); return section;
+  },
+
+  upcomingPayday(item) {
+    const row = this.upcomingNode('li', 'dashboard-upcoming-item');
+    row.append(this.upcomingNode('strong', 'dashboard-upcoming-kind', 'Payday'),
+      this.upcomingNode('span', 'dashboard-upcoming-name', item.earner),
+      this.upcomingNode('span', '', `Planned ${BudgetView.fmt(item.plannedAmount)}`),
+      this.upcomingNode('span', '', item.actualState === 'not-entered'
+        ? 'Actual: Not entered' : `Actual: Entered ${BudgetView.fmt(item.actualAmount)}`));
+    return row;
+  },
+
+  upcomingBill(item) {
+    const row = this.upcomingNode('li', 'dashboard-upcoming-item');
+    row.append(this.upcomingNode('strong', 'dashboard-upcoming-kind', 'Bill'),
+      this.upcomingNode('span', 'dashboard-upcoming-name', item.name), this.upcomingNode('span', 'muted-text', item.category),
+      this.upcomingNode('span', '', `Planned ${BudgetView.fmt(item.plannedAmount)}`),
+      this.upcomingNode('span', '', item.actualState === 'not-entered'
+        ? 'Actual: Not entered' : `Actual: Entered ${BudgetView.fmt(item.actualAmount)}`),
+      this.upcomingNode('span', '', this.upcomingFunding(item)));
+    return row;
+  },
+
+  upcomingFunding(item) {
+    if (item.fundingState === 'unfunded') return 'Funding: Unfunded; no saved paycheck assignment.';
+    if (item.fundingState === 'partially-funded') return `Funding: Partially funded; ${BudgetView.fmt(item.fundedAcrossPaychecks)} assigned and ${BudgetView.fmt(item.remainingToFund)} remaining to fund.`;
+    return `Funding: Fully funded across ${item.fundedPaycheckCount} saved paycheck ${item.fundedPaycheckCount === 1 ? 'assignment' : 'assignments'}${item.splitAcrossPaychecks ? '; split across paychecks' : ''}.`;
+  },
+
+  upcomingDateNeeded(groups) {
+    const section = this.upcomingNode('section', 'dashboard-upcoming-date-needed');
+    section.append(this.upcomingNode('h3', '', 'Date needed'),
+      this.upcomingNode('p', 'muted-text', 'These saved records have a blank date and are not placed on the timeline.'));
+    if (!groups.length) { section.append(this.upcomingNode('p', 'muted-text', 'No saved records need a date in this window.')); return section; }
+    groups.forEach(group => {
+      const block = this.upcomingNode('section', 'dashboard-upcoming-needed-group');
+      block.append(this.upcomingNode('h4', '', App.formatMonth(group.monthKey)));
+      const list = this.upcomingNode('ul', 'dashboard-upcoming-list');
+      group.paydays.forEach(item => list.append(this.upcomingPayday(item)));
+      group.bills.forEach(item => list.append(this.upcomingBill(item)));
+      block.append(list); section.append(block);
+    });
+    return section;
+  },
+
+  fullDate(date) {
+    const [year, month, day] = date.split('-').map(Number);
+    return new Date(year, month - 1, day).toLocaleDateString(undefined,
+      { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
   },
 
   applyBasis(basis) {
@@ -523,6 +634,7 @@ const DashboardView = {
   },
 
   render() {
+    this.renderUpcoming();
     this.clearRenderedOutput();
     this.renderForecast();
     const range = this.validateDateRange(this.getDateRange());

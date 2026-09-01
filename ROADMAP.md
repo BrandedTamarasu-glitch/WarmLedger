@@ -91,6 +91,7 @@ Status: reporting truth, accessible chart tables, date-range safety, and quick r
 - Complete locally: range- and basis-aware CSV export with explicit completeness and spreadsheet-formula protection.
 - Complete locally: printable dashboard reports with explicit range and basis context, expanded data tables, and paper-safe presentation.
 - Complete locally: planned-only saved-future-month forecasting for the next 3, 6, or 12 months, with explicit gaps, accessible table, CSV, print support, and no recurring-template inference.
+- Complete locally: a closed Upcoming bills & paydays projection for saved records across explicit 30-, 60-, or 90-day local civil windows, with missing-plan gaps, Date needed records, truthful actual/funding states, and print support; reminders, calendar integration, inference, and account claims remain deferred.
 
 ## Global release gates
 

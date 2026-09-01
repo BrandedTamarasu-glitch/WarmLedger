@@ -132,6 +132,19 @@
         <h2 id="dashboard-heading" tabindex="-1">Dashboard</h2>
         <p>Review trends and totals across a selected range of months. Reports are read-only and do not change your budget.</p>
       </header>
+      <details id="dashboard-upcoming" class="dashboard-upcoming dash-card">
+        <summary>Upcoming bills &amp; paydays</summary>
+        <div class="dashboard-upcoming-body">
+          <p class="dashboard-upcoming-disclaimer">Saved records only. Dates are scheduled or recorded dates, not proof that income arrived or a bill was due, paid, cleared, or reconciled. This is a planning view, not a forecast, calendar, reminder, or account balance.</p>
+          <fieldset class="dashboard-upcoming-controls">
+            <legend>Upcoming window</legend>
+            <label><input type="radio" name="dashboard-upcoming-days" value="30" checked> 30 days</label>
+            <label><input type="radio" name="dashboard-upcoming-days" value="60"> 60 days</label>
+            <label><input type="radio" name="dashboard-upcoming-days" value="90"> 90 days</label>
+          </fieldset>
+          <div id="dashboard-upcoming-content"></div>
+        </div>
+      </details>
       <fieldset class="dashboard-controls" aria-describedby="dashboard-range-help dashboard-state">
         <legend>Reporting range</legend>
         <div class="date-range">
