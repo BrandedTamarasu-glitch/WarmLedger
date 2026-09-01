@@ -64,7 +64,7 @@ Status: published.
 
 ### Phase 5B — Month Checklist Readiness
 
-Status: complete locally; not yet published.
+Status: published.
 
 - Add one deterministic, detached, read-only Store projection and one compact summary at the top of the existing, initially closed Manual cleared checklist.
 - Check exactly three facts across saved paychecks and expenses: all actuals entered (`null` is missing and entered zero is entered), all saved dates nonblank, and every record manually marked cleared.
