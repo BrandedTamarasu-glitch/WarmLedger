@@ -51,6 +51,6 @@ test('documentation preserves the manual-only state and deferred boundaries', ()
   for (const phrase of ['initially closed **Manual cleared checklist**', 'entered zero is eligible',
     'does not mean paid, bank-verified, reconciled, matched, settled, balance-confirmed, or month closed',
     'no bulk or automatic clearing controls']) assert.match(readme, new RegExp(phrase.replaceAll('*', '\\*')));
-  assert.match(roadmap, /Phase 5A manual cleared-record checklist complete locally/);
-  assert.match(roadmap, /reconciliation and month close remain deferred/);
+  assert.match(roadmap, /Phase 5A — Manual cleared-record checklist/);
+  assert.match(roadmap, /Status: published/);
 });

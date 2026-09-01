@@ -888,6 +888,13 @@ button:disabled, input:disabled, select:disabled, textarea:disabled { cursor: no
 .monthly-review-cleared-disclaimer, .monthly-review-cleared-unavailable,
 .monthly-review-cleared-empty { line-height: 1.55; overflow-wrap: anywhere; }
 .monthly-review-cleared-disclaimer { color: var(--color-text-muted); }
+.monthly-review-readiness { min-width: 0; margin-bottom: 14px; padding: 12px; border: 1px solid var(--color-divider); border-radius: var(--radius-control); background: var(--color-surface); }
+.monthly-review-readiness-state { margin: 0 0 4px; font-size: 15px; line-height: 1.4; overflow-wrap: anywhere; }
+.monthly-review-readiness-status { margin-bottom: 10px; font-weight: 700; overflow-wrap: anywhere; }
+.monthly-review-readiness-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 12px; min-width: 0; }
+.monthly-review-readiness-facts dt { color: var(--color-text-muted); font-weight: 600; }
+.monthly-review-readiness-facts dd { min-width: 0; overflow-wrap: anywhere; }
+.monthly-review-readiness-limitation { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--color-divider); color: var(--color-text-muted); line-height: 1.5; overflow-wrap: anywhere; }
 .monthly-review-cleared-counts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; min-width: 0; margin: 12px 0; }
 .monthly-review-cleared-counts > div { min-width: 0; }
 .monthly-review-cleared-counts dt { color: var(--color-text-muted); font-size: 12px; overflow-wrap: anywhere; }
@@ -1578,6 +1585,8 @@ label:has(> #field-template-enabled) { display: flex; align-items: center; min-h
   .monthly-review-header { align-items: flex-start; }
   .monthly-review-group { padding: 12px; }
   .monthly-review-cleared-counts { grid-template-columns: minmax(0, 1fr); }
+  .monthly-review-readiness-facts { grid-template-columns: minmax(0, 1fr); gap: 3px; }
+  .monthly-review-readiness-facts dd { margin-bottom: 7px; }
   .budget-actions { display: grid; grid-template-columns: minmax(0, 1fr); }
   .budget-actions .btn { width: 100%; min-height: 44px; }
   .budget-actions #btn-clear-month { margin-left: 0; }
@@ -1690,6 +1699,12 @@ label:has(> #field-template-enabled) { display: flex; align-items: center; min-h
   .monthly-review-cleared-meta, .monthly-review-cleared-reason,
   .monthly-review-cleared-counts dt, .monthly-review-cleared-counts dd { color: CanvasText; }
   .monthly-review-cleared-label input { color: ButtonText; background: ButtonFace; border: 1px solid ButtonText; forced-color-adjust: auto; }
+  .monthly-review-readiness, .monthly-review-readiness-facts, .monthly-review-readiness-limitation {
+    color: CanvasText; background: Canvas; border-color: CanvasText; box-shadow: none;
+  }
+  .monthly-review-readiness-state, .monthly-review-readiness-status,
+  .monthly-review-readiness-facts dt, .monthly-review-readiness-facts dd,
+  .monthly-review-readiness-limitation { color: CanvasText; }
   .monthly-review-status, .monthly-review-states li, .monthly-review-funding-alert, .monthly-review-metric-label,
   .monthly-review-metric-value, .monthly-review-destination dt, .monthly-review-destination dd,
   .monthly-review-drilldown summary { color: CanvasText; background: Canvas; }

@@ -186,7 +186,8 @@ const BudgetView = {
     stateText.forEach(text => states.append(this.element('li', '', text))); wrapper.append(states);
 
     if (typeof Store.getClearedChecklist === 'function') {
-      wrapper.append(this.renderClearedChecklist(Store.getClearedChecklist(this.currentMonth)));
+      wrapper.append(this.renderClearedChecklist(Store.getClearedChecklist(this.currentMonth),
+        Store.getMonthReadiness(this.currentMonth)));
     }
 
     const grid = this.element('div', 'monthly-review-grid'); wrapper.append(grid);
@@ -231,10 +232,11 @@ const BudgetView = {
     container.replaceChildren(wrapper);
   },
 
-  renderClearedChecklist(checklist) {
+  renderClearedChecklist(checklist, readiness) {
     const details = this.element('details', 'monthly-review-cleared'); details.id = 'monthly-review-cleared';
     details.append(this.element('summary', '', 'Manual cleared checklist'));
     const content = this.element('div', 'monthly-review-cleared-content');
+    content.append(this.monthReadinessSummary(readiness));
     content.append(this.element('p', 'monthly-review-cleared-disclaimer',
       'This is only a manual mark on a saved record. It does not mean paid, bank-verified, reconciled, matched, settled, balance-confirmed, or month closed.'));
     if (!checklist.available) {
@@ -256,6 +258,45 @@ const BudgetView = {
       content.append(list);
     }
     details.append(content); return details;
+  },
+
+  monthReadinessSummary(readiness) {
+    const section = this.element('section', 'monthly-review-readiness');
+    section.append(this.element('h4', 'monthly-review-readiness-state', `Month state — ${readiness.stateLabel}`));
+    const status = readiness.status === 'checklist-complete' ? 'Checklist complete'
+      : readiness.status === 'needs-attention' ? 'Checklist needs attention'
+        : readiness.status === 'empty-month' ? 'Saved month is empty'
+          : readiness.status === 'no-saved-month' ? 'No saved month' : 'Checklist unavailable';
+    section.append(this.element('p', 'monthly-review-readiness-status', status));
+    const facts = this.element('dl', 'monthly-review-readiness-facts');
+    const descriptions = this.monthReadinessFacts(readiness);
+    [['Actual amounts', descriptions.actuals], ['Record dates', descriptions.dates],
+      ['Manual clearing', descriptions.clearing]].forEach(([label, value]) => this.reviewDetail(facts, label, value));
+    section.append(facts, this.element('p', 'monthly-review-readiness-limitation',
+      'This month remains editable. These checks are a manual review aid—not bank verification, reconciliation, payment confirmation, or month close.'));
+    return section;
+  },
+
+  monthReadinessFacts(readiness) {
+    if (!readiness.available) return {
+      actuals: 'Unavailable for this budget version.', dates: 'Unavailable for this budget version.',
+      clearing: 'Unavailable for this budget version.'
+    };
+    if (!readiness.exists) return {
+      actuals: 'No saved records to check.', dates: 'No saved records to check.', clearing: 'No saved records to check.'
+    };
+    if (readiness.status === 'empty-month') return {
+      actuals: 'The saved month has no records.', dates: 'The saved month has no records.',
+      clearing: 'The saved month has no records.'
+    };
+    return {
+      actuals: readiness.checks.actualsComplete ? 'All saved records have an entered actual amount.'
+        : `${readiness.counts.actualsMissing} saved ${readiness.counts.actualsMissing === 1 ? 'record has' : 'records have'} no entered actual amount.`,
+      dates: readiness.checks.datesComplete ? 'All saved records have a date.'
+        : `${readiness.counts.datesMissing} saved ${readiness.counts.datesMissing === 1 ? 'record has' : 'records have'} no date.`,
+      clearing: readiness.checks.manualClearingComplete ? 'All saved records are manually marked cleared.'
+        : `${readiness.counts.notManuallyCleared} saved ${readiness.counts.notManuallyCleared === 1 ? 'record is' : 'records are'} not manually marked cleared.`
+    };
   },
 
   clearedChecklistItem(item) {

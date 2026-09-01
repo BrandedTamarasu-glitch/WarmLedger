@@ -53,16 +53,38 @@ Status: Phase 4B explicit exact-money migration published.
 - Keep ordinary schema-version-3 edits on version 3, preserve `null` separately from entered zero, and block rather than round sub-cent ledgers.
 - Keep backup and snapshot envelope format version 1 compatible with both schema versions 3 and 4.
 
-## Phase 5 — Reconciliation and month close
+## Phase 5 — Manual clearing and month review
 
-Status: Phase 5A manual cleared-record checklist published; Phase 5B Month Checklist Readiness is planned. Reconciliation and month close remain deferred.
+### Phase 5A — Manual cleared-record checklist
+
+Status: published.
 
 - Add an explicit per-record manual cleared mark only for saved records with an entered actual and date; entered zero remains eligible.
 - Keep the checklist separate from paid, bank-verified, reconciled, matched, settled, balance-confirmed, and month-closed claims, with no bulk or automatic clearing.
-- Defer statements, bank connections, clearing timestamps, reconciliation, audit trail, and close/lock workflows to separately reviewed phases.
-- Introduce Open, Ready to Reconcile, Reconciled, and Closed month states.
-- Prevent closing incomplete or mismatched months.
-- Lock closed months and require an explicit snapshotted reopen flow.
+
+### Phase 5B — Month Checklist Readiness
+
+Status: complete locally; not yet published.
+
+- Add one deterministic, detached, read-only Store projection and one compact summary at the top of the existing, initially closed Manual cleared checklist.
+- Check exactly three facts across saved paychecks and expenses: all actuals entered (`null` is missing and entered zero is entered), all saved dates nonblank, and every record manually marked cleared.
+- Preserve overlapping missing counts without deduplication, scoring, or percentages.
+- Keep **Month state — Open for editing** constant; use **Checklist complete** only when all three checks pass.
+- Distinguish a valid absent month from a saved empty month and treat neither as checklist-complete.
+- Make the projection available for resident schema-version-5 data; return an explicit unavailable result for schema versions 3 and 4 without migrating, snapshotting, or writing.
+- Preserve invalid-month handling, recovery gating, existing cleared-record facts, and a strictly passive interface with no controls or lifecycle transitions.
+- Exclude funding, allocations, recurring templates, planned balances, Data Health, accounts, statements, payment status, bank verification, reconciliation, and month-close claims.
+
+The lean ceiling for Phase 5B is the pure three-check projection plus the existing-checklist summary. Upgrade only when separately authorized account or statement evidence, reconciliation rules, close prerequisites, locks, rollback/reopen behavior, and audit history require a persisted lifecycle contract.
+
+### Later phase — Reconciliation and month lifecycle
+
+Status: explicitly deferred and not part of Phase 5B.
+
+- Define statement and account evidence, reconciliation rules, clearing timestamps, and audit history before adding lifecycle state.
+- Introduce **Open**, **Ready to Reconcile**, **Reconciled**, and **Closed** only through a separately reviewed contract.
+- Define completion and mismatch prerequisites before allowing month close.
+- Lock closed months only with explicit, snapshotted rollback and reopen behavior.
 
 ## Phase 6 — Honest paycheck funding and transfers
 

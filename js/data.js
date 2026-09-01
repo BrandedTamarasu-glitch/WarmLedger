@@ -1616,6 +1616,44 @@
       });
     }
 
+    function getMonthReadiness(monthKey) {
+      requireReady();
+      validateMonthKey(monthKey);
+      const neutral = {
+        monthKey, exists: false, available: false,
+        unavailableReason: 'manual-clearing-format-required',
+        status: 'unavailable', stateLabel: 'Open for editing',
+        counts: { recordCount: 0, actualsMissing: 0, datesMissing: 0, notManuallyCleared: 0 },
+        checks: { actualsComplete: false, datesComplete: false,
+          manualClearingComplete: false, checklistComplete: false }
+      };
+      if (residentSchemaVersion !== Schema.V5_SCHEMA_VERSION) return freezeDetached(neutral);
+
+      const exists = Object.hasOwn(data.months, monthKey);
+      const month = data.months[monthKey];
+      const records = exists ? [...month.paychecks, ...month.expenses] : [];
+      const counts = {
+        recordCount: records.length,
+        actualsMissing: records.filter(record => record.actualAmount === null).length,
+        datesMissing: records.filter(record => record.date === '').length,
+        notManuallyCleared: records.filter(record => record.cleared !== true).length
+      };
+      const hasRecords = counts.recordCount > 0;
+      const checks = {
+        actualsComplete: hasRecords && counts.actualsMissing === 0,
+        datesComplete: hasRecords && counts.datesMissing === 0,
+        manualClearingComplete: hasRecords && counts.notManuallyCleared === 0,
+        checklistComplete: hasRecords && counts.actualsMissing === 0 &&
+          counts.datesMissing === 0 && counts.notManuallyCleared === 0
+      };
+      const status = !exists ? 'no-saved-month' : !hasRecords ? 'empty-month'
+        : checks.checklistComplete ? 'checklist-complete' : 'needs-attention';
+      return freezeDetached({
+        monthKey, exists, available: true, unavailableReason: null,
+        status, stateLabel: 'Open for editing', counts, checks
+      });
+    }
+
     function setRecordCleared(request) {
       requireReady();
       if (!exactObject(request, ['monthKey', 'kind', 'recordId', 'cleared']) ||
@@ -1942,7 +1980,7 @@
       clearMonth, previewRecurringMonth, applyRecurringPreview,
       previewTemplateActivation, applyTemplateActivationPreview,
       getMonthReview, getPayPeriodPlan, getUpcomingBillsAndPaydays, getSuppressedOccurrences, unsuppressOccurrence,
-      getClearedChecklist, setRecordCleared,
+      getClearedChecklist, getMonthReadiness, setRecordCleared,
       fundingDirection,
       getDataHealth, getExactMoneyAudit, getExactMoneyMigrationSummary, previewExactMoneyMigration, commitExactMoneyMigration,
       getTemplateReadiness, previewActualResolutions, applyActualResolutions, previewDefaultDateResolutions, applyDefaultDateResolutions, compareAdditiveBackup,
