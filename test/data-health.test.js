@@ -62,3 +62,48 @@ test('funding mismatch threshold excludes exact 0.009 despite floating represent
   const report = Health.analyze(data);
   assert.deepEqual(report.fundingMismatches.map(item => item.monthKey), ['2026-02']);
 });
+
+test('month-sharded migration summary helper preserves the brief copy for each state', () => {
+  const available = Health.buildShardedPersistenceMigration({ state: 'available' });
+  assert.deepEqual({
+    state: available.state,
+    title: available.title,
+    buttonLabel: available.buttonLabel,
+    canPreview: available.canPreview
+  }, {
+    state: 'available',
+    title: 'Month-sharded local storage is ready',
+    buttonLabel: 'Preview month-sharded storage',
+    canPreview: true
+  });
+  assert.match(available.description, /one large local record to month-sharded local storage/);
+  assert.match(available.description, /Older app versions may require restoring a backup made before this migration\./);
+
+  const active = Health.buildShardedPersistenceMigration({ state: 'already-sharded' });
+  assert.deepEqual({
+    state: active.state,
+    title: active.title,
+    buttonLabel: active.buttonLabel,
+    canPreview: active.canPreview
+  }, {
+    state: 'already-sharded',
+    title: 'Month-sharded local storage is active',
+    buttonLabel: null,
+    canPreview: false
+  });
+  assert.equal(active.description, 'This ledger already saves active local data by month. No migration action is needed.');
+
+  const empty = Health.buildShardedPersistenceMigration({ state: 'empty' });
+  assert.deepEqual({
+    state: empty.state,
+    title: empty.title,
+    buttonLabel: empty.buttonLabel,
+    canPreview: empty.canPreview
+  }, {
+    state: 'empty',
+    title: 'Month-sharded local storage is unavailable',
+    buttonLabel: null,
+    canPreview: false
+  });
+  assert.equal(empty.description, 'No saved local data is present yet. Month-sharded local storage becomes relevant after this ledger contains saved months.');
+});

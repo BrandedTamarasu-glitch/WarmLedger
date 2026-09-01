@@ -18,7 +18,7 @@ See [ROADMAP.md](ROADMAP.md) for planned work and the boundaries of future phase
 - A compact, write-free **Monthly Review** dashboard showing recurring work, missing actuals, expense funding, checklist readiness, and balance at a glance, with details available on demand.
 - Manual cleared-record marks for eligible saved records, kept explicitly separate from payment confirmation, bank verification, reconciliation, and month close.
 - Saved-only future-month forecasting, upcoming bills and paydays, a transient Saved-Record Finder, a bounded saved-month review queue, and two-month comparison with on-demand expense contributors.
-- A write-free **Data Health** view for incomplete or unusual ledger records and compare-only backup analysis.
+- A write-free **Data Health** view for incomplete or unusual ledger records, compare-only backup analysis, and explicit preview-first month-sharded persistence migration for eligible ledgers.
 - Explicit, preview-first migration of eligible ledgers to exact integer-cent persistence, protected by a verified safety snapshot.
 - Internal recurrence safeguards that keep deliberately removed generated occurrences from returning unexpectedly.
 - Stable structural IDs with historical labels preserved in existing monthly records.
@@ -204,11 +204,15 @@ Warm Ledger supports resident data schema versions 3, 4, and 5. All three are no
 
 Backup and snapshot envelopes remain format version 1 and can contain resident schema-version-3, schema-version-4, or schema-version-5 data, as well as older ZeroBudget data that Warm Ledger migrates during validation. Current backups preserve the active resident version. Newer resident data may be rejected by older application versions, so download and retain a backup before intentionally downgrading.
 
+The month-sharded persistence layout keeps those compatibility rules intact: it stores the same resident schema data in a different local layout, without introducing a new schema version or a new envelope version.
+
 ## Back up and restore
 
 Use **Download backup** to save one timestamped, versioned JSON file. Keep downloaded backups somewhere durable; they are the portable way to retain or move a budget.
 
 Use **Restore backup** to select a Warm Ledger or legacy ZeroBudget JSON backup. The app validates and previews the file before asking for confirmation. Restoring replaces the current budget, so Warm Ledger first creates a local safety snapshot when valid saved data exists. Invalid or cancelled restores do not replace the active budget.
+
+Month-sharded local storage is browser-only and changes only how this browser saves active data. It does not change the resident schema version or the version `1` backup/snapshot envelope format. If you migrate to month-sharded storage, the durable downgrade path is to restore a JSON backup or local snapshot made before that migration.
 
 Do not rename JavaScript files to use them as backups and do not paste budget data into the source tree. Executable seed-data backups are intentionally unsupported.
 

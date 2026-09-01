@@ -206,5 +206,33 @@
     });
   }
 
-  return Object.freeze({ analyze, buildTemplateReadiness, buildExactMoneyMigration });
+  function buildShardedPersistenceMigration(summary) {
+    if (!summary || typeof summary !== 'object' || Array.isArray(summary) ||
+        !['available', 'already-sharded', 'empty'].includes(summary.state)) {
+      throw new TypeError('Invalid month-sharded migration summary');
+    }
+    if (summary.state === 'available') return result({
+      state: 'available',
+      title: 'Month-sharded local storage is ready',
+      description: 'This ledger can move active browser storage from one large local record to month-sharded local storage. Budget values and behavior stay the same. Warm Ledger creates a local safety snapshot before saving. Older app versions may require restoring a backup made before this migration.',
+      buttonLabel: 'Preview month-sharded storage',
+      canPreview: true
+    });
+    if (summary.state === 'already-sharded') return result({
+      state: 'already-sharded',
+      title: 'Month-sharded local storage is active',
+      description: 'This ledger already saves active local data by month. No migration action is needed.',
+      buttonLabel: null,
+      canPreview: false
+    });
+    return result({
+      state: 'empty',
+      title: 'Month-sharded local storage is unavailable',
+      description: 'No saved local data is present yet. Month-sharded local storage becomes relevant after this ledger contains saved months.',
+      buttonLabel: null,
+      canPreview: false
+    });
+  }
+
+  return Object.freeze({ analyze, buildTemplateReadiness, buildExactMoneyMigration, buildShardedPersistenceMigration });
 });

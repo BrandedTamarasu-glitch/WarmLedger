@@ -2,6 +2,9 @@
 const ModalView = {
   trigger: null,
   saveHandler: null,
+  onClose: null,
+  savePending: false,
+  isOpen: false,
 
   element(tag, { id = '', className = '', text = '', attrs = {} } = {}, children = []) {
     const node = document.createElement(tag);
@@ -25,10 +28,12 @@ const ModalView = {
   },
   fragment(...nodes) { const fragment = document.createDocumentFragment(); fragment.append(...nodes); return fragment; },
 
-  open({ title, buildBody, onSave, submitLabel = 'Save', initialFocus = null }) {
+  open({ title, buildBody, onSave, onClose = null, submitLabel = 'Save', initialFocus = null }) {
     const body = buildBody();
     if (!(body instanceof Node)) throw new TypeError('Modal body must be a Node or DocumentFragment');
     this.trigger = document.activeElement;
+    this.onClose = typeof onClose === 'function' ? onClose : null;
+    this.isOpen = true;
     document.getElementById('modal-title').textContent = title;
     document.getElementById('modal-body').replaceChildren(body);
     const overlay = document.getElementById('modal-overlay');
@@ -37,8 +42,29 @@ const ModalView = {
     const save = document.getElementById('modal-save');
     if (this.saveHandler) save.removeEventListener('click', this.saveHandler);
     save.textContent = submitLabel; save.className = 'btn btn-primary'; save.disabled = false;
-    this.saveHandler = () => { if (onSave() !== false) this.close(); };
-    save.addEventListener('click', this.saveHandler);
+    this.savePending = false;
+    const handler = () => {
+      if (this.saveHandler !== handler || this.savePending || save.disabled) return;
+      this.savePending = true;
+      save.disabled = true;
+      let result;
+      try {
+        result = onSave();
+      } catch (error) {
+        this.savePending = false;
+        save.disabled = false;
+        throw error;
+      }
+      this.savePending = false;
+      if (result === false) {
+        save.disabled = false;
+        if (this.saveHandler === handler) save.focus({ preventScroll: true });
+        return;
+      }
+      this.close('confirm');
+    };
+    this.saveHandler = handler;
+    save.addEventListener('click', handler);
     requestAnimationFrame(() => {
       const requested = typeof initialFocus === 'function' ? initialFocus() : initialFocus;
       const first = document.querySelector('#modal-body input:not(:disabled), #modal-body select:not(:disabled), #modal-body textarea:not(:disabled), #modal-body button:not(:disabled)');
@@ -46,12 +72,27 @@ const ModalView = {
     });
   },
 
-  close() {
-    document.getElementById('modal-overlay').hidden = true;
+  close(reason = 'cancel') {
+    if (!this.isOpen && document.getElementById('modal-overlay').hidden && !this.saveHandler) return;
+    this.isOpen = false;
+    const overlay = document.getElementById('modal-overlay');
+    const save = document.getElementById('modal-save');
+    const handler = this.saveHandler;
+    if (handler) save.removeEventListener('click', handler);
+    save.disabled = true;
+    this.saveHandler = null;
+    this.savePending = false;
+    const onClose = this.onClose;
+    this.onClose = null;
+    overlay.hidden = true;
     const shell = document.getElementById('application-shell');
     if (!shell.hidden) shell.inert = false;
-    const trigger = this.trigger; this.trigger = null;
-    if (trigger?.isConnected) trigger.focus({ preventScroll: true });
+    try {
+      if (onClose) onClose(reason);
+    } finally {
+      const trigger = this.trigger; this.trigger = null;
+      if (trigger?.isConnected) trigger.focus({ preventScroll: true });
+    }
   },
 
   trapFocus(event) {

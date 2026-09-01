@@ -3,6 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const Schema = require('../js/data-schema.js');
+const StorageEngine = require('../js/storage-engine.js');
 const { STORAGE_KEY, CORRUPT_KEY, SNAPSHOT_PREFIX, WRITE_LOCK_KEY,
   StoreError, createStore } = require('../js/data.js');
 const { MemoryStorage, makeClock, makeV3Budget } = require('./helpers.js');
@@ -194,4 +195,269 @@ test('shared comparison validator exposes all locked statuses consistently', () 
   assert.equal(explain({ ...base, basis: 'bad', section: 'categories' }), 'invalid-basis');
   assert.equal(compare(base), 'insufficient-saved-months');
   assert.equal(explain({ ...base, section: 'categories' }), 'insufficient-saved-months');
+});
+
+test('month-shard migration is explicit, preview-write-free, identity-bound, and reloadable', () => {
+  const { store, storage } = loaded({ prefix: 'shard' });
+  const summary = store.getShardedPersistenceSummary();
+  assert.equal(summary.state, 'available');
+  assert.equal(summary.firstMonth, '2026-01');
+  assert.equal(summary.lastMonth, '2026-01');
+  const before = storage.getItem(STORAGE_KEY);
+  storage.operations.length = 0;
+  const preview = store.previewShardedPersistenceMigration();
+  assert.equal(preview.layout, 'month-sharded');
+  assert.equal(preview.monthCount, 1);
+  assert.equal(preview.firstMonth, '2026-01');
+  assert.equal(preview.lastMonth, '2026-01');
+  assert.equal(storage.operations.some(operation => operation.op !== 'getItem'), false);
+  assert.equal(storage.getItem(STORAGE_KEY), before);
+  code('INVALID_MONTH_SHARD_MIGRATION_PREVIEW', () => store.commitMonthShardMigration({ ...preview }));
+  const result = store.commitShardedPersistenceMigration(preview);
+  assert.equal(result.layout, 'sharded');
+  const writes = storage.operations.filter(operation => operation.op === 'setItem').map(operation => operation.key);
+  assert.ok(writes.indexOf(StorageEngine.JOURNAL_KEY) < writes.findIndex(key =>
+    key.startsWith(StorageEngine.GLOBAL_PREFIX) || key.startsWith(StorageEngine.MONTH_PREFIX) || key.startsWith(StorageEngine.MANIFEST_PREFIX)));
+  assert.equal(JSON.parse(storage.getItem(STORAGE_KEY)).layout, 'month-sharded');
+  assert.ok(store.listSnapshots().some(snapshot => snapshot.reason === 'pre-sharding'));
+
+  const reloaded = createStore({ storage, now: makeClock(), uuid: () => 'reload' });
+  assert.equal(reloaded.load().layout, 'sharded');
+  assert.equal(reloaded.getShardedPersistenceSummary().state, 'already-sharded');
+  assert.deepEqual(reloaded.getData(), store.getData());
+  code('MONTH_SHARD_ALREADY_MIGRATED', () => reloaded.previewMonthShardMigration());
+});
+
+test('sharded semantic no-op performs zero writes against the canonical resident state', () => {
+  const { store, storage } = loaded({ prefix: 'noop-shard' });
+  store.commitShardedPersistenceMigration(store.previewShardedPersistenceMigration());
+  storage.operations.length = 0;
+  store.updateExpense('2026-01', 'expense-example-1', { actualAmount: 1200 });
+  assert.equal(storage.operations.some(operation => operation.op !== 'getItem'), false);
+});
+
+test('sharded month-only commits reuse global references and untouched month references', () => {
+  const budget = makeV3Budget();
+  budget.months['2026-02'] = structuredClone(budget.months['2026-01']);
+  budget.months['2026-02'].paychecks[0].id = 'paycheck-february';
+  budget.months['2026-02'].paychecks[0].date = '2026-02-15';
+  budget.months['2026-02'].expenses[0].id = 'expense-february';
+  budget.months['2026-02'].expenses[0].paycheckAmounts = { 'paycheck-february': 1200 };
+  const { store, storage } = loaded({ storage: new MemoryStorage({ [STORAGE_KEY]: JSON.stringify(budget) }), prefix: 'cow' });
+  store.commitMonthShardMigration(store.previewMonthShardMigration());
+  const firstRoot = StorageEngine.parseRootPointer(storage.getItem(STORAGE_KEY));
+  const firstManifest = StorageEngine.parseManifest(storage.getItem(firstRoot.manifestKey));
+  storage.operations.length = 0;
+  store.updateExpense('2026-01', 'expense-example-1', { actualAmount: 999 });
+  const secondRoot = StorageEngine.parseRootPointer(storage.getItem(STORAGE_KEY));
+  const secondManifest = StorageEngine.parseManifest(storage.getItem(secondRoot.manifestKey));
+  assert.deepEqual(secondManifest.global, firstManifest.global);
+  assert.deepEqual(secondManifest.months['2026-02'], firstManifest.months['2026-02']);
+  assert.notDeepEqual(secondManifest.months['2026-01'], firstManifest.months['2026-01']);
+  const shardWrites = storage.operations.filter(operation => operation.op === 'setItem' &&
+    (operation.key.startsWith(StorageEngine.GLOBAL_PREFIX) || operation.key.startsWith(StorageEngine.MONTH_PREFIX)));
+  assert.deepEqual(shardWrites.map(operation => operation.key), [secondManifest.months['2026-01'].key]);
+});
+
+test('failed sharded root activation rolls staged generation back and preserves the prior readable generation', () => {
+  const { store, storage } = loaded({ prefix: 'rollback' });
+  store.commitMonthShardMigration(store.previewMonthShardMigration());
+  const priorRoot = storage.getItem(STORAGE_KEY);
+  const priorData = store.getData();
+  storage.fail({ op: 'setItem', key: STORAGE_KEY, once: true });
+  code('PRIMARY_WRITE_FAILED', () => store.updateExpense('2026-01', 'expense-example-1', { actualAmount: 777 }));
+  assert.equal(storage.getItem(STORAGE_KEY), priorRoot);
+  assert.deepEqual(store.getData(), priorData);
+  assert.equal(Array.from(storage._values.keys()).some(key => key === StorageEngine.JOURNAL_KEY), false);
+  const reloaded = createStore({ storage, now: makeClock(), uuid: () => 'reload' });
+  assert.equal(reloaded.load().state, 'ready');
+  assert.deepEqual(reloaded.getData(), priorData);
+});
+
+test('global-only and copy commits preserve every untouched shard reference and copy reads its source without writing it', () => {
+  const budget = makeV3Budget();
+  budget.months['2026-02'] = structuredClone(budget.months['2026-01']);
+  budget.months['2026-02'].paychecks[0].id = 'paycheck-february';
+  budget.months['2026-02'].paychecks[0].date = '2026-02-15';
+  budget.months['2026-02'].expenses[0].id = 'expense-february';
+  budget.months['2026-02'].expenses[0].paycheckAmounts = { 'paycheck-february': 1200 };
+  const { store, storage } = loaded({ storage: new MemoryStorage({ [STORAGE_KEY]: JSON.stringify(budget) }), prefix: 'scope' });
+  store.commitShardedPersistenceMigration(store.previewShardedPersistenceMigration());
+  const manifest = () => { const root = StorageEngine.parseRootPointer(storage.getItem(STORAGE_KEY));
+    return StorageEngine.parseManifest(storage.getItem(root.manifestKey)); };
+  const initial = manifest();
+  storage.operations.length = 0;
+  store.renameCategory('category-example-1', 'Home costs');
+  const globalCommit = manifest();
+  assert.notDeepEqual(globalCommit.global, initial.global);
+  assert.deepEqual(globalCommit.months, initial.months);
+  assert.equal(storage.operations.some(op => op.op === 'setItem' && op.key.startsWith(StorageEngine.MONTH_PREFIX)), false);
+  storage.operations.length = 0;
+  store.copyFromMonth('2026-02', '2026-01');
+  const copyCommit = manifest();
+  assert.deepEqual(copyCommit.months['2026-01'], globalCommit.months['2026-01']);
+  assert.notDeepEqual(copyCommit.months['2026-02'], globalCommit.months['2026-02']);
+  assert.deepEqual(storage.operations.filter(op => op.op === 'setItem' && op.key.startsWith(StorageEngine.MONTH_PREFIX))
+    .map(op => op.key), [copyCommit.months['2026-02'].key]);
+  assert.equal(storage.operations.some(op => op.op === 'getItem' && op.key === globalCommit.months['2026-01'].key), false);
+});
+
+test('sharded corruption evidence captures detection time and exact failing month bytes', () => {
+  const clock = makeClock('2026-03-04T05:06:07.890Z');
+  const { store, storage } = loaded({ clock, prefix: 'evidence' });
+  store.commitShardedPersistenceMigration(store.previewShardedPersistenceMigration());
+  const root = StorageEngine.parseRootPointer(storage.getItem(STORAGE_KEY));
+  const manifest = StorageEngine.parseManifest(storage.getItem(root.manifestKey));
+  const failingKey = manifest.months['2026-01'].key;
+  storage.setItem(failingKey, '{"broken":true}');
+  clock.set('2026-04-05T06:07:08.901Z');
+  const damaged = createStore({ storage, now: clock, uuid: () => 'damaged' });
+  assert.equal(damaged.load().state, 'recovery-required');
+  const evidence = JSON.parse(damaged.getCorruptEvidence());
+  assert.deepEqual({ format: evidence.format, formatVersion: evidence.formatVersion, layout: evidence.layout,
+    capturedAt: evidence.capturedAt, failingKey: evidence.failingKey, failingRaw: evidence.failingRaw }, {
+    format: 'zerobudget-corrupt-evidence', formatVersion: 1, layout: 'month-sharded',
+    capturedAt: '2026-04-05T06:07:08.901Z', failingKey, failingRaw: '{"broken":true}'
+  });
+  assert.equal(evidence.manifestKey, root.manifestKey);
+  assert.equal(evidence.manifestRaw, storage.getItem(root.manifestKey));
+});
+
+test('expired and malformed journals are removed on load and cannot retain unreachable generation keys', () => {
+  const { store, storage } = loaded({ prefix: 'journal-gc' });
+  store.commitShardedPersistenceMigration(store.previewShardedPersistenceMigration());
+  const orphanGeneration = '20260101T000000000Z-00000000-0000-4000-8000-000000000001';
+  const orphanKey = StorageEngine.globalKey(orphanGeneration);
+  storage.setItem(orphanKey, '{}');
+  storage.setItem(StorageEngine.JOURNAL_KEY, '{bad');
+  const reloaded = createStore({ storage, now: makeClock(), uuid: () => 'reload' });
+  assert.equal(reloaded.load().state, 'ready');
+  assert.equal(storage.getItem(StorageEngine.JOURNAL_KEY), null);
+  assert.equal(storage.getItem(orphanKey), null);
+});
+
+test('journal, shard, manifest, and root activation failures retain exact legacy root bytes and clean every staged key', () => {
+  const cases = [
+    { key: StorageEngine.JOURNAL_KEY },
+    { prefix: StorageEngine.GLOBAL_PREFIX },
+    { prefix: StorageEngine.MONTH_PREFIX },
+    { prefix: StorageEngine.MANIFEST_PREFIX },
+    { key: STORAGE_KEY }
+  ];
+  for (const [index, fault] of cases.entries()) {
+    const raw = JSON.stringify(makeV3Budget());
+    const storage = new MemoryStorage({ [STORAGE_KEY]: raw });
+    const { store } = loaded({ storage, prefix: `stage-${index}` });
+    const preview = store.previewShardedPersistenceMigration();
+    storage.fail({ op: 'setItem', ...fault, once: true });
+    assert.throws(() => store.commitShardedPersistenceMigration(preview), StoreError);
+    assert.equal(storage.getItem(STORAGE_KEY), raw);
+    assert.equal(storage.getItem(StorageEngine.JOURNAL_KEY), null);
+    assert.equal(Array.from(storage._values.keys()).some(key => key.startsWith(StorageEngine.GLOBAL_PREFIX) ||
+      key.startsWith(StorageEngine.MONTH_PREFIX) || key.startsWith(StorageEngine.MANIFEST_PREFIX)), false);
+  }
+});
+
+test('expired valid journal cleanup removes staged orphans and retains every active reference', () => {
+  const { store, storage } = loaded({ prefix: 'expired' });
+  store.commitShardedPersistenceMigration(store.previewShardedPersistenceMigration());
+  const rootRaw = storage.getItem(STORAGE_KEY), root = StorageEngine.parseRootPointer(rootRaw);
+  const manifest = StorageEngine.parseManifest(storage.getItem(root.manifestKey));
+  const generation = '20260101T000000000Z-00000000-0000-4000-8000-000000000002';
+  const orphan = StorageEngine.globalKey(generation);
+  storage.setItem(orphan, '{}');
+  storage.setItem(StorageEngine.JOURNAL_KEY, JSON.stringify(StorageEngine.buildJournal({ txId: generation,
+    baseMode: 'sharded', baseGeneration: root.generation, nextGeneration: generation,
+    residentSchemaVersion: 3, stagedKeys: [orphan], startedAt: '2026-01-01T00:00:00.000Z', expiresAt: 1 })));
+  const reload = createStore({ storage, now: makeClock(), uuid: () => 'reload' });
+  assert.equal(reload.load().state, 'ready');
+  assert.equal(storage.getItem(StorageEngine.JOURNAL_KEY), null); assert.equal(storage.getItem(orphan), null);
+  assert.notEqual(storage.getItem(root.manifestKey), null); assert.notEqual(storage.getItem(manifest.global.key), null);
+  manifest.monthOrder.forEach(month => assert.notEqual(storage.getItem(manifest.months[month].key), null));
+});
+
+test('a competing valid root immediately before activation aborts stale and preserves the newer root without residue', () => {
+  const newerRaw = JSON.stringify(makeV3Budget({ months: {} }));
+  class RacingStorage extends MemoryStorage {
+    getItem(key) {
+      if (key === STORAGE_KEY && this._values.has(StorageEngine.JOURNAL_KEY) && !this.raced) {
+        this.raced = true; this._values.set(STORAGE_KEY, newerRaw);
+      }
+      return super.getItem(key);
+    }
+  }
+  const original = JSON.stringify(makeV3Budget());
+  const storage = new RacingStorage({ [STORAGE_KEY]: original });
+  const { store } = loaded({ storage, prefix: 'race' }); const before = store.getData();
+  assert.throws(() => store.commitShardedPersistenceMigration(store.previewShardedPersistenceMigration()),
+    error => error instanceof StoreError && error.code === 'STALE_WRITE');
+  assert.equal(storage.getItem(STORAGE_KEY), newerRaw); assert.deepEqual(store.getData(), before);
+  assert.equal(storage.getItem(StorageEngine.JOURNAL_KEY), null);
+  assert.equal(Array.from(storage._values.keys()).some(key => key.startsWith(StorageEngine.MANIFEST_PREFIX) ||
+    key.startsWith(StorageEngine.GLOBAL_PREFIX) || key.startsWith(StorageEngine.MONTH_PREFIX)), false);
+});
+
+test('corrupt sharded recovery via startFresh and snapshot restore permits ordinary edits and reload', () => {
+  for (const action of ['fresh', 'restore']) {
+    const { store, storage } = loaded({ prefix: `recover-${action}` });
+    store.commitShardedPersistenceMigration(store.previewShardedPersistenceMigration());
+    const snapshot = store.listSnapshots()[0];
+    const root = StorageEngine.parseRootPointer(storage.getItem(STORAGE_KEY));
+    const manifest = StorageEngine.parseManifest(storage.getItem(root.manifestKey));
+    storage.setItem(manifest.months['2026-01'].key, '{bad');
+    const damaged = createStore({ storage, now: makeClock(), uuid: (() => { let n = 0; return () => `repair-${action}-${++n}`; })() });
+    assert.equal(damaged.load().state, 'recovery-required');
+    if (action === 'fresh') damaged.startFresh(); else damaged.restoreSnapshot(snapshot.id);
+    damaged.ensureMonth('2026-02');
+    const reload = createStore({ storage, now: makeClock(), uuid: () => 'reload' });
+    assert.equal(reload.load().state, 'ready'); assert.ok(reload.getAllMonthKeys().includes('2026-02'));
+  }
+});
+
+test('sharded import, ready restore, and startFresh each activate a fresh reloadable sharded generation', () => {
+  for (const action of ['import', 'restore', 'fresh']) {
+    const { store, storage } = loaded({ prefix: `replace-${action}` });
+    store.commitShardedPersistenceMigration(store.previewShardedPersistenceMigration());
+    const prior = store.getStatus().activeGeneration; const snapshot = store.listSnapshots()[0];
+    if (action === 'import') {
+      const backup = JSON.parse(store.exportData());
+      backup.data.months['2026-01'].expenses[0].actualAmount = 321;
+      store.importData(JSON.stringify(backup));
+    }
+    else if (action === 'restore') { store.updateExpense('2026-01', 'expense-example-1', { actualAmount: 111 }); store.restoreSnapshot(snapshot.id); }
+    else store.startFresh();
+    assert.notEqual(store.getStatus().activeGeneration, prior); assert.equal(store.getStatus().layout, 'sharded');
+    const reload = createStore({ storage, now: makeClock(), uuid: () => 'reload' });
+    assert.equal(reload.load().state, 'ready'); assert.equal(reload.getStatus().residentSchemaVersion, 3);
+  }
+});
+
+test('sharded purge removes every artifact and a deletion fault restores the complete byte-exact key map', () => {
+  for (const fail of [false, true]) {
+    const { store, storage } = loaded({ prefix: `purge-shard-${fail}` });
+    store.commitShardedPersistenceMigration(store.previewShardedPersistenceMigration());
+    storage.setItem('zeroBudget_global:orphan', 'orphan'); storage.setItem(CORRUPT_KEY, 'evidence');
+    const before = new Map(storage._values); const preview = store.previewLocalDataPurge();
+    if (fail) storage.fail({ op: 'removeItem', prefix: StorageEngine.MONTH_PREFIX, once: true });
+    if (fail) { assert.throws(() => store.commitLocalDataPurge(preview), StoreError); assert.deepEqual(storage._values, before); }
+    else { store.commitLocalDataPurge(preview); assert.equal(storage._values.size, 0); }
+  }
+});
+
+test('lost sharded lock ownership during staging aborts before root activation', () => {
+  class TakeoverStorage extends MemoryStorage {
+    setItem(key, value) {
+      super.setItem(key, value);
+      if (key.startsWith(StorageEngine.MONTH_PREFIX) && !this.taken) {
+        this.taken = true; this._values.set(WRITE_LOCK_KEY, JSON.stringify({ ownerId: 'other', revision: 'legacy',
+          heartbeatAt: Date.parse('2026-01-15T12:00:00.000Z'), expiresAt: Date.parse('2026-01-15T12:01:00.000Z') }));
+      }
+    }
+  }
+  let instant = Date.parse('2026-01-15T12:00:00.000Z');
+  const clock = () => { const value = new Date(instant); instant += 3000; return value; };
+  const base = new TakeoverStorage({ [STORAGE_KEY]: JSON.stringify(makeV3Budget()) });
+  const { store } = loaded({ storage: base, clock, prefix: 'takeover' }); const raw = base.getItem(STORAGE_KEY);
+  assert.throws(() => store.commitShardedPersistenceMigration(store.previewShardedPersistenceMigration()), StoreError);
+  assert.equal(base.getItem(STORAGE_KEY), raw);
 });

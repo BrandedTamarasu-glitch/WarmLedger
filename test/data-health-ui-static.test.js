@@ -9,6 +9,7 @@ const root = path.join(__dirname, '..');
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 const app = fs.readFileSync(path.join(root, 'js', 'app.js'), 'utf8');
 const budget = fs.readFileSync(path.join(root, 'js', 'budget.js'), 'utf8');
+const health = fs.readFileSync(path.join(root, 'js', 'data-health.js'), 'utf8');
 const view = fs.readFileSync(path.join(root, 'js', 'data-health-view.js'), 'utf8');
 const css = fs.readFileSync(path.join(root, 'css', 'styles.css'), 'utf8');
 
@@ -49,6 +50,38 @@ test('exact-money migration is preview-first, Cancel-first, and offers a durable
   assert.match(view, /dialog\.returnValue\s*!==\s*'confirm'/);
   assert.match(css, /\.exact-money-actions \.btn\s*\{[^}]*min-height:\s*44px/s);
   assert.match(css, /@media \(forced-colors:\s*active\)[\s\S]*\.exact-money-migration/s);
+});
+
+test('month-sharded migration stays preview-first, backup-first, and DOM-only', () => {
+  assert.match(view, /Store\.getShardedPersistenceSummary\(\)/);
+  assert.match(view, /ZeroBudgetDataHealth\.buildShardedPersistenceMigration\(shardedSummary\)/);
+  assert.match(view, /monthShardedMigrationSection\(summary, migration\)/);
+  assert.match(view, /summary\.firstMonth/);
+  assert.match(view, /summary\.lastMonth/);
+  assert.match(view, /First month/);
+  assert.match(view, /Last month/);
+  assert.match(view, /Download a JSON backup first\. Warm Ledger also creates a local safety snapshot before changing storage\./);
+  assert.match(view, /review-month-sharded-storage/);
+  assert.match(view, /month-sharded-storage-heading/);
+  assert.match(view, /monthShardedSummaryList\(preview\)/);
+  assert.match(view, /App\.showModal\(\{\s*title:\s*'Move this ledger to month-sharded storage\?'/s);
+  assert.match(view, /initialFocus:\s*\(\)\s*=>\s*document\.getElementById\('modal-cancel'\)/);
+  assert.match(view, /onClose:\s*reason\s*=>\s*\{\s*if \(reason !== 'confirm'\) this\.monthShardedPreview = null;\s*\}/s);
+  assert.match(view, /Store\.previewShardedPersistenceMigration\(\)/);
+  assert.match(view, /Store\.commitShardedPersistenceMigration\(preview\)/);
+  assert.match(view, /Warm Ledger now stores this ledger in month-sharded local storage\. Budget values did not change\./);
+  assert.match(view, /Store\.getStatus\(\)\.state === 'recovery-required'/);
+  assert.match(view, /App\.showRecovery\(Store\.reload\(\)\)/);
+  assert.match(app, /INVALID_MONTH_SHARD_MIGRATION_PREVIEW/);
+  assert.match(app, /STALE_MONTH_SHARD_MIGRATION_PREVIEW/);
+  assert.match(app, /MONTH_SHARD_ALREADY_MIGRATED/);
+  assert.match(app, /MONTH_SHARD_MIGRATION_EMPTY/);
+  assert.match(app, /'pre-sharding': 'Before converting to month-sharded storage'/);
+  assert.match(health, /Month-sharded local storage is ready/);
+  assert.match(health, /Month-sharded local storage is active/);
+  assert.match(health, /Month-sharded local storage is unavailable/);
+  assert.match(html, /dialog id="exact-money-migration-dialog"/);
+  assert.doesNotMatch(html, /month-sharded-storage-dialog/);
 });
 
 test('expense deletion is Cancel-first and offers receipt-based session Undo', () => {

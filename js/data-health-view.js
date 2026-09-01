@@ -4,6 +4,7 @@ const DataHealthView = {
   datePreview: null,
   exactMoneyPreview: null,
   exactMoneyTrigger: null,
+  monthShardedPreview: null,
   purgePreview: null,
 
   init() {
@@ -22,10 +23,12 @@ const DataHealthView = {
 
   render() {
     const container = document.getElementById('data-health-content'); container.replaceChildren();
-    let health; let moneyAudit; let migration;
+    let health; let moneyAudit; let migration; let shardedSummary; let shardedMigration;
     try {
       health = Store.getDataHealth(); moneyAudit = Store.getExactMoneyAudit();
       migration = ZeroBudgetDataHealth.buildExactMoneyMigration(Store.getExactMoneyMigrationSummary());
+      shardedSummary = Store.getShardedPersistenceSummary();
+      shardedMigration = ZeroBudgetDataHealth.buildShardedPersistenceMigration(shardedSummary);
     }
     catch (error) { App.showError(error); return; }
 
@@ -45,6 +48,7 @@ const DataHealthView = {
       overview.append(counts);
     }
     container.append(overview);
+    container.append(this.monthShardedMigrationSection(shardedSummary, shardedMigration));
     container.append(this.exactMoneyMigrationSection(migration));
     container.append(this.moneyPrecisionDisclosure(moneyAudit));
     container.append(this.localStoragePrivacySection());
@@ -74,6 +78,100 @@ const DataHealthView = {
       actions.append(backup, review); section.append(actions);
     }
     return section;
+  },
+
+  monthShardedMigrationSection(summary, migration) {
+    const section = this.node('section', `budget-section data-health-section month-sharded-persistence state-${migration.state}`);
+    section.setAttribute('aria-labelledby', 'month-sharded-storage-heading');
+    const heading = this.node('h3', '', migration.title); heading.id = 'month-sharded-storage-heading'; heading.tabIndex = -1;
+    section.append(heading, this.node('p', '', migration.description));
+    if (migration.canPreview) {
+      section.append(this.node('p', 'muted-text',
+        'Download a JSON backup first. Warm Ledger also creates a local safety snapshot before changing storage.'));
+      section.append(this.monthShardedSummaryList(summary));
+      const actions = this.node('div', 'month-sharded-actions');
+      const backup = this.node('button', 'btn', 'Download JSON backup'); backup.type = 'button';
+      backup.addEventListener('click', () => App.downloadBackup());
+      const preview = this.node('button', 'btn btn-primary', migration.buttonLabel); preview.type = 'button';
+      preview.id = 'review-month-sharded-storage';
+      preview.addEventListener('click', () => this.previewMonthShardedMigration(preview));
+      actions.append(backup, preview); section.append(actions);
+    }
+    return section;
+  },
+
+  monthShardedSummaryList(summary) {
+    const list = this.node('dl', 'month-sharded-summary');
+    [
+      ['Saved months', String(summary.monthCount)],
+      ['First month', summary.firstMonth ? App.formatMonth(summary.firstMonth) : 'None'],
+      ['Last month', summary.lastMonth ? App.formatMonth(summary.lastMonth) : 'None'],
+      ['Current stored bytes', this.formatBytes(summary.currentStoredBytes)],
+      ['Estimated sharded bytes', this.formatBytes(summary.estimatedShardedBytes)],
+      ['Estimated peak additional bytes', this.formatBytes(summary.estimatedPeakAdditionalBytes)]
+    ].forEach(([label, value]) => {
+      list.append(this.node('dt', '', label), this.node('dd', '', value));
+    });
+    return list;
+  },
+
+  formatBytes(value) {
+    return `${Number(value).toLocaleString()} bytes`;
+  },
+
+  previewMonthShardedMigration(trigger) {
+    try {
+      this.monthShardedPreview = Store.previewShardedPersistenceMigration();
+      const preview = this.monthShardedPreview;
+      App.showModal({
+        title: 'Move this ledger to month-sharded storage?',
+        submitLabel: 'Move to month-sharded storage',
+        initialFocus: () => document.getElementById('modal-cancel'),
+        onClose: reason => {
+          if (reason !== 'confirm') this.monthShardedPreview = null;
+        },
+        buildBody: () => {
+          const body = this.node('div', 'month-sharded-migration-preview');
+          body.append(
+            this.node('p', '', 'This changes only the saved local representation. Budget values and behavior stay the same.'),
+            this.node('p', '', 'Warm Ledger creates a local safety snapshot before saving.'),
+            this.node('p', '', 'Older app versions may require restoring a backup made before this migration.'),
+            this.monthShardedSummaryList(preview)
+          );
+          return body;
+        },
+        onSave: () => {
+          if (!this.monthShardedPreview) { App.showErrorCode('INVALID_MONTH_SHARD_MIGRATION_PREVIEW'); return false; }
+          this.commitMonthShardedMigration();
+          return true;
+        }
+      });
+      App.modalTrigger = trigger; ModalView.trigger = trigger;
+    } catch (error) {
+      this.monthShardedPreview = null;
+      App.showError(error);
+      trigger.focus();
+    }
+  },
+
+  commitMonthShardedMigration() {
+    const preview = this.monthShardedPreview;
+    this.monthShardedPreview = null;
+    return App.runMutation(() => Store.commitShardedPersistenceMigration(preview), {
+      onSuccess: () => {
+        App.refreshAllViews(); App.switchView('data-health');
+        App.announceStatus('Warm Ledger now stores this ledger in month-sharded local storage. Budget values did not change.');
+        requestAnimationFrame(() => document.getElementById('month-sharded-storage-heading').focus({ preventScroll: true }));
+      },
+      onFailure: () => {
+        this.render();
+        if (Store.getStatus().state === 'recovery-required') App.showRecovery(Store.reload());
+        requestAnimationFrame(() => {
+          const target = document.getElementById('review-month-sharded-storage') || document.getElementById('month-sharded-storage-heading');
+          target?.focus({ preventScroll: true });
+        });
+      }
+    });
   },
 
   previewExactMoneyMigration(trigger) {

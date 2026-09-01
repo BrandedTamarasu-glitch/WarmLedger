@@ -144,17 +144,22 @@
     const actualResolutionCapabilities = new WeakMap();
     const defaultDateResolutionCapabilities = new WeakMap();
     const exactMoneyMigrationCapabilities = new WeakMap();
+    const monthShardMigrationCapabilities = new WeakMap();
     const purgeCapabilities = new WeakMap();
     const ownerId = `store-${Math.random().toString(36).slice(2)}-${Date.now().toString(36)}`;
     const coordinator = StorageEngine.createCoordinator({ storage, now, ownerId, error: storageError });
 
     let data = null;
     let committedRaw = null;
+    let activeLayout = 'legacy';
+    let activeManifest = null;
+    let residentFragments = null;
     let loadState = 'unloaded';
     let corruptEvidence = null;
     let generation = 0;
     let snapshotSequence = 0;
     let warnings = [];
+    let shardedFailureContext = null;
     let residentSchemaVersion = schemaPolicy === Schema.ACTIVE_SCHEMA_POLICY
       ? Schema.V3_SCHEMA_VERSION : schemaPolicy.SCHEMA_VERSION;
 
@@ -176,6 +181,127 @@
     }
 
     function canonicalizeForWrite(version, runtimeData) { return Schema.buildActiveData(runtimeData, version); }
+
+    function generationUuid() {
+      let source;
+      try { source = String(uuid()); } catch (error) { throw storageError('IDENTIFIER_GENERATION_FAILED', error); }
+      if (/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(source)) return source;
+      const hex = StorageEngine.sha256(source).slice(0, 32).split('');
+      hex[12] = '4'; hex[16] = ['8', '9', 'a', 'b'][parseInt(hex[16], 16) % 4];
+      return `${hex.slice(0, 8).join('')}-${hex.slice(8, 12).join('')}-${hex.slice(12, 16).join('')}-${hex.slice(16, 20).join('')}-${hex.slice(20).join('')}`;
+    }
+
+    function nextGenerationId(instant = instantNow()) {
+      try { return StorageEngine.createGenerationId(instant, generationUuid()); }
+      catch (error) { throw storageError('IDENTIFIER_GENERATION_FAILED', error); }
+    }
+
+    function parseShardedLayout(rootRaw) {
+      const pointer = StorageEngine.parseRootPointer(rootRaw);
+      const manifestRaw = read(pointer.manifestKey);
+      shardedFailureContext = { manifestKey: pointer.manifestKey, manifestRaw,
+        failingKey: pointer.manifestKey, failingRaw: manifestRaw };
+      if (manifestRaw === null) throw new StoreError('SHARDED_MANIFEST_MISSING');
+      const manifest = StorageEngine.parseManifest(manifestRaw, pointer.generation);
+      if (manifest.residentSchemaVersion !== pointer.residentSchemaVersion || manifest.committedAt !== pointer.committedAt) {
+        throw new StoreError('SHARDED_METADATA_MISMATCH');
+      }
+      const globalRaw = read(manifest.global.key);
+      shardedFailureContext = { manifestKey: pointer.manifestKey, manifestRaw,
+        failingKey: manifest.global.key, failingRaw: globalRaw };
+      if (globalRaw === null) throw new StoreError('SHARDED_GLOBAL_MISSING');
+      const globalEnvelope = StorageEngine.validateGlobalReference(manifest.global, globalRaw);
+      const months = Object.create(null);
+      for (const monthKey of manifest.monthOrder) {
+        const ref = manifest.months[monthKey];
+        const raw = read(ref.key);
+        shardedFailureContext = { manifestKey: pointer.manifestKey, manifestRaw,
+          failingKey: ref.key, failingRaw: raw };
+        if (raw === null) throw new StoreError('SHARDED_MONTH_MISSING');
+        const envelope = StorageEngine.validateMonthReference(ref, raw);
+        Schema.validateMonthFragment(globalEnvelope.data, monthKey, envelope.data, pointer.residentSchemaVersion);
+        months[monthKey] = envelope.data;
+      }
+      Schema.validateGlobalFragment(globalEnvelope.data, pointer.residentSchemaVersion);
+      const assembled = Schema.assembleShardedActiveData(globalEnvelope.data, months, pointer.residentSchemaVersion);
+      shardedFailureContext = null;
+      return { pointer, manifest, data: assembled };
+    }
+
+    function shardedCommit(candidate, targetSchemaVersion, { baseMode = activeLayout, forceAll = false, lock = null,
+      preparedParts = null, dirtyMonths = null, dirtyGlobal = null } = {}) {
+      const instant = instantNow();
+      const nextGeneration = nextGenerationId(instant);
+      const parts = preparedParts || Schema.buildShardedFragments(candidate, targetSchemaVersion);
+      const priorParts = activeLayout === 'sharded' && activeManifest ? residentFragments : null;
+      const staged = [];
+      const planned = [];
+      const monthRefs = Object.create(null);
+      let globalRef = activeManifest && activeManifest.global;
+      const dirtyMonthSet = dirtyMonths ? new Set(dirtyMonths) : null;
+      const globalChanged = dirtyGlobal !== null ? dirtyGlobal : forceAll || !priorParts ||
+        targetSchemaVersion !== residentSchemaVersion || !semanticEqual(parts.global, priorParts.global);
+      const plan = (key, raw, code) => { planned.push({ key, raw, code }); staged.push(key); };
+      const stage = ({ key, raw, code }) => { write(key, raw, code); if (read(key) !== raw) throw new StoreError('SHARDED_READBACK_FAILED'); };
+      let journalWritten = false;
+      let heldLock = null;
+      const heartbeat = () => {
+        if (lock && heldLock && lock.shouldRenew(heldLock)) heldLock = lock.renew();
+      };
+      if (lock) heldLock = lock.readLock();
+      try {
+        if (globalChanged) {
+          const raw = JSON.stringify(StorageEngine.buildGlobalShard({ generation: nextGeneration,
+            residentSchemaVersion: targetSchemaVersion, data: parts.global }));
+          plan(StorageEngine.globalKey(nextGeneration), raw, 'SHARDED_GLOBAL_WRITE_FAILED');
+          globalRef = StorageEngine.globalReference(raw);
+          heartbeat();
+        }
+        for (const monthKey of parts.monthOrder) {
+          const changed = dirtyMonthSet ? dirtyMonthSet.has(monthKey) : forceAll || !priorParts ||
+            targetSchemaVersion !== residentSchemaVersion || !Object.hasOwn(priorParts.months, monthKey) ||
+            !semanticEqual(parts.months[monthKey], priorParts.months[monthKey]);
+          if (!changed) monthRefs[monthKey] = activeManifest.months[monthKey];
+          else {
+            const raw = JSON.stringify(StorageEngine.buildMonthShard({ generation: nextGeneration,
+              residentSchemaVersion: targetSchemaVersion, monthKey, data: parts.months[monthKey] }));
+            plan(StorageEngine.monthKey(nextGeneration, monthKey), raw, 'SHARDED_MONTH_WRITE_FAILED');
+            monthRefs[monthKey] = StorageEngine.monthReference(raw);
+          }
+          heartbeat();
+        }
+        const manifest = StorageEngine.buildManifest({ generation: nextGeneration,
+          residentSchemaVersion: targetSchemaVersion, committedAt: instant.toISOString(), global: globalRef,
+          monthOrder: parts.monthOrder, months: monthRefs });
+        const manifestRaw = JSON.stringify(manifest);
+        plan(StorageEngine.manifestKey(nextGeneration), manifestRaw, 'SHARDED_MANIFEST_WRITE_FAILED');
+        const journal = StorageEngine.buildJournal({ txId: nextGeneration, baseMode,
+          baseGeneration: baseMode === 'sharded' && activeManifest ? activeManifest.generation : null,
+          nextGeneration, residentSchemaVersion: targetSchemaVersion, stagedKeys: [...staged],
+          startedAt: instant.toISOString(), expiresAt: instant.getTime() + StorageEngine.SHARDED_LOCK_TTL_MS });
+        write(StorageEngine.JOURNAL_KEY, JSON.stringify(journal), 'SHARDED_JOURNAL_WRITE_FAILED');
+        journalWritten = true;
+        for (const entry of planned) { stage(entry); heartbeat(); }
+        const rootRaw = JSON.stringify(StorageEngine.buildRootPointer({ generation: nextGeneration,
+          residentSchemaVersion: targetSchemaVersion, committedAt: instant.toISOString() }));
+        const verifiedPointer = StorageEngine.parseRootPointer(rootRaw);
+        const verifiedManifest = StorageEngine.parseManifest(read(verifiedPointer.manifestKey), verifiedPointer.generation);
+        if (verifiedManifest.residentSchemaVersion !== verifiedPointer.residentSchemaVersion ||
+            verifiedManifest.committedAt !== verifiedPointer.committedAt) throw new StoreError('SHARDED_METADATA_MISMATCH');
+        heartbeat();
+        if (read(STORAGE_KEY) !== committedRaw) throw new StoreError('STALE_WRITE');
+        write(STORAGE_KEY, rootRaw, 'PRIMARY_WRITE_FAILED');
+        activeLayout = 'sharded'; activeManifest = verifiedManifest; committedRaw = rootRaw;
+        residentFragments = parts;
+        try { remove(StorageEngine.JOURNAL_KEY, 'SHARDED_JOURNAL_CLEANUP_FAILED'); } catch { warn('SHARDED_JOURNAL_CLEANUP_FAILED'); }
+        cleanupShardedGarbage(activeManifest);
+        return candidate;
+      } catch (error) {
+        for (const key of staged.reverse()) { try { remove(key, 'SHARDED_ROLLBACK_FAILED'); } catch { warn('SHARDED_ROLLBACK_FAILED'); } }
+        if (journalWritten) { try { remove(StorageEngine.JOURNAL_KEY, 'SHARDED_ROLLBACK_FAILED'); } catch { warn('SHARDED_ROLLBACK_FAILED'); } }
+        throw error;
+      }
+    }
 
     function warn(code) {
       if (!warnings.includes(code)) warnings.push(code);
@@ -213,6 +339,59 @@
         throw storageError('SNAPSHOT_READ_FAILED', error);
       }
       return keys;
+    }
+
+    function shardedStorageKeys() {
+      const keys = [];
+      try {
+        for (let index = 0; index < storage.length; index += 1) {
+          const key = storage.key(index);
+          if (key === StorageEngine.JOURNAL_KEY || (typeof key === 'string' &&
+              (key.startsWith(StorageEngine.MANIFEST_PREFIX) || key.startsWith(StorageEngine.GLOBAL_PREFIX) ||
+               key.startsWith(StorageEngine.MONTH_PREFIX)))) keys.push(key);
+        }
+      } catch (error) { throw storageError('STORAGE_READ_FAILED', error); }
+      return keys;
+    }
+
+    function cleanupShardedGarbage(manifest) {
+      try {
+        const reachable = new Set([StorageEngine.manifestKey(manifest.generation), manifest.global.key]);
+        manifest.monthOrder.forEach(monthKey => reachable.add(manifest.months[monthKey].key));
+        const journalRaw = read(StorageEngine.JOURNAL_KEY);
+        if (journalRaw !== null) {
+          try {
+            const journal = StorageEngine.parseJournal(journalRaw);
+            reachable.add(StorageEngine.JOURNAL_KEY); reachable.add(journal.manifestKey);
+            journal.stagedKeys.forEach(key => reachable.add(key));
+          } catch {}
+        }
+        for (const key of shardedStorageKeys()) {
+          if (reachable.has(key)) continue;
+          try { remove(key, 'SHARDED_GC_FAILED'); } catch { warn('SHARDED_GC_FAILED'); }
+        }
+      } catch { warn('SHARDED_GC_FAILED'); }
+    }
+
+    function recoverShardedJournal(manifest) {
+      let raw;
+      try { raw = read(StorageEngine.JOURNAL_KEY); } catch { warn('SHARDED_JOURNAL_RECOVERY_FAILED'); return; }
+      if (raw === null) { cleanupShardedGarbage(manifest); return; }
+      let journal = null;
+      try { journal = StorageEngine.parseJournal(raw); } catch {}
+      let expired = journal === null;
+      if (journal) {
+        try { expired = journal.expiresAt <= instantNow().getTime(); }
+        catch { warn('CLOCK_FAILED'); return; }
+      }
+      if (expired) {
+        if (journal) for (const key of [...journal.stagedKeys, journal.manifestKey]) {
+          try { remove(key, 'SHARDED_JOURNAL_RECOVERY_FAILED'); } catch { warn('SHARDED_JOURNAL_RECOVERY_FAILED'); }
+        }
+        try { remove(StorageEngine.JOURNAL_KEY, 'SHARDED_JOURNAL_RECOVERY_FAILED'); }
+        catch { warn('SHARDED_JOURNAL_RECOVERY_FAILED'); }
+      }
+      cleanupShardedGarbage(manifest);
     }
 
     function safeSnapshotId() {
@@ -318,8 +497,12 @@
           ? Schema.hydrateV4ExactMoney(persisted) : policyForVersion(targetSchemaVersion).migrateActive(candidate);
       const nextRaw = JSON.stringify(persisted);
       const priorData = schemaPolicy.clone(data);
-      if (nextRaw === committedRaw) return schemaPolicy.clone(data);
-      coordinator.acquire();
+      const residentCanonicalRaw = JSON.stringify(canonicalizeForWrite(residentSchemaVersion, data));
+      if (targetSchemaVersion === residentSchemaVersion && nextRaw === residentCanonicalRaw) return schemaPolicy.clone(data);
+      const activeCoordinator = activeLayout === 'sharded'
+        ? StorageEngine.createShardedCoordinator({ storage, now, ownerId,
+          revision: activeManifest.generation, error: storageError }) : coordinator;
+      activeCoordinator.acquire();
       try {
         if (read(STORAGE_KEY) !== committedRaw) throw new StoreError('STALE_WRITE');
         if (snapshotReason && committedRaw !== null) {
@@ -327,17 +510,19 @@
         } else if (daily) {
           maybeDailySnapshot(priorData);
         }
-        write(STORAGE_KEY, nextRaw, 'PRIMARY_WRITE_FAILED');
-        data = canonical;
+        if (activeLayout === 'sharded') data = shardedCommit(canonical, targetSchemaVersion, { lock: activeCoordinator });
+        else {
+          write(STORAGE_KEY, nextRaw, 'PRIMARY_WRITE_FAILED');
+          data = canonical; committedRaw = nextRaw;
+        }
         residentSchemaVersion = targetSchemaVersion;
-        committedRaw = nextRaw;
         loadState = 'ready';
         corruptEvidence = null;
         generation += 1;
         if (prune) pruneSnapshots();
         return schemaPolicy.clone(data);
       } finally {
-        if (!coordinator.release()) warn('LOCK_RELEASE_FAILED');
+        if (!activeCoordinator.release()) warn('LOCK_RELEASE_FAILED');
       }
     }
 
@@ -346,6 +531,77 @@
       const candidate = schemaPolicy.clone(data);
       const result = mutator(candidate);
       commitCandidate(candidate, options);
+      return result === undefined ? undefined : schemaPolicy.clone(result);
+    }
+
+    function commitScopedCandidate(candidate, { dirtyMonths = [], dirtyGlobal = false } = {},
+      { snapshotReason = null, requiredSnapshot = false, daily = true, prune = true } = {}) {
+      requireReady();
+      if (activeLayout !== 'sharded') return commitCandidate(candidate,
+        { snapshotReason, requiredSnapshot, daily, prune });
+      const nextGlobal = dirtyGlobal
+        ? Schema.validateGlobalFragment({ schemaVersion: residentSchemaVersion, categories: candidate.categories,
+          settings: candidate.settings, templates: candidate.templates }, residentSchemaVersion)
+        : residentFragments.global;
+      const nextMonths = { ...residentFragments.months };
+      let changed = dirtyGlobal && !semanticEqual(nextGlobal, residentFragments.global);
+      for (const monthKey of dirtyMonths) {
+        if (!Object.hasOwn(candidate.months, monthKey)) {
+          if (Object.hasOwn(nextMonths, monthKey)) { delete nextMonths[monthKey]; changed = true; }
+          continue;
+        }
+        const fragment = Schema.validateMonthFragment(nextGlobal, monthKey, candidate.months[monthKey], residentSchemaVersion);
+        if (!Object.hasOwn(nextMonths, monthKey) || !semanticEqual(fragment, nextMonths[monthKey])) changed = true;
+        nextMonths[monthKey] = fragment;
+      }
+      if (!changed) return data;
+      const parts = Object.freeze({ global: nextGlobal, monthOrder: Object.freeze(Object.keys(nextMonths).sort()),
+        months: Object.freeze(nextMonths) });
+      const activeCoordinator = StorageEngine.createShardedCoordinator({ storage, now, ownerId,
+        revision: activeManifest.generation, error: storageError });
+      activeCoordinator.acquire();
+      try {
+        if (read(STORAGE_KEY) !== committedRaw) throw new StoreError('STALE_WRITE');
+        if (snapshotReason) createSnapshot(data, snapshotReason, { required: requiredSnapshot });
+        else if (daily) maybeDailySnapshot(data);
+        data = shardedCommit(candidate, residentSchemaVersion, { lock: activeCoordinator, preparedParts: parts,
+          dirtyMonths, dirtyGlobal });
+        loadState = 'ready'; corruptEvidence = null; generation += 1;
+        if (prune) pruneSnapshots();
+        return data;
+      } finally { if (!activeCoordinator.release()) warn('LOCK_RELEASE_FAILED'); }
+    }
+
+    function transactMonth(monthKey, mutator, options) {
+      requireReady();
+      if (activeLayout !== 'sharded') return transact(mutator, options);
+      const candidate = { ...data, months: { ...data.months } };
+      if (Object.hasOwn(data.months, monthKey)) candidate.months[monthKey] = schemaPolicy.clone(data.months[monthKey]);
+      const result = mutator(candidate);
+      commitScopedCandidate(candidate, { dirtyMonths: [monthKey] }, options);
+      return result === undefined ? undefined : schemaPolicy.clone(result);
+    }
+
+    function transactMonths(monthKeys, mutator, options) {
+      requireReady();
+      if (activeLayout !== 'sharded') return transact(mutator, options);
+      const unique = [...new Set(monthKeys)];
+      const candidate = { ...data, months: { ...data.months } };
+      unique.forEach(monthKey => {
+        if (Object.hasOwn(data.months, monthKey)) candidate.months[monthKey] = schemaPolicy.clone(data.months[monthKey]);
+      });
+      const result = mutator(candidate);
+      commitScopedCandidate(candidate, { dirtyMonths: unique }, options);
+      return result === undefined ? undefined : schemaPolicy.clone(result);
+    }
+
+    function transactGlobal(mutator, options) {
+      requireReady();
+      if (activeLayout !== 'sharded') return transact(mutator, options);
+      const candidate = { ...data, categories: schemaPolicy.clone(data.categories),
+        settings: schemaPolicy.clone(data.settings), templates: schemaPolicy.clone(data.templates) };
+      const result = mutator(candidate);
+      commitScopedCandidate(candidate, { dirtyGlobal: true }, options);
       return result === undefined ? undefined : schemaPolicy.clone(result);
     }
 
@@ -361,6 +617,8 @@
         if (read(STORAGE_KEY) !== committedRaw) throw new StoreError('STALE_WRITE');
         write(STORAGE_KEY, nextRaw, 'PRIMARY_WRITE_FAILED');
         data = canonical; committedRaw = nextRaw; corruptEvidence = null;
+        activeLayout = 'legacy'; activeManifest = null;
+        residentFragments = Schema.buildShardedFragments(data, targetSchemaVersion);
         residentSchemaVersion = targetSchemaVersion; loadState = 'ready'; generation += 1;
         pruneSnapshots();
         return schemaPolicy.clone(data);
@@ -386,23 +644,44 @@
       }
       if (raw === null) {
         data = defaultData(); committedRaw = null; corruptEvidence = null;
+        activeLayout = 'legacy'; activeManifest = null;
         residentSchemaVersion = schemaPolicy === Schema.ACTIVE_SCHEMA_POLICY
           ? Schema.V3_SCHEMA_VERSION : schemaPolicy.SCHEMA_VERSION;
         loadState = 'empty'; generation += 1;
         return { state: loadState, warnings: [], migrated: false };
       }
       try {
-        residentSchemaVersion = versionFromJson(raw);
-        const parsed = policyForVersion(residentSchemaVersion).parseActive(raw);
+        let parsed;
+        let rootCandidate = null;
+        try { rootCandidate = JSON.parse(raw); } catch {}
+        if (rootCandidate && rootCandidate.format === 'zerobudget-active-layout') {
+          const loaded = parseShardedLayout(raw);
+          residentSchemaVersion = loaded.pointer.residentSchemaVersion;
+          parsed = loaded.data; activeLayout = 'sharded'; activeManifest = loaded.manifest;
+        } else {
+          residentSchemaVersion = versionFromJson(raw);
+          parsed = policyForVersion(residentSchemaVersion).parseActive(raw);
+          activeLayout = 'legacy'; activeManifest = null;
+        }
         data = parsed; committedRaw = raw; corruptEvidence = null;
+        residentFragments = Schema.buildShardedFragments(data, residentSchemaVersion);
         loadState = 'ready'; generation += 1;
-        const sourceSchemaVersion = JSON.parse(raw).schemaVersion;
+        if (activeLayout === 'sharded') recoverShardedJournal(activeManifest);
+        const sourceSchemaVersion = activeLayout === 'legacy' ? JSON.parse(raw).schemaVersion : residentSchemaVersion;
         return { state: loadState, warnings: [],
-          migrated: !Number.isInteger(sourceSchemaVersion) || sourceSchemaVersion < Schema.V3_SCHEMA_VERSION };
+          migrated: !Number.isInteger(sourceSchemaVersion) || sourceSchemaVersion < Schema.V3_SCHEMA_VERSION,
+          layout: activeLayout, activeGeneration: activeManifest ? activeManifest.generation : null };
       } catch {
-        data = null; committedRaw = raw; loadState = 'recovery-required'; generation += 1;
-        if (preserveCorrupt) preserveEvidence(raw);
-        else corruptEvidence = raw;
+        data = null; committedRaw = raw; activeManifest = null; loadState = 'recovery-required'; generation += 1;
+        let capturedAt = null;
+        if (shardedFailureContext) {
+          try { capturedAt = instantNow().toISOString(); } catch { capturedAt = '1970-01-01T00:00:00.000Z'; }
+        }
+        const evidence = shardedFailureContext ? JSON.stringify({ format: 'zerobudget-corrupt-evidence', formatVersion: 1,
+          layout: 'month-sharded', capturedAt, rootRaw: raw, ...shardedFailureContext }) : raw;
+        shardedFailureContext = null;
+        if (preserveCorrupt) preserveEvidence(evidence);
+        else corruptEvidence = evidence;
         return {
           state: loadState, warnings: [...warnings], hasEvidence: true,
           snapshots: listSnapshotMetadata()
@@ -434,10 +713,13 @@
       if (!capability) throw new StoreError('INVALID_PURGE_PREVIEW');
       purgeCapabilities.delete(preview);
       if (capability.generation !== generation) throw new StoreError('STALE_PURGE_PREVIEW');
-      coordinator.acquire();
+      const purgeCoordinator = activeLayout === 'sharded' && activeManifest
+        ? StorageEngine.createShardedCoordinator({ storage, now, ownerId,
+          revision: activeManifest.generation, error: storageError }) : coordinator;
+      purgeCoordinator.acquire();
       try {
         if (read(STORAGE_KEY) !== committedRaw) throw new StoreError('STALE_WRITE');
-        const keys = [STORAGE_KEY, CORRUPT_KEY, ...snapshotKeys()];
+        const keys = [...new Set([STORAGE_KEY, CORRUPT_KEY, ...snapshotKeys(), ...shardedStorageKeys()])];
         const backups = new Map(keys.map(key => [key, read(key)]));
         try {
           for (const key of keys) if (backups.get(key) !== null) remove(key, 'PURGE_FAILED');
@@ -453,13 +735,13 @@
           }
           throw new StoreError('PURGE_FAILED');
         }
-        data = defaultData(); committedRaw = null; corruptEvidence = null;
+        data = defaultData(); committedRaw = null; corruptEvidence = null; activeLayout = 'legacy'; activeManifest = null;
         residentSchemaVersion = schemaPolicy === Schema.ACTIVE_SCHEMA_POLICY
           ? Schema.V3_SCHEMA_VERSION : schemaPolicy.SCHEMA_VERSION;
         loadState = 'empty'; warnings = []; generation += 1;
         return getStatus();
       } finally {
-        if (!coordinator.release()) warn('LOCK_RELEASE_FAILED');
+        if (!purgeCoordinator.release()) warn('LOCK_RELEASE_FAILED');
       }
     }
 
@@ -515,7 +797,7 @@
     }
     function peekMonth(monthKey) { requireReady(); return schemaPolicy.clone(data.months[monthKey] || emptyMonth()); }
     function ensureMonth(monthKey) {
-      return transact(candidate => {
+      return transactMonth(monthKey, candidate => {
         if (!Object.hasOwn(candidate.months, monthKey)) candidate.months[monthKey] = emptyMonth();
         return candidate.months[monthKey];
       });
@@ -612,7 +894,7 @@
     function addCategory(input) {
       const patch = patchOf(input, ['name']);
       if (!Object.hasOwn(patch, 'name')) throw new StoreError('MISSING_FIELD');
-      return transact(candidate => {
+      return transactGlobal(candidate => {
         uniqueName(candidate.categories, patch.name, 'DUPLICATE_CATEGORY_NAME');
         const category = { id: newId(), name: patch.name, archived: false, items: [] };
         candidate.categories.push(category);
@@ -623,7 +905,7 @@
     function renameCategory(categoryId, name) {
       requireReady();
       const nextName = schemaPolicy.clone(name);
-      return transact(candidate => {
+      return transactGlobal(candidate => {
         const category = findOrThrow(candidate.categories, categoryId, 'CATEGORY_NOT_FOUND');
         uniqueName(candidate.categories, nextName, 'DUPLICATE_CATEGORY_NAME', categoryId);
         category.name = nextName;
@@ -634,7 +916,7 @@
     function setCategoryArchived(categoryId, archived) {
       requireReady();
       if (typeof archived !== 'boolean') throw new StoreError('INVALID_ARCHIVE_STATE');
-      return transact(candidate => {
+      return transactGlobal(candidate => {
         const category = findOrThrow(candidate.categories, categoryId, 'CATEGORY_NOT_FOUND');
         if (archived && !category.archived && candidate.categories.filter(item => !item.archived).length === 1) {
           throw new StoreError('LAST_ACTIVE_CATEGORY');
@@ -646,7 +928,7 @@
 
     function reorderCategories(orderedIds) {
       requireReady();
-      return transact(candidate => {
+      return transactGlobal(candidate => {
         candidate.categories = orderedPermutation(orderedIds, candidate.categories);
         return candidate.categories;
       });
@@ -655,7 +937,7 @@
     function addCategoryItem(categoryId, input) {
       const patch = patchOf(input, ['name']);
       if (!Object.hasOwn(patch, 'name')) throw new StoreError('MISSING_FIELD');
-      return transact(candidate => {
+      return transactGlobal(candidate => {
         const category = findOrThrow(candidate.categories, categoryId, 'CATEGORY_NOT_FOUND');
         const item = { id: newId(), name: patch.name, archived: false };
         category.items.push(item);
@@ -666,7 +948,7 @@
     function renameCategoryItem(categoryId, itemId, name) {
       requireReady();
       const nextName = schemaPolicy.clone(name);
-      return transact(candidate => {
+      return transactGlobal(candidate => {
         const category = findOrThrow(candidate.categories, categoryId, 'CATEGORY_NOT_FOUND');
         const item = findOrThrow(category.items, itemId, 'CATEGORY_ITEM_NOT_FOUND');
         item.name = nextName;
@@ -677,7 +959,7 @@
     function setCategoryItemArchived(categoryId, itemId, archived) {
       requireReady();
       if (typeof archived !== 'boolean') throw new StoreError('INVALID_ARCHIVE_STATE');
-      return transact(candidate => {
+      return transactGlobal(candidate => {
         const category = findOrThrow(candidate.categories, categoryId, 'CATEGORY_NOT_FOUND');
         const item = findOrThrow(category.items, itemId, 'CATEGORY_ITEM_NOT_FOUND');
         item.archived = archived;
@@ -687,7 +969,7 @@
 
     function reorderCategoryItems(categoryId, orderedIds) {
       requireReady();
-      return transact(candidate => {
+      return transactGlobal(candidate => {
         const category = findOrThrow(candidate.categories, categoryId, 'CATEGORY_NOT_FOUND');
         category.items = orderedPermutation(orderedIds, category.items);
         return category.items;
@@ -697,7 +979,7 @@
     function addEarner(input) {
       const patch = patchOf(input, ['name']);
       if (!Object.hasOwn(patch, 'name')) throw new StoreError('MISSING_FIELD');
-      return transact(candidate => {
+      return transactGlobal(candidate => {
         uniqueName(candidate.settings.earners, patch.name, 'DUPLICATE_EARNER_NAME');
         const earner = { id: newId(), name: patch.name, archived: false };
         candidate.settings.earners.push(earner);
@@ -708,7 +990,7 @@
     function renameEarner(earnerId, name) {
       requireReady();
       const nextName = schemaPolicy.clone(name);
-      return transact(candidate => {
+      return transactGlobal(candidate => {
         const earner = findOrThrow(candidate.settings.earners, earnerId, 'EARNER_NOT_FOUND');
         uniqueName(candidate.settings.earners, nextName, 'DUPLICATE_EARNER_NAME', earnerId);
         earner.name = nextName;
@@ -719,7 +1001,7 @@
     function setEarnerArchived(earnerId, archived) {
       requireReady();
       if (typeof archived !== 'boolean') throw new StoreError('INVALID_ARCHIVE_STATE');
-      return transact(candidate => {
+      return transactGlobal(candidate => {
         const earner = findOrThrow(candidate.settings.earners, earnerId, 'EARNER_NOT_FOUND');
         if (archived && !earner.archived && candidate.settings.earners.filter(item => !item.archived).length === 1) {
           throw new StoreError('LAST_ACTIVE_EARNER');
@@ -731,7 +1013,7 @@
 
     function reorderEarners(orderedIds) {
       requireReady();
-      return transact(candidate => {
+      return transactGlobal(candidate => {
         candidate.settings.earners = orderedPermutation(orderedIds, candidate.settings.earners);
         return candidate.settings.earners;
       });
@@ -757,7 +1039,7 @@
       const structural = kind === 'income' ? ['earnerId'] : ['categoryId', 'categoryItemId', 'paymentMethod'];
       const patch = patchOf(input, [...TEMPLATE_COMMON, ...structural]);
       if ([...TEMPLATE_COMMON, ...structural].some(key => !Object.hasOwn(patch, key))) throw new StoreError('MISSING_FIELD');
-      return transact(candidate => {
+      return transactGlobal(candidate => {
         if (kind === 'income') activeEarner(candidate, patch.earnerId);
         else {
           const category = activeCategory(candidate, patch.categoryId);
@@ -771,7 +1053,7 @@
     function updateTemplate(kind, id, updates) {
       const structural = kind === 'income' ? ['earnerId'] : ['categoryId', 'categoryItemId', 'paymentMethod'];
       const patch = patchOf(updates, [...TEMPLATE_COMMON, ...structural]);
-      return transact(candidate => {
+      return transactGlobal(candidate => {
         const current = findOrThrow(candidate.templates[kind], id, kind === 'income' ? 'INCOME_TEMPLATE_NOT_FOUND' : 'EXPENSE_TEMPLATE_NOT_FOUND');
         if (kind === 'income' && Object.hasOwn(patch, 'earnerId') && patch.earnerId !== current.earnerId) {
           activeEarner(candidate, patch.earnerId);
@@ -791,14 +1073,14 @@
     }
     function setTemplateArchived(kind, id, archived) {
       if (typeof archived !== 'boolean') throw new StoreError('INVALID_ARCHIVE_STATE');
-      return transact(candidate => {
+      return transactGlobal(candidate => {
         const current = findOrThrow(candidate.templates[kind], id, kind === 'income' ? 'INCOME_TEMPLATE_NOT_FOUND' : 'EXPENSE_TEMPLATE_NOT_FOUND');
         current.archived = archived;
         return current;
       });
     }
     function reorderTemplates(kind, orderedIds) {
-      return transact(candidate => {
+      return transactGlobal(candidate => {
         candidate.templates[kind] = orderedPermutation(orderedIds, candidate.templates[kind]);
         return candidate.templates[kind];
       });
@@ -818,7 +1100,7 @@
       if (!Object.hasOwn(paycheck, 'earnerId') || !amountFieldsPresent || !Object.hasOwn(paycheck, 'date')) {
         throw new StoreError('MISSING_FIELD');
       }
-      return transact(candidate => {
+      return transactMonth(monthKey, candidate => {
         const earner = activeEarner(candidate, paycheck.earnerId);
         const month = requireMonth(candidate, monthKey);
         const created = { id: newId(), earnerId: earner.id, earner: earner.name, plannedAmount: paycheck.plannedAmount,
@@ -829,7 +1111,7 @@
       });
     }
     function mutatePaycheck(monthKey, id, patch) {
-      return transact(candidate => {
+      return transactMonth(monthKey, candidate => {
         const month = candidate.months[monthKey];
         if (!month) throw new StoreError('MONTH_NOT_FOUND');
         const paycheck = findOrThrow(month.paychecks, id, 'PAYCHECK_NOT_FOUND');
@@ -862,7 +1144,7 @@
       return mutatePaycheck(monthKey, id, patchOf(updates, ['earnerId', 'plannedAmount', 'actualAmount', 'date']));
     }
     function deletePaycheck(monthKey, id) {
-      return transact(candidate => {
+      return transactMonth(monthKey, candidate => {
         const month = candidate.months[monthKey];
         if (!month) throw new StoreError('MONTH_NOT_FOUND');
         const index = month.paychecks.findIndex(paycheck => paycheck.id === id);
@@ -874,7 +1156,7 @@
       });
     }
     function reorderPaychecks(monthKey, orderedIds) {
-      return transact(candidate => {
+      return transactMonth(monthKey, candidate => {
         const month = candidate.months[monthKey];
         if (!month) throw new StoreError('MONTH_NOT_FOUND');
         month.paychecks = orderedPermutation(orderedIds, month.paychecks);
@@ -886,7 +1168,7 @@
       if (!Object.hasOwn(expense, 'categoryId') || !Object.hasOwn(expense, 'categoryItemId') ||
           !Object.hasOwn(expense, 'paymentMethod') || !Object.hasOwn(expense, 'date') ||
           !Object.hasOwn(expense, 'plannedAmount') || !Object.hasOwn(expense, 'actualAmount')) throw new StoreError('MISSING_FIELD');
-      return transact(candidate => {
+      return transactMonth(monthKey, candidate => {
         const category = activeCategory(candidate, expense.categoryId);
         const created = { id: newId() };
         applyExpenseStructure(created, category, expense.categoryItemId, expense.name);
@@ -906,7 +1188,7 @@
       if (structural && (!Object.hasOwn(patch, 'categoryId') || !Object.hasOwn(patch, 'categoryItemId'))) {
         throw new StoreError('MISSING_FIELD');
       }
-      return transact(candidate => {
+      return transactMonth(monthKey, candidate => {
         const month = candidate.months[monthKey];
         if (!month) throw new StoreError('MONTH_NOT_FOUND');
         const expense = findOrThrow(month.expenses, id, 'EXPENSE_NOT_FOUND');
@@ -951,7 +1233,7 @@
       return mutateExpense(monthKey, id, patch);
     }
     function updateExpensePaycheckAmount(monthKey, expenseId, paycheckId, amount) {
-      return transact(candidate => {
+      return transactMonth(monthKey, candidate => {
         const month = candidate.months[monthKey];
         if (!month) throw new StoreError('MONTH_NOT_FOUND');
         if (!month.paychecks.some(paycheck => paycheck.id === paycheckId)) throw new StoreError('PAYCHECK_NOT_FOUND');
@@ -961,7 +1243,7 @@
       });
     }
     function deleteExpense(monthKey, id) {
-      const details = transact(candidate => {
+      const details = transactMonth(monthKey, candidate => {
         const month = candidate.months[monthKey];
         if (!month) throw new StoreError('MONTH_NOT_FOUND');
         const index = month.expenses.findIndex(expense => expense.id === id);
@@ -986,7 +1268,7 @@
       if (receipt && typeof receipt === 'object') deleteReceipts.delete(receipt);
       if (!capability) throw new StoreError('INVALID_DELETE_RECEIPT');
       if (capability.generation !== generation) throw new StoreError('STALE_DELETE_RECEIPT');
-      return transact(candidate => {
+      return transactMonth(capability.monthKey, candidate => {
         const month = candidate.months[capability.monthKey];
         if (!month || capability.index < 0 || capability.index > month.expenses.length ||
             month.expenses.some(expense => expense.id === capability.removed.id)) {
@@ -1004,7 +1286,7 @@
       });
     }
     function reorderExpenses(monthKey, orderedIds) {
-      return transact(candidate => {
+      return transactMonth(monthKey, candidate => {
         const month = candidate.months[monthKey];
         if (!month) throw new StoreError('MONTH_NOT_FOUND');
         month.expenses = orderedPermutation(orderedIds, month.expenses);
@@ -1012,7 +1294,7 @@
       });
     }
     function mutateAllocations(monthKey, mutator) {
-      return transact(candidate => {
+      return transactMonth(monthKey, candidate => {
         const month = requireMonth(candidate, monthKey);
         month.allocations = mutator(schemaPolicy.clone(month.allocations));
         return month.allocations;
@@ -1029,7 +1311,7 @@
       });
     }
     function copyFromMonth(targetKey, sourceKey) {
-      return transact(candidate => {
+      return transactMonth(targetKey, candidate => {
         const source = candidate.months[sourceKey];
         if (!source) throw new StoreError('MONTH_NOT_FOUND');
         const priorTarget = candidate.months[targetKey];
@@ -1056,7 +1338,7 @@
       }, { snapshotReason: 'pre-reset', requiredSnapshot: committedRaw !== null, daily: false });
     }
     function clearMonth(monthKey) {
-      return transact(candidate => {
+      return transactMonth(monthKey, candidate => {
         const replacement = emptyMonth();
         if (candidate.months[monthKey]) replacement.suppressedOccurrences = tombstoneGenerated(candidate.months[monthKey]);
         candidate.months[monthKey] = replacement;
@@ -1125,7 +1407,7 @@
       if (JSON.stringify(current) !== capability.fingerprint) throw new StoreError('STALE_RECURRING_PREVIEW');
       if (current.conflicts.length > 0) throw new StoreError('RECURRING_CONFLICT');
       if (current.counts.additions === 0) return { addedIncome: 0, addedExpenses: 0 };
-      const result = transact(candidate => {
+      const result = transactMonth(current.monthKey, candidate => {
         const month = requireMonth(candidate, capability.monthKey);
         for (const item of current.additions.income) {
           const source = findOrThrow(candidate.templates.income, item.templateId, 'INCOME_TEMPLATE_NOT_FOUND');
@@ -1240,7 +1522,7 @@
       const current = templateActivationModel(data, capability.targetMonth, capability.selections);
       if (JSON.stringify(current) !== capability.fingerprint) throw new StoreError('STALE_TEMPLATE_ACTIVATION_PREVIEW');
       if (current.conflicts.length > 0) throw new StoreError('TEMPLATE_ACTIVATION_CONFLICT');
-      return transact(candidate => {
+      return transactGlobal(candidate => {
         for (const selection of capability.selections) selectedTemplate(candidate, selection).enabled = true;
         return { enabledIncome: capability.selections.filter(item => item.kind === 'income').length,
           enabledExpenses: capability.selections.filter(item => item.kind === 'expense').length };
@@ -1538,7 +1820,7 @@
 
     function unsuppressOccurrence(monthKey, sourceTemplateId, occurrenceKey) {
       requireReady();
-      return transact(candidate => {
+      return transactMonth(monthKey, candidate => {
         const month = candidate.months[monthKey];
         if (!month) throw new StoreError('MONTH_NOT_FOUND');
         const index = month.suppressedOccurrences.findIndex(entry =>
@@ -2127,6 +2409,13 @@
           candidate = Schema.hydrateV5ExactMoney(Schema.migrateV4ToV5(persistedV4));
           migrating = true;
         } catch { throw new StoreError('CLEARED_MIGRATION_VALIDATION_FAILED'); }
+      } else if (activeLayout === 'sharded') {
+        return transactMonth(request.monthKey, scoped => {
+          const scopedRecords = request.kind === 'income' ? scoped.months[request.monthKey].paychecks : scoped.months[request.monthKey].expenses;
+          const scopedRecord = findOrThrow(scopedRecords, request.recordId, notFoundCode);
+          scopedRecord.cleared = request.cleared;
+          return clearedChecklistItem(request.kind, scopedRecord);
+        });
       } else candidate = schemaPolicy.clone(data);
       const month = candidate.months[request.monthKey];
       const records = request.kind === 'income' ? month.paychecks : month.expenses;
@@ -2162,6 +2451,88 @@
       return freezeDetached({ state: audit.subCentValueCount === 0 ? 'eligible' : 'blocked', subCentValueCount: audit.subCentValueCount,
         affectedMonthCount: audit.affectedMonthCount, affectedTemplateCount: audit.affectedTemplateCount });
     }
+
+    function shardedEstimate() {
+      const sampleGeneration = '20260901T000000000Z-00000000-0000-4000-8000-000000000000';
+      const committedAt = '2026-09-01T00:00:00.000Z';
+      const parts = Schema.buildShardedFragments(data, residentSchemaVersion);
+      let estimated = 0;
+      const globalRaw = JSON.stringify(StorageEngine.buildGlobalShard({ generation: sampleGeneration,
+        residentSchemaVersion, data: parts.global }));
+      estimated += StorageEngine.utf8Length(globalRaw);
+      const months = Object.create(null);
+      for (const monthKey of parts.monthOrder) {
+        const raw = JSON.stringify(StorageEngine.buildMonthShard({ generation: sampleGeneration,
+          residentSchemaVersion, monthKey, data: parts.months[monthKey] }));
+        estimated += StorageEngine.utf8Length(raw); months[monthKey] = StorageEngine.monthReference(raw);
+      }
+      const manifestRaw = JSON.stringify(StorageEngine.buildManifest({ generation: sampleGeneration,
+        residentSchemaVersion, committedAt, global: StorageEngine.globalReference(globalRaw),
+        monthOrder: parts.monthOrder, months }));
+      const rootRaw = JSON.stringify(StorageEngine.buildRootPointer({ generation: sampleGeneration,
+        residentSchemaVersion, committedAt }));
+      estimated += StorageEngine.utf8Length(manifestRaw) + StorageEngine.utf8Length(rootRaw);
+      return { parts, estimated };
+    }
+
+    function getShardedPersistenceSummary() {
+      if (loadState === 'unloaded') load();
+      const state = loadState === 'empty' ? 'empty' : activeLayout === 'sharded' ? 'already-sharded' : 'available';
+      const monthOrder = data ? Object.keys(data.months).sort() : [];
+      let currentStoredBytes = committedRaw === null ? 0 : StorageEngine.utf8Length(committedRaw);
+      if (activeLayout === 'sharded' && activeManifest) {
+        currentStoredBytes += StorageEngine.utf8Length(read(activeManifest.global.key) || '');
+        currentStoredBytes += StorageEngine.utf8Length(read(StorageEngine.manifestKey(activeManifest.generation)) || '');
+        activeManifest.monthOrder.forEach(monthKey => { currentStoredBytes += StorageEngine.utf8Length(read(activeManifest.months[monthKey].key) || ''); });
+      }
+      const estimatedShardedBytes = state === 'empty' ? 0 : shardedEstimate().estimated;
+      return freezeDetached({ state, layout: activeLayout, residentSchemaVersion, monthCount: monthOrder.length,
+        firstMonth: monthOrder[0] || null, lastMonth: monthOrder.at(-1) || null,
+        currentStoredBytes, estimatedShardedBytes,
+        estimatedPeakAdditionalBytes: state === 'available' ? estimatedShardedBytes : 0 });
+    }
+
+    function previewShardedPersistenceMigration() {
+      requireReady();
+      if (activeLayout === 'sharded') throw new StoreError('MONTH_SHARD_ALREADY_MIGRATED');
+      if (committedRaw === null) throw new StoreError('MONTH_SHARD_MIGRATION_EMPTY');
+      const summary = getShardedPersistenceSummary();
+      const parts = Schema.buildShardedFragments(data, residentSchemaVersion);
+      const preview = freezeDetached({ generation, residentSchemaVersion, monthCount: summary.monthCount,
+        firstMonth: summary.firstMonth, lastMonth: summary.lastMonth,
+        currentStoredBytes: summary.currentStoredBytes, estimatedShardedBytes: summary.estimatedShardedBytes,
+        estimatedPeakAdditionalBytes: summary.estimatedPeakAdditionalBytes, layout: 'month-sharded' });
+      monthShardMigrationCapabilities.set(preview, { generation, committedRaw });
+      return preview;
+    }
+
+    function commitShardedPersistenceMigration(preview) {
+      requireReady();
+      const capability = preview && typeof preview === 'object' ? monthShardMigrationCapabilities.get(preview) : null;
+      if (preview && typeof preview === 'object') monthShardMigrationCapabilities.delete(preview);
+      if (!capability) throw new StoreError('INVALID_MONTH_SHARD_MIGRATION_PREVIEW');
+      if (capability.generation !== generation || capability.committedRaw !== committedRaw || activeLayout !== 'legacy') {
+        throw new StoreError('STALE_MONTH_SHARD_MIGRATION_PREVIEW');
+      }
+      const migrationCoordinator = StorageEngine.createShardedCoordinator({ storage, now, ownerId,
+        revision: 'legacy', error: storageError });
+      migrationCoordinator.acquire();
+      try {
+        if (read(STORAGE_KEY) !== committedRaw) throw new StoreError('STALE_WRITE');
+        createSnapshot(schemaPolicy.clone(data), 'pre-sharding', { required: true });
+        const canonical = shardedCommit(data, residentSchemaVersion,
+          { baseMode: 'legacy', forceAll: true, lock: migrationCoordinator });
+        data = canonical; corruptEvidence = null; loadState = 'ready'; generation += 1;
+        pruneSnapshots();
+        return freezeDetached({ state: loadState, generation, residentSchemaVersion,
+          layout: activeLayout, activeGeneration: activeManifest.generation });
+      } finally {
+        if (!migrationCoordinator.release()) warn('LOCK_RELEASE_FAILED');
+      }
+    }
+
+    const previewMonthShardMigration = previewShardedPersistenceMigration;
+    const commitMonthShardMigration = commitShardedPersistenceMigration;
 
     function previewExactMoneyMigration() {
       const summary = getExactMoneyMigrationSummary();
@@ -2242,7 +2613,7 @@
       if (preview && typeof preview === 'object') actualResolutionCapabilities.delete(preview);
       if (!capability) throw new StoreError('INVALID_ACTUAL_RESOLUTION_PREVIEW');
       if (capability.generation !== generation) throw new StoreError('STALE_ACTUAL_RESOLUTION_PREVIEW');
-      return transact(candidate => {
+      return transactMonths(capability.selections.map(item => item.monthKey), candidate => {
         for (const item of capability.selections) {
           const month = candidate.months[item.monthKey];
           const records = month && (item.kind === 'income' ? month.paychecks : month.expenses);
@@ -2272,7 +2643,7 @@
       if (preview && typeof preview === 'object') defaultDateResolutionCapabilities.delete(preview);
       if (!capability) throw new StoreError('INVALID_DATE_RESOLUTION_PREVIEW');
       if (capability.generation !== generation) throw new StoreError('STALE_DATE_RESOLUTION_PREVIEW');
-      return transact(candidate => {
+      return transactMonths(capability.resolutions.map(item => item.monthKey), candidate => {
         for (const item of capability.resolutions) {
           const month = candidate.months[item.monthKey];
           const records = month && (item.kind === 'income' ? month.paychecks : month.expenses);
@@ -2393,7 +2764,9 @@
     }
     function getCorruptEvidence() { return corruptEvidence; }
     function getStatus() {
-      return { state: loadState, generation, residentSchemaVersion, hasEvidence: corruptEvidence !== null, warnings: [...warnings] };
+      return { state: loadState, generation, residentSchemaVersion, layout: activeLayout,
+        activeGeneration: activeManifest ? activeManifest.generation : null,
+        hasEvidence: corruptEvidence !== null, warnings: [...warnings] };
     }
 
     return Object.freeze({
@@ -2419,6 +2792,8 @@
       findSavedRecords, setRecordCleared,
       fundingDirection,
       getDataHealth, getExactMoneyAudit, getExactMoneyMigrationSummary, previewExactMoneyMigration, commitExactMoneyMigration,
+      getShardedPersistenceSummary, previewShardedPersistenceMigration, commitShardedPersistenceMigration,
+      previewMonthShardMigration, commitMonthShardMigration,
       getTemplateReadiness, previewActualResolutions, applyActualResolutions, previewDefaultDateResolutions, applyDefaultDateResolutions, compareAdditiveBackup,
       calcMonthSummary, calcPaycheckRemaining, calcCategoryTotals, calcPaymentMethodTotals, prepareDashboardRange,
       compareSavedMonths, explainSavedMonthComparisonRow,

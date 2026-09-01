@@ -230,7 +230,7 @@ test('rejects malformed and future backup envelopes', () => {
 });
 
 test('builds and parses validated snapshot envelopes for every supported reason', () => {
-  for (const reason of ['daily', 'pre-import', 'pre-reset']) {
+  for (const reason of ['daily', 'pre-import', 'pre-sharding', 'pre-reset']) {
     const envelope = Schema.buildSnapshot(makeBudget(), {
       createdAt: '2026-01-15T12:00:00.000Z',
       localDate: '2026-01-15',
@@ -601,12 +601,14 @@ test('classic-script and CommonJS expose the exact same public API and behavior'
     'ACTIVE_SCHEMA_POLICY', 'BACKUP_FORMAT', 'BACKUP_FORMAT_VERSION', 'DataError', 'SCHEMA_VERSION', 'SNAPSHOT_FORMAT',
     'SNAPSHOT_FORMAT_VERSION', 'V2_SCHEMA_VERSION', 'V3_SCHEMA_POLICY', 'V3_SCHEMA_VERSION', 'V4_SCHEMA_POLICY', 'V4_SCHEMA_VERSION',
     'V5_SCHEMA_POLICY', 'V5_SCHEMA_VERSION',
-    'buildActiveData', 'buildBackup', 'buildSnapshot', 'buildV4Backup', 'buildV4Snapshot', 'buildV5Backup', 'buildV5Snapshot',
+    'assembleShardedActiveData', 'buildActiveData', 'buildBackup', 'buildShardedFragments', 'buildSnapshot',
+    'buildV4Backup', 'buildV4Snapshot', 'buildV5Backup', 'buildV5Snapshot',
     'centsToDecimalMoney', 'clone', 'decimalMoneyToCents', 'dehydrateV4ExactMoney', 'dehydrateV5ExactMoney',
     'hydrateV4ExactMoney', 'hydrateV5ExactMoney', 'migrateActive', 'migrateToV2', 'migrateToV3',
     'migrateV3ToV4ExactMoney', 'migrateV4ToV5', 'parseActive', 'parseActiveData', 'parseBackup', 'parseSnapshot',
     'parseV4Active', 'parseV4Backup', 'parseV4Snapshot', 'parseV5Active', 'parseV5Backup', 'parseV5Snapshot',
-    'validateActive', 'validateV2', 'validateV3', 'validateV4', 'validateV5'
+    'validateActive', 'validateGlobalFragment', 'validateMonthFragment', 'validateShardedFragments',
+    'validateV2', 'validateV3', 'validateV4', 'validateV5'
   ].sort();
   assert.deepEqual(Object.keys(Schema).sort(), expectedKeys);
   assert.deepEqual(Array.from(Object.keys(browserApi).sort()), expectedKeys);
@@ -894,7 +896,7 @@ test('v3 policy builds and parses format-v1 backups and snapshots containing v0 
       exportedAt: '2027-03-01T00:00:00.000Z', data: source
     };
     assert.equal(Schema.V3_SCHEMA_POLICY.parseBackup(JSON.stringify(legacyBackup)).data.schemaVersion, 3);
-    for (const reason of ['daily', 'pre-import', 'pre-reset']) {
+    for (const reason of ['daily', 'pre-import', 'pre-sharding', 'pre-reset']) {
       const built = Schema.V3_SCHEMA_POLICY.buildSnapshot(source, {
         createdAt: '2027-03-01T00:00:00.000Z', localDate: '2027-03-01', reason
       });
@@ -966,7 +968,7 @@ test('format-v1 backup and snapshot parsers migrate embedded v0 through v3 data'
       data: embedded
     };
     assert.equal(Schema.parseBackup(JSON.stringify(backup)).data.schemaVersion, 3);
-    for (const reason of ['daily', 'pre-import', 'pre-reset']) {
+    for (const reason of ['daily', 'pre-import', 'pre-sharding', 'pre-reset']) {
       const snapshot = {
         format: Schema.SNAPSHOT_FORMAT,
         formatVersion: 1,

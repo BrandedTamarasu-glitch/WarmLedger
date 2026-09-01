@@ -24,7 +24,7 @@
   const ALLOCATION_KEYS = ['savings', 'credit_card_debt', 'investments'];
   const V3_PAYCHECK_KEYS = ['id', 'earnerId', 'earner', 'plannedAmount', 'actualAmount', 'date', 'sourceTemplateId', 'occurrenceKey'];
   const V3_EXPENSE_KEYS = ['id', 'categoryId', 'category', 'categoryItemId', 'name', 'date', 'paycheckAmounts', 'plannedAmount', 'actualAmount', 'paymentMethod', 'sourceTemplateId', 'occurrenceKey'];
-  const SNAPSHOT_REASONS = new Set(['daily', 'pre-import', 'pre-reset']);
+  const SNAPSHOT_REASONS = new Set(['daily', 'pre-import', 'pre-sharding', 'pre-reset']);
   const DEFAULT_CATEGORIES = Object.freeze([
     'Housing', 'Transportation', 'Insurance', 'Food', 'Pets', 'Personal Care',
     'Miscellaneous', 'Debt', 'Taxes', 'Subscriptions', 'Other'
@@ -1132,6 +1132,60 @@
     fail('UNSUPPORTED_SCHEMA_VERSION', '$.schemaVersion');
   }
 
+  // Sharded persistence keeps the resident schema unchanged and merely splits
+  // the canonical persisted record at its existing `months` boundary.
+  function buildShardedFragments(data, residentSchemaVersion) {
+    const persisted = buildActiveData(data, residentSchemaVersion);
+    const monthOrder = Object.keys(persisted.months).sort();
+    const global = clone({
+      schemaVersion: persisted.schemaVersion,
+      categories: persisted.categories,
+      settings: persisted.settings,
+      templates: persisted.templates
+    });
+    const months = Object.create(null);
+    monthOrder.forEach(monthKey => { months[monthKey] = clone(persisted.months[monthKey]); });
+    return Object.freeze({ global: Object.freeze(global), monthOrder: Object.freeze(monthOrder), months: Object.freeze(months) });
+  }
+
+  function validateShardedFragments(globalFragment, monthFragments, residentSchemaVersion) {
+    clone(globalFragment);
+    expectExactKeys(globalFragment, ['schemaVersion', 'categories', 'settings', 'templates'], '$.global');
+    if (globalFragment.schemaVersion !== residentSchemaVersion || ![V3_SCHEMA_VERSION, V4_SCHEMA_VERSION, V5_SCHEMA_VERSION].includes(residentSchemaVersion)) {
+      fail('UNSUPPORTED_SCHEMA_VERSION', '$.global.schemaVersion');
+    }
+    expectObject(monthFragments, '$.months');
+    const monthKeys = Object.keys(monthFragments);
+    if (monthKeys.length > 600) fail('TOO_MANY_ITEMS', '$.months');
+    monthKeys.forEach(monthKey => {
+      if (BLOCKED_KEYS.has(monthKey)) fail('UNSAFE_KEY', childPath('$.months', monthKey));
+      expectMonth(monthKey, childPath('$.months', monthKey));
+    });
+    const persisted = clone({ ...globalFragment, months: monthFragments });
+    // buildActiveData is the single resident-schema validator/canonicalizer.
+    const canonical = buildActiveData(persisted, residentSchemaVersion);
+    const canonicalKeys = Object.keys(canonical.months).sort();
+    if (canonicalKeys.some((key, index) => key !== monthKeys.sort()[index])) fail('MONTH_REFERENCE_MISMATCH', '$.months');
+    return buildShardedFragments(canonical, residentSchemaVersion);
+  }
+
+  function validateGlobalFragment(globalFragment, residentSchemaVersion) {
+    return validateShardedFragments(globalFragment, {}, residentSchemaVersion).global;
+  }
+
+  function validateMonthFragment(globalFragment, monthKey, monthFragment, residentSchemaVersion) {
+    expectMonth(monthKey, '$.monthKey');
+    const months = Object.create(null);
+    months[monthKey] = monthFragment;
+    return validateShardedFragments(globalFragment, months, residentSchemaVersion).months[monthKey];
+  }
+
+  function assembleShardedActiveData(globalFragment, monthFragments, residentSchemaVersion) {
+    const validated = validateShardedFragments(globalFragment, monthFragments, residentSchemaVersion);
+    const persisted = { ...validated.global, months: validated.months };
+    return parseActiveData(JSON.stringify(persisted));
+  }
+
   const ACTIVE_SCHEMA_POLICY = Object.freeze({
     SCHEMA_VERSION,
     clone,
@@ -1215,6 +1269,11 @@
     validateV5,
     parseActiveData,
     buildActiveData,
+    buildShardedFragments,
+    validateShardedFragments,
+    validateGlobalFragment,
+    validateMonthFragment,
+    assembleShardedActiveData,
     parseV4Active,
     buildV4Backup,
     parseV4Backup,

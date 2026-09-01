@@ -31,16 +31,16 @@ const App = {
     document.getElementById('expense-delete-dialog').addEventListener('close', () => this.onExpenseDeleteClose());
     document.getElementById('expense-undo').addEventListener('click', () => this.undoExpenseDelete());
     document.getElementById('expense-undo-dismiss').addEventListener('click', () => this.clearExpenseUndo(true));
-    document.getElementById('modal-close').addEventListener('click', () => this.hideModal());
-    document.getElementById('modal-cancel').addEventListener('click', () => this.hideModal());
+    document.getElementById('modal-close').addEventListener('click', () => this.hideModal('cancel'));
+    document.getElementById('modal-cancel').addEventListener('click', () => this.hideModal('cancel'));
     document.getElementById('modal-overlay').addEventListener('click', event => {
-      if (event.target === event.currentTarget) this.hideModal();
+      if (event.target === event.currentTarget) this.hideModal('backdrop');
     });
     window.addEventListener('storage', event => this.onExternalStorageChange(event));
     document.addEventListener('keydown', event => {
       const overlay = document.getElementById('modal-overlay');
       if (overlay.hidden) return;
-      if (event.key === 'Escape') { event.preventDefault(); this.hideModal(); }
+      if (event.key === 'Escape') { event.preventDefault(); this.hideModal('escape'); }
       else if (event.key === 'Tab') this.trapModalFocus(event);
     });
   },
@@ -370,8 +370,8 @@ const App = {
 
   showModal(options) { ModalView.open(options); this.modalTrigger = ModalView.trigger; },
 
-  hideModal() {
-    ModalView.trigger = this.modalTrigger || ModalView.trigger; ModalView.close(); this.modalTrigger = null;
+  hideModal(reason = 'cancel') {
+    ModalView.trigger = this.modalTrigger || ModalView.trigger; ModalView.close(reason); this.modalTrigger = null;
   },
 
   trapModalFocus(event) {
@@ -480,6 +480,16 @@ const App = {
       EXACT_MONEY_MIGRATION_BLOCKED: 'This ledger is not eligible for exact-money storage. Your saved data was not changed.',
       EXACT_MONEY_ALREADY_MIGRATED: 'Exact-money storage is already active for this ledger.',
       EXACT_MONEY_MIGRATION_VALIDATION_FAILED: 'The exact-money migration could not be verified. Your saved data was not changed.',
+      INVALID_MONTH_SHARD_MIGRATION_PREVIEW: 'That month-sharded preview is no longer available. Review the migration again.',
+      STALE_MONTH_SHARD_MIGRATION_PREVIEW: 'Your ledger changed while the month-sharded preview was open. Review the migration again. Nothing was overwritten.',
+      MONTH_SHARD_ALREADY_MIGRATED: 'Month-sharded local storage is already active for this ledger.',
+      MONTH_SHARD_MIGRATION_EMPTY: 'No saved local data is present yet. Month-sharded local storage becomes relevant after this ledger contains saved months.',
+      SHARDED_GLOBAL_WRITE_FAILED: 'Warm Ledger could not save the month-sharded migration in this browser. Check available storage and try again. Your saved data was not changed.',
+      SHARDED_MONTH_WRITE_FAILED: 'Warm Ledger could not save the month-sharded migration in this browser. Check available storage and try again. Your saved data was not changed.',
+      SHARDED_MANIFEST_WRITE_FAILED: 'Warm Ledger could not save the month-sharded migration in this browser. Check available storage and try again. Your saved data was not changed.',
+      SHARDED_JOURNAL_WRITE_FAILED: 'Warm Ledger could not save the month-sharded migration in this browser. Check available storage and try again. Your saved data was not changed.',
+      SHARDED_READBACK_FAILED: 'Warm Ledger could not save the month-sharded migration in this browser. Check available storage and try again. Your saved data was not changed.',
+      SHARDED_METADATA_MISMATCH: 'Warm Ledger could not verify the month-sharded migration. Your saved data was not changed.',
       PRIMARY_WRITE_FAILED: 'Changes could not be saved in this browser. Your last saved budget is still available.',
       FILE_TOO_LARGE: 'This backup is too large to open. Choose a Warm Ledger JSON backup smaller than 5 MB.',
       FILE_READ_FAILED: 'This file could not be read. Your current budget was not changed.',
@@ -548,7 +558,12 @@ const App = {
     return new Date(year, month - 1, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
   },
   snapshotReason(reason) {
-    return ({ daily: 'Daily safety snapshot', 'pre-import': 'Before restoring a backup', 'pre-reset': 'Before clearing data' })[reason] || 'Safety snapshot';
+    return ({
+      daily: 'Daily safety snapshot',
+      'pre-import': 'Before restoring a backup',
+      'pre-sharding': 'Before converting to month-sharded storage',
+      'pre-reset': 'Before clearing data'
+    })[reason] || 'Safety snapshot';
   }
 };
 document.addEventListener('DOMContentLoaded', () => App.init());
