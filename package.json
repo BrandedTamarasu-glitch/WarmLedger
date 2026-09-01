@@ -3,6 +3,7 @@
   "private": true,
   "scripts": {
     "test": "node --test",
-    "test:browser": "node scripts/browser-evidence.js"
+    "test:browser": "node scripts/browser-evidence.js",
+    "benchmark:ledger": "node scripts/large-ledger-benchmark.js"
   }
 }

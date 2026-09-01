@@ -30,7 +30,8 @@ test('visible application identity is Warm Ledger', () => {
   assert.equal(packageJson.name, 'warm-ledger');
   assert.deepEqual(packageJson.scripts, {
     test: 'node --test',
-    'test:browser': 'node scripts/browser-evidence.js'
+    'test:browser': 'node scripts/browser-evidence.js',
+    'benchmark:ledger': 'node scripts/large-ledger-benchmark.js'
   });
   assert.equal(packageJson.private, true);
 });

@@ -178,6 +178,19 @@ Status: published on 2026-09-01.
 - Keep the browser-evidence suite boolean-only and disposable, with separate coverage for multi-tab stale/busy fail-closed behavior, reload recovery, purge cancel/confirm/focus and exact key removal, CSP-safe node modals, and prepared-dashboard passive byte invariance.
 - Keep vendored Chart.js provenance pinned to the bundled artifact and manual update procedure.
 
+### Large-ledger performance profiling
+
+Status: tooling and representative baseline published on 2026-09-01.
+
+- Generate only deterministic, generic synthetic ledgers at bounded, configurable month and expense counts.
+- Measure startup/load, an ordinary edit commit, prepared Dashboard range generation, saved-record search, saved-month comparison, and Explain change with duration distributions and available serialized/write-byte counts.
+- Keep machine-readable JSON free of record labels, identifiers, machine details, and ledger contents; keep local result files out of Git.
+- Treat timings as measurements rather than test gates, with no flaky wall-clock thresholds in the normal suite.
+- Use same-machine repeated baseline and candidate runs to decide the next optimization. Storage sharding is justified only when representative evidence ties user-visible edit latency to full-ledger serialization/write size; scanner or projection costs should receive narrower fixes instead.
+- Require a separately reviewed migration contract before changing the compatible monolithic active-storage format.
+- Published baseline: the 60-month × 200-expense fixture serialized to about 3.44 MB; median startup was about 123 ms, read-side operations remained below 5 ms, and the first-daily edit took about 855 ms while writing about 6.88 MB across active data and its safety snapshot.
+- Result: the evidence isolates monolithic commit amplification rather than Dashboard or saved-record reads, so Forgeflow authorized implementation of an explicit, preview-first month-sharded storage migration with unchanged portable backup and snapshot envelopes.
+
 ## Global release gates
 
 - No financial data, labels, amounts, or raw backups enter tests, logs, screenshots, or Git.
