@@ -632,6 +632,17 @@ button:disabled, input:disabled, select:disabled, textarea:disabled { cursor: no
 
 .restore-dialog::backdrop { background: rgba(10, 8, 6, .76); }
 .restore-dialog h2, .restore-dialog p { margin-bottom: 16px; }
+.help-dialog { width: min(94vw, 760px); max-height: calc(100dvh - 24px); overflow-y: auto; }
+.help-dialog section { min-width: 0; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--color-divider); }
+.help-dialog h3 { margin-bottom: 10px; font-size: 17px; overflow-wrap: anywhere; }
+.help-steps { display: grid; gap: 8px; min-width: 0; padding-left: 22px; line-height: 1.5; }
+.help-steps li, .help-terms dt, .help-terms dd { min-width: 0; overflow-wrap: anywhere; }
+.help-view-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.help-view-actions .btn { min-height: 44px; white-space: normal; }
+.help-terms { display: grid; gap: 10px; min-width: 0; }
+.help-terms > div { min-width: 0; padding: 10px 12px; border: 1px solid var(--color-divider); border-radius: var(--radius-control); background: var(--color-surface); }
+.help-terms dt { font-weight: 750; }
+.help-terms dd { margin-top: 3px; color: var(--color-text-muted); line-height: 1.5; }
 .restore-preview { display: grid; grid-template-columns: minmax(110px, auto) 1fr; gap: 8px 16px; margin: 20px 0; }
 .restore-preview dt { color: var(--text-muted); }
 .restore-preview dd { font-weight: 500; }
@@ -1577,6 +1588,8 @@ label:has(> #field-template-enabled) { display: flex; align-items: center; min-h
   .recovery-actions { flex-direction: column; }
   .recovery-actions .btn { min-height: 44px; }
   .dialog-actions .btn { min-height: 44px; }
+  .help-view-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .help-view-actions .btn { width: 100%; }
   .exact-money-actions { align-items: stretch; flex-direction: column; }
   .exact-money-actions .btn { width: 100%; }
   .modal-footer .btn { min-height: 44px; }
@@ -1720,6 +1733,8 @@ label:has(> #field-template-enabled) { display: flex; align-items: center; min-h
   .dash-card { padding: 16px 14px; }
   .recovery-panel { margin: 12px; padding: 16px 14px; }
   .restore-dialog { width: calc(100vw - 16px); max-height: calc(100dvh - 16px); padding: 16px 14px; }
+  .help-dialog { width: calc(100vw - 16px); max-height: calc(100dvh - 16px); }
+  .help-view-actions { grid-template-columns: minmax(0, 1fr); }
   .dialog-actions, .modal-footer { align-items: stretch; flex-direction: column; }
   .dialog-actions .btn, .modal-footer .btn { width: 100%; min-height: 44px; }
   .modal { max-height: calc(100dvh - 16px); }
@@ -1843,6 +1858,9 @@ label:has(> #field-template-enabled) { display: flex; align-items: center; min-h
   .transfer-card-header, .transfer-action, .transfer-detail-table td, .transfer-summary-table td,
   .dashboard-controls, .dash-card, .table-scroll, .recovery-snapshots li, .storage-note,
   .dialog-actions, .modal-body { color: CanvasText; background: Canvas; border-color: CanvasText; }
+  .help-dialog section, .help-terms > div { color: CanvasText; background: Canvas; border-color: CanvasText; }
+  .help-terms dd { color: CanvasText; }
+  .help-view-actions .btn { color: ButtonText; background: ButtonFace; border-color: ButtonText; }
   .transfer-action-label, .transfer-action-amount, .transfer-earner, .transfer-date,
   .transfer-amount, .transfer-empty, .dash-card h3, .date-range label, .recovery-panel p,
   .storage-note, #app-status, .error-message { color: CanvasText; }
@@ -1944,6 +1962,7 @@ label:has(> #field-template-enabled) { display: flex; align-items: center; min-h
   .dashboard-review-queue,
   .dashboard-saved-month-comparison > summary, #dashboard-saved-month-comparison-form,
   .dashboard-comparison-status,
+  .help-dialog,
   .dashboard-table-disclosure > summary, .dashboard-report-details > summary { display: none !important; }
   .view { display: none !important; }
   #view-dashboard { display: block !important; max-width: none; padding: 0; }

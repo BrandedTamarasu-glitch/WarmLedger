@@ -3,6 +3,7 @@ const App = {
   currentView: 'budget', viewsInitialized: false, restorePreview: null,
   restoreTrigger: null, modalTrigger: null, recurringPreview: null, recurringTrigger: null,
   deleteContext: null, expenseUndo: null, templatesInitialized: false,
+  helpTrigger: null, helpRouteTarget: null,
   shownWarnings: new Set(), MAX_IMPORT_BYTES: 5 * 1024 * 1024,
 
   init() {
@@ -15,6 +16,11 @@ const App = {
 
   bindAppEvents() {
     document.querySelectorAll('.nav-tab').forEach(tab => tab.addEventListener('click', () => this.switchView(tab.dataset.view)));
+    document.getElementById('btn-help').addEventListener('click', event => this.openHelp(event.currentTarget));
+    document.getElementById('help-dialog').addEventListener('close', () => this.onHelpClose());
+    document.querySelectorAll('[data-help-view]').forEach(button => button.addEventListener('click', () => {
+      this.helpRouteTarget = button.dataset.helpView; document.getElementById('help-dialog').close();
+    }));
     document.getElementById('btn-export').addEventListener('click', () => this.downloadBackup());
     document.getElementById('btn-import').addEventListener('click', event => {
       this.restoreTrigger = event.currentTarget; document.getElementById('import-file').click();
@@ -127,6 +133,21 @@ const App = {
     else if (view === 'structure') StructureView.render();
     else if (view === 'templates') TemplatesView.render();
     else if (view === 'data-health') DataHealthView.render();
+  },
+
+  openHelp(trigger) {
+    this.helpTrigger = trigger; this.helpRouteTarget = null;
+    const dialog = document.getElementById('help-dialog'); dialog.returnValue = ''; dialog.showModal();
+  },
+
+  onHelpClose() {
+    const target = this.helpRouteTarget; this.helpRouteTarget = null;
+    if (!target) { this.helpTrigger?.focus({ preventScroll: true }); return; }
+    const headings = { budget: 'current-month-label', structure: 'structure-heading',
+      templates: 'templates-heading', 'data-health': 'data-health-heading' };
+    if (!Object.hasOwn(headings, target)) { this.helpTrigger?.focus({ preventScroll: true }); return; }
+    this.switchView(target);
+    requestAnimationFrame(() => document.getElementById(headings[target])?.focus({ preventScroll: true }));
   },
 
   openBudgetFunding(monthKey, expenseId, paycheckId = null) {

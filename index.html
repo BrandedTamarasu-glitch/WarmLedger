@@ -38,6 +38,7 @@
       <button id="nav-data-health" class="nav-tab" data-view="data-health">Data Health</button>
     </div>
     <div class="nav-actions">
+      <button id="btn-help" class="btn btn-sm" type="button">Help</button>
       <button id="btn-export" class="btn btn-sm">Download backup</button>
       <button id="btn-import" class="btn btn-sm">Restore backup</button>
       <input type="file" id="import-file" accept=".json,application/json" hidden>
@@ -324,7 +325,7 @@
 
     <div id="view-structure" class="view">
       <header class="structure-heading">
-        <h2>Budget Structure</h2>
+        <h2 id="structure-heading" tabindex="-1">Budget Structure</h2>
         <p>Manage the choices used when adding paychecks and expenses. Renaming or archiving a choice does not rewrite historical records.</p>
       </header>
       <section class="budget-section" aria-labelledby="structure-categories-heading">
@@ -353,7 +354,7 @@
 
     <div id="view-templates" class="view" hidden>
       <header class="structure-heading">
-        <h2>Recurring templates</h2>
+        <h2 id="templates-heading" tabindex="-1">Recurring templates</h2>
         <p>Create planned income and expenses, then preview each month before adding anything to your budget.</p>
       </header>
       <section id="template-readiness" class="budget-section" aria-labelledby="template-readiness-heading">
@@ -413,6 +414,42 @@
       <button id="expense-undo-dismiss" class="btn btn-sm" type="button">Dismiss</button>
     </div>
   </aside>
+
+  <dialog id="help-dialog" class="restore-dialog help-dialog" aria-labelledby="help-title">
+    <form method="dialog">
+      <h2 id="help-title" tabindex="-1" autofocus>Getting started &amp; terms</h2>
+      <section aria-labelledby="help-started-heading">
+        <h3 id="help-started-heading">Getting started</h3>
+        <ol class="help-steps">
+          <li>Set up the earners, categories, and expense names you use in Structure.</li>
+          <li>Add planned paychecks and expenses in Budget, or review recurring definitions in Templates.</li>
+          <li>Enter actual amounts and neutral saved dates when you know them.</li>
+          <li>Review paycheck funding and Monthly Review facts. These are planning aids, not bank or payment confirmation.</li>
+          <li>Download a JSON backup regularly and keep it somewhere you control.</li>
+        </ol>
+        <div class="help-view-actions" aria-label="Go to an app view">
+          <button class="btn" type="button" data-help-view="budget">Go to Budget</button>
+          <button class="btn" type="button" data-help-view="structure">Go to Structure</button>
+          <button class="btn" type="button" data-help-view="templates">Go to Templates</button>
+          <button class="btn" type="button" data-help-view="data-health">Go to Data Health</button>
+        </div>
+      </section>
+      <section aria-labelledby="help-terms-heading">
+        <h3 id="help-terms-heading">Terms</h3>
+        <dl class="help-terms">
+          <div><dt>Planned</dt><dd>The amount you intend to receive or spend.</dd></div>
+          <div><dt>Actual</dt><dd>The amount you enter after you know what was received or spent.</dd></div>
+          <div><dt>Not entered and entered zero</dt><dd>Not entered means no actual amount has been supplied. Entered zero is a supplied actual amount of $0.00; they are different states.</dd></div>
+          <div><dt>Saved date</dt><dd>A neutral date recorded on a paycheck or expense. It does not prove that money arrived, was due, was paid, or cleared.</dd></div>
+          <div><dt>Planned paycheck funding</dt><dd>An amount assigned from a planned paycheck to an expense. It is guidance only and does not move or reserve money.</dd></div>
+          <div><dt>Manual clearing</dt><dd>A checkbox you set on an eligible saved record. It is not bank verification, reconciliation, settlement, or payment confirmation.</dd></div>
+          <div><dt>Checklist complete</dt><dd>All applicable saved checklist facts are present for that month. The month remains editable, and this does not mean the month is closed or financially verified.</dd></div>
+          <div><dt>Local backups and snapshots</dt><dd>Downloaded JSON backups are files you keep. Safety snapshots stay in this browser and site, are limited, and can be lost when browser data is cleared.</dd></div>
+        </dl>
+      </section>
+      <div class="dialog-actions"><button class="btn btn-primary" value="close">Close help</button></div>
+    </form>
+  </dialog>
 
   <dialog id="expense-delete-dialog" class="restore-dialog" aria-labelledby="expense-delete-title" aria-describedby="expense-delete-warning">
     <form method="dialog">
